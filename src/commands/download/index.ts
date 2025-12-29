@@ -1,11 +1,11 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
+import { downloadUrl, DownloadOptions, stopProgress } from "../../lib/download.js";
+import path from "path";
 
 // Helper functions for Download
 export function printDownloadUsage(): void {
-  console.log(
-    colors.yellow("Usage: visuales download <url> --output <path> [options]")
-  );
+  console.log(colors.yellow("Usage: visuales download <url> --output <path> [options]"));
   console.log(colors.gray("Examples:"));
   console.log(
     colors.gray(
@@ -21,25 +21,12 @@ export function printDownloadUsage(): void {
 
 export function printDownloading(url: string, outputPath: string): void {
   console.log(colors.blue(`📂 Starting download from: ${url}`));
-  console.log(colors.gray(`📁 Output directory: ${outputPath}`));
+  console.log(colors.gray(`📁 Output directory: ${path.resolve(outputPath)}`));
   console.log();
 }
 
-export function printDownloadSummary(
-  completed: number,
-  total: number,
-  failed: number
-): void {
-  console.log(
-    colors.green(`✅ Download completed: ${completed}/${total} files`)
-  );
-  if (failed > 0) {
-    console.log(colors.red(`❌ Failed: ${failed} files`));
-  }
-}
-
 export function printError(error: unknown): void {
-  console.error(colors.red("❌ Error:"));
+  console.error(colors.red("\n❌ Error:"));
   if (error instanceof Error) {
     console.error(colors.red(error.message));
   } else {
@@ -52,9 +39,10 @@ async function downloadCommand(
   options: {
     output: string;
     resume?: boolean;
-    maxRetries?: number;
+    maxRetries?: string;
     timeout?: string;
-    concurrent?: number;
+    concurrent?: string;
+    verbose?: boolean;
   }
 ): Promise<void> {
   if (!url) {
@@ -64,29 +52,28 @@ async function downloadCommand(
   }
 
   if (!options.output) {
-    console.log(
-      colors.yellow("Please provide an output directory using --output")
-    );
+    console.log(colors.yellow("Please provide an output directory using --output"));
     printDownloadUsage();
     return;
   }
 
-  const downloadOptions = {
+  const downloadOptions: DownloadOptions = {
     output: options.output,
     resume: options.resume ?? true,
-    maxRetries: options.maxRetries ?? 3,
-    timeout:
-      options.timeout === "Infinity"
-        ? Infinity
-        : Number(options.timeout) ?? Infinity,
-    concurrent: options.concurrent ?? 3,
+    maxRetries: parseInt(options.maxRetries ?? "3"),
+    timeout: options.timeout === "Infinity" ? Infinity : parseInt(options.timeout ?? "Infinity"),
+    concurrent: parseInt(options.concurrent ?? "5"),
+    verbose: options.verbose,
   };
 
   printDownloading(url, downloadOptions.output);
 
   try {
-    console.log(colors.green("✅ Download functionality would be implemented"));
+    await downloadUrl(url, downloadOptions);
+    await stopProgress();
+    console.log(colors.green("\n✨ All downloads finished successfully!"));
   } catch (error) {
+    await stopProgress();
     printError(error);
     process.exit(1);
   }
@@ -100,11 +87,11 @@ export function setupDownloadCommand(program: Command): void {
     .requiredOption("-o, --output <path>", "Output directory")
     .option("-r, --resume <boolean>", "Resume interrupted downloads", true)
     .option("--max-retries <number>", "Maximum retry attempts", "3")
-    .option(
-      "--timeout <number>",
-      "Request timeout in seconds (Infinity for no timeout)",
-      "Infinity"
-    )
-    .option("--concurrent <number>", "Maximum concurrent downloads", "3")
-    .action(downloadCommand);
+    .option("--timeout <number>", "Request timeout in seconds (Infinity for no timeout)", "Infinity")
+    .option("-c, --concurrent <number>", "Maximum concurrent downloads", "5")
+    .action((url, options, cmd) => {
+      // In subcommands, options is from the command, but we need the program for global options
+      const globalOpts = cmd.parent.opts();
+      return downloadCommand(url, { ...options, verbose: globalOpts.verbose });
+    });
 }

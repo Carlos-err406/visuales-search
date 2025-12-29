@@ -15,16 +15,10 @@ function getDirectoryFromPath(pathname: string): string {
   return pathname.slice(0, lastSlashIndex);
 }
 
-function matchesSearchTerms(
-  text: string,
-  url: string,
-  searchTerms: string[]
-): boolean {
+function matchesSearchTerms(text: string, url: string, searchTerms: string[]): boolean {
   const combinedContent = `${text.toLowerCase()} ${url.toLowerCase()}`;
 
-  return searchTerms.every((term) =>
-    combinedContent.includes(term.toLowerCase())
-  );
+  return searchTerms.every((term) => combinedContent.includes(term.toLowerCase()));
 }
 
 export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
@@ -45,7 +39,9 @@ export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
 
     try {
       decodedPathname = decodeURIComponent(decodeURIComponent(urlObj.pathname));
-    } catch (e) {}
+    } catch {
+      // Ignore decoding errors
+    }
 
     decodedPathname = decodedPathname.replace(/\/+/g, "/");
 
@@ -64,17 +60,12 @@ export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
       seenDirectories.add(directory);
     }
 
-    if (
-      searchTerms.length === 0 ||
-      matchesSearchTerms(text, normalizedUrl, searchTerms)
-    ) {
+    if (searchTerms.length === 0 || matchesSearchTerms(text, normalizedUrl, searchTerms)) {
       results.push({
         url: normalizedUrl,
         text,
         directory,
-        encodedUrl: `${urlObj.origin}${urlObj.pathname.replace(/\/+/g, "/")}${
-          urlObj.search
-        }`,
+        encodedUrl: `${urlObj.origin}${urlObj.pathname.replace(/\/+/g, "/")}${urlObj.search}`,
         isDirectoryLink,
       });
     }

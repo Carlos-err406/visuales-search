@@ -39,10 +39,7 @@ async function main(): Promise<void> {
       program.outputHelp();
     }
   } catch (error) {
-    console.error(
-      "❌ CLI Error:",
-      error instanceof Error ? error.message : "Unknown error"
-    );
+    console.error("❌ CLI Error:", error instanceof Error ? error.message : "Unknown error");
     process.exit(1);
   }
 }

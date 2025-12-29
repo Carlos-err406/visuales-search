@@ -1,5 +1,4 @@
 import * as path from "node:path";
-import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 
 export interface SearchResult {
@@ -120,5 +119,8 @@ export const CONFIG = {
     const cliPath = fileURLToPath(new URL("../cli.js", import.meta.url));
     const projectRoot = path.dirname(path.dirname(cliPath));
     return path.join(projectRoot, ".cache", "download");
+  },
+  get DISCOVERY_CACHE_FILE(): string {
+    return path.join(this.CACHE_DIR, "discovery.json");
   },
 } as const;

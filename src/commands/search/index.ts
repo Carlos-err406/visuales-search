@@ -7,12 +7,8 @@ import { displayResults } from "./display.js";
 // Helper functions for Search
 export function printUsage(): void {
   console.log(colors.yellow("Usage: visuales search <query1> <query2>..."));
-  console.log(
-    colors.gray("Example: visuales search photoshop course beginners")
-  );
-  console.log(
-    colors.gray("\nNote: ALL search terms must be present in the result.")
-  );
+  console.log(colors.gray("Example: visuales search photoshop course beginners"));
+  console.log(colors.gray("\nNote: ALL search terms must be present in the result."));
 }
 
 export function printNoResults(): void {
@@ -41,9 +37,7 @@ export function printError(error: unknown): void {
 async function searchCommand(terms: string[]) {
   if (terms.length === 0) {
     console.log(colors.yellow("Please provide at least one search term"));
-    console.log(
-      colors.gray("Example: visuales search photoshop course beginners")
-    );
+    console.log(colors.gray("Example: visuales search photoshop course beginners"));
     return;
   }
 

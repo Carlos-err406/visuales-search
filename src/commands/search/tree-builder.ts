@@ -1,16 +1,10 @@
 import { type SearchResult, type TreeNode } from "../../lib/types.js";
 
-export function buildTree(
-  results: SearchResult[],
-  allResults: SearchResult[]
-): Map<string, TreeNode> {
+export function buildTree(results: SearchResult[], allResults: SearchResult[]): Map<string, TreeNode> {
   const root = new Map<string, TreeNode>();
 
   // First, collect all directory URLs from all results
-  const allDirectoryUrls = new Map<
-    string,
-    { url: string; encodedUrl: string }
-  >();
+  const allDirectoryUrls = new Map<string, { url: string; encodedUrl: string }>();
 
   for (const result of allResults) {
     if (result.isDirectoryLink) {
@@ -22,9 +16,7 @@ export function buildTree(
   }
 
   for (const result of results) {
-    const parts = result.directory
-      .split("/")
-      .filter((part) => part && part.length > 0) as string[];
+    const parts = result.directory.split("/").filter((part) => part && part.length > 0) as string[];
     let currentMap: Map<string, TreeNode> = root;
 
     let currentPath = "";
@@ -52,8 +44,7 @@ export function buildTree(
     }
 
     if (lastNode) {
-      const isSelfReferential =
-        result.url.endsWith("/") && result.text === lastNode!.name;
+      const isSelfReferential = result.url.endsWith("/") && result.text === lastNode!.name;
 
       if (!isSelfReferential) {
         lastNode.results.push(result);

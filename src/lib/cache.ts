@@ -2,12 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDistanceToNow } from "date-fns";
 import colors from "ansi-colors";
-import {
-  CONFIG,
-  type CacheData,
-  type CacheIndex,
-  type CacheEntry,
-} from "./types.js";
+import { CONFIG, type CacheData, type CacheIndex, type CacheEntry } from "./types.js";
 
 export async function ensureCacheDirectory(): Promise<void> {
   if (!fs.existsSync(CONFIG.CACHE_DIR)) {
@@ -29,7 +24,7 @@ async function loadCacheIndex(): Promise<CacheIndex> {
   try {
     const content = fs.readFileSync(CONFIG.CACHE_INDEX_FILE, "utf-8");
     return JSON.parse(content) as CacheIndex;
-  } catch (e) {
+  } catch {
     console.log(colors.yellow("⚠️  Cache index corrupted, creating new one"));
     const defaultIndex: CacheIndex = {
       version: "1.0.0",
@@ -44,19 +39,14 @@ async function saveCacheIndex(index: CacheIndex): Promise<void> {
   await ensureCacheDirectory();
   try {
     fs.writeFileSync(CONFIG.CACHE_INDEX_FILE, JSON.stringify(index, null, 2));
-  } catch (e) {
+  } catch {
     console.log(colors.yellow("⚠️  Failed to save cache index"));
   }
 }
 
-async function updateCacheEntry(
-  id: string,
-  updates: Partial<CacheEntry>
-): Promise<void> {
+async function updateCacheEntry(id: string, updates: Partial<CacheEntry>): Promise<void> {
   const index = await loadCacheIndex();
-  const existingEntryIndex = index.entries.findIndex(
-    (entry) => entry.id === id
-  );
+  const existingEntryIndex = index.entries.findIndex((entry) => entry.id === id);
 
   if (existingEntryIndex >= 0) {
     index.entries[existingEntryIndex] = {
@@ -118,14 +108,28 @@ export async function listCaches(): Promise<CacheEntry[]> {
     }
   }
 
+  // Auto-detect discovery cache if it exists
+  if (fs.existsSync(CONFIG.DISCOVERY_CACHE_FILE)) {
+    const discoveryEntryExists = index.entries.some((e) => e.id === "discovery");
+    if (!discoveryEntryExists) {
+      const stats = fs.statSync(CONFIG.DISCOVERY_CACHE_FILE);
+      await updateCacheEntry("discovery", {
+        id: "discovery",
+        name: "Directory Discovery Cache",
+        type: "file",
+        path: "discovery.json",
+        created: stats.birthtimeMs,
+        description: "Cached directory listings for faster discovery",
+      });
+    }
+  }
+
   // Update sizes on the fly
   for (const entry of index.entries) {
     if (entry.type === "file") {
       entry.size = calculateFileSize(path.join(CONFIG.CACHE_DIR, entry.path));
     } else if (entry.type === "directory") {
-      entry.size = calculateDirectorySize(
-        path.join(CONFIG.CACHE_DIR, entry.path)
-      );
+      entry.size = calculateDirectorySize(path.join(CONFIG.CACHE_DIR, entry.path));
     }
   }
 
@@ -154,8 +158,8 @@ export async function clearCacheById(id: string): Promise<void> {
     await saveCacheIndex(index);
 
     console.log(colors.green(`✅ Cleared cache: ${entry.name}`));
-  } catch (e) {
-    throw new Error(`Failed to clear cache '${entry.name}': ${e}`);
+  } catch (e: unknown) {
+    throw new Error(`Failed to clear cache '${entry.name}': ${e instanceof Error ? e.message : e}`);
   }
 }
 
@@ -172,9 +176,7 @@ export async function clearAllCaches(): Promise<void> {
         fs.rmSync(fullPath, { recursive: true, force: true });
       }
     } catch (e) {
-      console.log(
-        colors.yellow(`⚠️  Failed to clear cache '${entry.name}': ${e}`)
-      );
+      console.log(colors.yellow(`⚠️  Failed to clear cache '${entry.name}': ${e instanceof Error ? e.message : e}`));
     }
   }
 
@@ -197,9 +199,7 @@ export async function getCacheInfo(id: string): Promise<CacheEntry | null> {
   if (entry.type === "file") {
     entry.size = calculateFileSize(path.join(CONFIG.CACHE_DIR, entry.path));
   } else if (entry.type === "directory") {
-    entry.size = calculateDirectorySize(
-      path.join(CONFIG.CACHE_DIR, entry.path)
-    );
+    entry.size = calculateDirectorySize(path.join(CONFIG.CACHE_DIR, entry.path));
   }
 
   return entry;
@@ -228,10 +228,8 @@ export async function getCachedHtml(): Promise<string | null> {
 
     console.log(colors.gray(`📦 Using cached data (${ageString})`));
     return data.html;
-  } catch (e) {
-    console.log(
-      colors.yellow("⚠️  Cache file corrupted, will fetch fresh data")
-    );
+  } catch {
+    console.log(colors.yellow("⚠️  Cache file corrupted, will fetch fresh data"));
     return null;
   }
 }
@@ -257,7 +255,7 @@ export async function setCachedHtml(html: string): Promise<void> {
     });
 
     console.log(colors.green("💾 Cached HTML"));
-  } catch (e) {
+  } catch {
     console.log(colors.yellow("⚠️  Failed to cache HTML"));
   }
 }
@@ -280,16 +278,11 @@ export async function ensureDownloadCacheDirectory(): Promise<void> {
 }
 
 export function getDownloadCachePath(url: string): string {
-  const urlHash = Buffer.from(url)
-    .toString("base64")
-    .replace(/[+/=]/g, "")
-    .substr(0, 16);
+  const urlHash = Buffer.from(url).toString("base64").replace(/[+/=]/g, "").substr(0, 16);
   return path.join(CONFIG.DOWNLOAD_CACHE_DIR, `${urlHash}.json`);
 }
 
-export async function clearStaleDownloadCache(
-  maxAgeMs: number = 7 * 24 * 60 * 60 * 1000
-): Promise<void> {
+export async function clearStaleDownloadCache(maxAgeMs: number = 7 * 24 * 60 * 60 * 1000): Promise<void> {
   await ensureDownloadCacheDirectory();
 
   try {
@@ -308,15 +301,58 @@ export async function clearStaleDownloadCache(
     }
 
     if (deletedCount > 0) {
-      console.log(
-        colors.gray(`🗑️  Cleaned ${deletedCount} stale download cache files`)
-      );
+      console.log(colors.gray(`🗑️  Cleaned ${deletedCount} stale download cache files`));
       // Update cache index size
       await updateCacheEntry("download", {
         size: calculateDirectorySize(CONFIG.DOWNLOAD_CACHE_DIR),
       });
     }
-  } catch (e) {
+  } catch {
     // Silently fail cache cleanup
+  }
+}
+
+export async function getDiscoveryCache(): Promise<Record<string, unknown> | null> {
+  if (!fs.existsSync(CONFIG.DISCOVERY_CACHE_FILE)) {
+    return null;
+  }
+
+  try {
+    const content = fs.readFileSync(CONFIG.DISCOVERY_CACHE_FILE, "utf-8");
+    const data = JSON.parse(content);
+
+    // Update index
+    const stats = fs.statSync(CONFIG.DISCOVERY_CACHE_FILE);
+    await updateCacheEntry("discovery", {
+      id: "discovery",
+      name: "Directory Discovery Cache",
+      type: "file",
+      path: "discovery.json",
+      created: stats.birthtimeMs,
+      description: "Cached directory listings for faster discovery",
+    });
+
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function setDiscoveryCache(data: Record<string, unknown>): Promise<void> {
+  await ensureCacheDirectory();
+  try {
+    fs.writeFileSync(CONFIG.DISCOVERY_CACHE_FILE, JSON.stringify(data, null, 2));
+
+    // Update index
+    await updateCacheEntry("discovery", {
+      id: "discovery",
+      name: "Directory Discovery Cache",
+      type: "file",
+      path: "discovery.json",
+      created: Date.now(),
+      description: "Cached directory listings for faster discovery",
+    });
+  } catch {
+    // Silently fail
   }
 }

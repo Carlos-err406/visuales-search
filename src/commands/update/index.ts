@@ -20,7 +20,7 @@ async function updateCommand(): Promise<void> {
     console.log(colors.gray(`📂 Project root detected: ${projectRoot}`));
 
     // 1. Rebuild
-    console.log(colors.yellow("🔨 Building project..."));
+    console.log(colors.yellow("🔨 Building cli..."));
     await execAsync("npm run build", { cwd: projectRoot });
     console.log(colors.green("✅ Build successful"));
 
@@ -44,8 +44,6 @@ async function updateCommand(): Promise<void> {
 export function setupUpdateCommand(program: Command): void {
   program
     .command("update")
-    .description(
-      "Update the Visuales CLI by rebuilding and reinstalling from source"
-    )
+    .description("Update the Visuales CLI by rebuilding and reinstalling from source")
     .action(updateCommand);
 }

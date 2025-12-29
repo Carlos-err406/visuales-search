@@ -12,25 +12,16 @@ async function cacheListAction(): Promise<void> {
   }
 
   console.log(colors.blue.bold("\n📦 Cached Data:"));
-  console.log(
-    colors.gray("──────────────────────────────────────────────────")
-  );
+  console.log(colors.gray("──────────────────────────────────────────────────"));
 
   for (const cache of caches) {
-    const sizeStr =
-      cache.type === "directory"
-        ? `${cache.size} files`
-        : `${(cache.size / 1024).toFixed(2)} KB`;
+    const sizeStr = cache.type === "directory" ? `${cache.size} files` : `${(cache.size / 1024).toFixed(2)} KB`;
     const ageString = formatDistanceToNow(new Date(cache.created), {
       addSuffix: true,
     });
 
-    console.log(
-      `${colors.cyan.bold(cache.id.padEnd(10))} ${colors.white(cache.name)}`
-    );
-    console.log(
-      `           ${colors.gray(`Size: ${sizeStr} | Created: ${ageString}`)}`
-    );
+    console.log(`${colors.cyan.bold(cache.id.padEnd(10))} ${colors.white(cache.name)}`);
+    console.log(`           ${colors.gray(`Size: ${sizeStr} | Created: ${ageString}`)}`);
     if (cache.description) {
       console.log(`           ${colors.gray.italic(cache.description)}`);
     }
@@ -38,10 +29,7 @@ async function cacheListAction(): Promise<void> {
   }
 }
 
-async function cacheClearCommand(options: {
-  all?: boolean;
-  id?: string;
-}): Promise<void> {
+async function cacheClearCommand(options: { all?: boolean; id?: string }): Promise<void> {
   if (options.all) {
     try {
       await clearAllCaches();
@@ -58,9 +46,7 @@ async function cacheClearCommand(options: {
     } catch (error) {
       console.error(
         colors.red(
-          `❌ Failed to clear cache with ID '${options.id}': ${
-            error instanceof Error ? error.message : String(error)
-          }`
+          `❌ Failed to clear cache with ID '${options.id}': ${error instanceof Error ? error.message : String(error)}`
         )
       );
       process.exit(1);
@@ -68,17 +54,12 @@ async function cacheClearCommand(options: {
     return;
   }
 
-  console.log(
-    colors.yellow("⚠️  Please provide an option: --all or --id <cache-id>")
-  );
+  console.log(colors.yellow("⚠️  Please provide an option: --all or --id <cache-id>"));
   console.log(colors.gray("Example: visuales cache clear --all"));
 }
 
 export function setupCacheCommand(program: Command): void {
-  const cacheCommand = program
-    .command("cache")
-    .description("Manage cached data")
-    .action(cacheListAction);
+  const cacheCommand = program.command("cache").description("Manage cached data").action(cacheListAction);
 
   cacheCommand
     .command("clear")

@@ -51,6 +51,7 @@ The HTML content is cached locally in `.cache/listado.html.json` for 24 hours. S
 ## Output Format
 
 Results are grouped by directory and displayed with:
+
 - Yellow/bold directory names
 - Cyan link text
 - Gray/dim URLs

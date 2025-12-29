@@ -12,6 +12,7 @@ This file contains guidelines and commands for coding agents working in this rep
 ## Commands
 
 ### Development
+
 ```bash
 # Install dependencies
 bun install
@@ -30,7 +31,8 @@ node dist/cli.js search <term1> <term2> <term3>...
 ```
 
 ### Global Installation
-```bash
+
+````bash
 # Install globally from npm registry
 npm i -g visuales
 
@@ -60,9 +62,10 @@ visuales download <url> --output <path> [options]
 visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/1.pdf" --output ./downloads
 visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/" --output ./killing-eve-books --concurrent 5
 visuales download "https://visuales.uclv.cu/Cursos/Photoshop/" --output ./photoshop-course --concurrent 3
-```
+````
 
 ### Download Options
+
 - `--output, -o`: Output directory (required)
 - `--resume, -r`: Resume interrupted downloads (default: true)
 - `--max-retries`: Maximum retry attempts (default: 3)
@@ -70,13 +73,15 @@ visuales download "https://visuales.uclv.cu/Cursos/Photoshop/" --output ./photos
 - `--concurrent`: Maximum concurrent downloads (default: 3)
 
 ### Download Features
+
 - **Resumable Downloads**: Automatic resume of interrupted downloads using HTTP Range headers
 - **Concurrent Downloads**: Configurable parallel downloads for directories
 - **Recursive Directory Downloads**: Complete directory tree preservation
 - **Progress Tracking**: Real-time progress bars with speed and ETA
 - **Error Recovery**: Retry logic with exponential backoff
 - **File Structure Preservation**: Maintains original directory structure locally
-```
+
+````
 
 ### Testing
 No tests are currently configured. When adding tests:
@@ -88,23 +93,26 @@ No tests are currently configured. When adding tests:
 ```bash
 # Type check (Bun handles this automatically, but can run tsc directly)
 bunx tsc --noEmit
-```
+````
 
 ## Code Style Guidelines
 
 ### TypeScript Configuration
+
 - `strict: true` - All strict type checking enabled
 - `noUncheckedIndexedAccess: true` - Array access returns undefined by default
 - `noImplicitOverride: true` - Explicit override required
 - Target: `ESNext`, Module: `Preserve`
 
 ### Imports
+
 - Use ES module imports/exports
 - Absolute imports from project root preferred for clarity
 - Keep imports organized: external libs → internal modules → types
 - Remove unused imports (not flagged currently, but maintain clean code)
 
 ### Naming Conventions
+
 - **Variables/Functions**: camelCase
 - **Classes**: PascalCase
 - **Constants**: UPPER_SNAKE_CASE or camelCase
@@ -112,24 +120,28 @@ bunx tsc --noEmit
 - **Files**: PascalCase for types, camelCase for utilities, or kebab-case for components
 
 ### Error Handling
+
 - Use try-catch for async operations (fetch, I/O)
 - Provide meaningful error messages with context
 - Consider adding error codes or types for programmatic handling
 - Exit gracefully on fatal errors (process.exit(1))
 
 ### Console Output
+
 - Use ansi-colors for colored terminal output
 - Group related output with clear section headers
 - Use emoji prefixes for better readability (📂, ✅, ❌, etc.)
 - Keep user-facing messages concise and helpful
 
 ### Code Organization
+
 - Keep functions small and focused (single responsibility)
 - Extract constants to top of file or separate config file
 - Use type interfaces for complex data structures
 - Add JSDoc comments for public APIs and complex logic
 
 ### Dependencies
+
 - Prefer Bun built-ins where possible (fetch, file I/O)
 - Use Cheerio for HTML parsing
 - Use ansi-colors for terminal output
@@ -143,6 +155,7 @@ bunx tsc --noEmit
 The codebase is organized into focused modules for maintainability:
 
 #### Core Modules
+
 - **types.ts**: All interface definitions and configuration constants
 - **cache.ts**: HTML caching functionality with 24-hour expiry
 - **html-parser.ts**: HTML parsing and search result extraction using Cheerio
@@ -151,9 +164,11 @@ The codebase is organized into focused modules for maintainability:
 - **cli.ts**: Command-line interface and user interaction
 
 #### Main Entry Point
+
 - **index.ts**: Orchestrates all modules and handles application flow
 
 ### Search Script (html-parser.ts)
+
 - Fetch HTML from https://visuales.uclv.cu/listado.html
 - Parse using Cheerio, extract all `<a>` tags
 - **URL decoding**: Decode URLs immediately after extraction (double decode for doubly-encoded URLs)
@@ -161,6 +176,7 @@ The codebase is organized into focused modules for maintainability:
 - Search scope: Both link text AND URL path (case-insensitive)
 
 ### Tree Building (tree-builder.ts)
+
 - **Tree structure**: Build nested tree from directory paths using Map-based TreeNode structure
 - Results are stored at their leaf node in the tree hierarchy
 - **Clickable directories**: All directory levels that have URLs are clickable (cyan) and show URLs directly below
@@ -169,6 +185,7 @@ The codebase is organized into focused modules for maintainability:
 - Tree building uses two-pass approach: parse all directory URLs first, then build filtered tree
 
 ### Display (display.ts)
+
 - Unicode tree characters with colored output
 - Clickable directories are shown in cyan with hyperlinks
 - Non-clickable directories are shown in yellow bold
@@ -176,6 +193,7 @@ The codebase is organized into focused modules for maintainability:
 - ANSI escape sequences for terminal hyperlinks
 
 ### CLI Interface (cli.ts)
+
 - Accept multiple search terms as command-line arguments
 - Provide clear usage instructions if no arguments provided
 - Show count of matches found
@@ -183,6 +201,7 @@ The codebase is organized into focused modules for maintainability:
 - Colored output with emoji prefixes for better readability
 
 ### Data Structures (types.ts)
+
 - `SearchResult`: Individual search result with url, text, directory, encodedUrl, and isDirectoryLink flag
 - `TreeNode`: Hierarchical tree node with name, fullPath, children map, results array, and optional directory link info
 - Results are attached to leaf nodes in the tree (deepest matching directory)
