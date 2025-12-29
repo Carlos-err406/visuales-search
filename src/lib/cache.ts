@@ -38,7 +38,7 @@ async function loadCacheIndex(): Promise<CacheIndex> {
 async function saveCacheIndex(index: CacheIndex): Promise<void> {
   await ensureCacheDirectory();
   try {
-    fs.writeFileSync(CONFIG.CACHE_INDEX_FILE, JSON.stringify(index, null, 2));
+    fs.writeFileSync(CONFIG.CACHE_INDEX_FILE, JSON.stringify(index));
   } catch {
     console.log(colors.yellow("⚠️  Failed to save cache index"));
   }
@@ -242,7 +242,7 @@ export async function setCachedHtml(html: string): Promise<void> {
   };
 
   try {
-    fs.writeFileSync(CONFIG.CACHE_FILE, JSON.stringify(data, null, 2));
+    fs.writeFileSync(CONFIG.CACHE_FILE, JSON.stringify(data));
 
     // Update cache index
     await updateCacheEntry("list", {
@@ -341,7 +341,7 @@ export async function getDiscoveryCache(): Promise<Record<string, unknown> | nul
 export async function setDiscoveryCache(data: Record<string, unknown>): Promise<void> {
   await ensureCacheDirectory();
   try {
-    fs.writeFileSync(CONFIG.DISCOVERY_CACHE_FILE, JSON.stringify(data, null, 2));
+    fs.writeFileSync(CONFIG.DISCOVERY_CACHE_FILE, JSON.stringify(data));
 
     // Update index
     await updateCacheEntry("discovery", {

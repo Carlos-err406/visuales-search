@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
-import { downloadUrl, DownloadOptions, stopProgress } from "../../lib/download.js";
+import { downloadUrl, stopProgress } from "./downloader.js";
+import { DownloadOptions } from "./types.js";
 import { CONFIG } from "../../lib/types.js";
 import path from "path";
 
