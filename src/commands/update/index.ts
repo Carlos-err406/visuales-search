@@ -21,12 +21,12 @@ async function updateCommand(): Promise<void> {
 
     // 1. Rebuild
     console.log(colors.yellow("🔨 Building cli..."));
-    await execAsync("npm run build", { cwd: projectRoot });
+    await execAsync("bun run build", { cwd: projectRoot });
     console.log(colors.green("✅ Build successful"));
 
     // 2. Install globally
     console.log(colors.yellow("📦 Installing globally..."));
-    await execAsync("npm install -g .", { cwd: projectRoot });
+    await execAsync("bun install -g .", { cwd: projectRoot });
     console.log(colors.green("✅ Installation successful"));
 
     console.log(colors.green("\n🎉 Visuales CLI updated successfully!"));
