@@ -29,6 +29,10 @@ const dirListingCache = new Map<string, { files: string[]; dirs: string[] }>();
 async function loadDiscoveryCache() {
   const data = await getDiscoveryCache();
   if (data) {
+    const keys = Object.keys(data);
+    if (keys.length > 0) {
+      console.log(colors.gray(`[CACHE] Discovery: ${keys.length} entries in local database`));
+    }
     for (const [key, value] of Object.entries(data)) {
       dirListingCache.set(key, value as { files: string[]; dirs: string[] });
     }
@@ -37,6 +41,10 @@ async function loadDiscoveryCache() {
 
 async function saveDiscoveryCache() {
   const data = Object.fromEntries(dirListingCache.entries());
+  const keys = Object.keys(data);
+  if (keys.length > 0) {
+    console.log(colors.gray(`[CACHE] Saving ${keys.length} discovery entries`));
+  }
   await setDiscoveryCache(data);
 }
 
@@ -159,20 +167,12 @@ export async function downloadFile(
         const total = bars.progress.getTotal();
         const sizeStr = formatSize(total);
         progressBars.log(
-          `${colors.green("✔")} ${colors.bold.green(filename)} ${colors.gray(`(${sizeStr})`)} ${colors.green("(Done)")}\n`
+          `${colors.gray("·")} ${colors.bold.white(filename)} ${colors.gray(`(${sizeStr})`)} ${colors.green("(Done)")}\n`
         );
 
-        bars.header.update(0, {
-          filename: `${colors.green("✔")} ${colors.bold.green(filename)} ${colors.gray("(Done)")}`,
-        });
-        bars.progress.update(total, {
-          speed: "Done".padEnd(10, " "),
-          downloadedPadded: `${sizeStr} / ${sizeStr}`.padEnd(25, " "),
-          percentagePadded: "100",
-          etaPadded: "ETA: 00:00:00".padEnd(14, " "),
-        });
-        bars.header.stop();
-        bars.progress.stop();
+        progressBars.remove(bars.header);
+        progressBars.remove(bars.progress);
+        activeDownloadCount--;
       }
       resolve();
     });
@@ -246,8 +246,11 @@ export async function downloadFile(
 export async function getDirectoryListing(url: string): Promise<{ files: string[]; dirs: string[] }> {
   const cached = dirListingCache.get(url);
   if (cached && (cached.files.length > 0 || cached.dirs.length > 0)) {
+    console.log(colors.gray(`[CACHE] HIT:  ${url}`));
     return cached;
   }
+
+  console.log(colors.gray(`[CACHE] MISS: ${url}`));
 
   const response = await fetch(url, {
     headers: {
@@ -323,6 +326,8 @@ export async function getDirectoryListing(url: string): Promise<{ files: string[
   // Only cache if we found something, to avoid poisoning the cache with empty results from blocked connections
   if (files.length > 0 || dirs.length > 0) {
     dirListingCache.set(url, result);
+    // Persist immediately so we don't lose discovery if the download is long or interrupted
+    await saveDiscoveryCache();
   }
   return result;
 }
@@ -331,9 +336,10 @@ export async function downloadRecursive(
   url: string,
   options: DownloadOptions,
   limit: ReturnType<typeof pLimit>,
-  onProgress?: (progress: DownloadProgress) => void
+  onProgress?: (progress: DownloadProgress) => void,
+  initialData?: { files: string[]; dirs: string[] }
 ): Promise<void> {
-  const { files, dirs } = await getDirectoryListing(url);
+  const { files, dirs } = initialData || (await getDirectoryListing(url));
 
   // Create output directory if it doesn't exist
   await fs.mkdir(options.output, { recursive: true });
@@ -377,7 +383,7 @@ export async function downloadUrl(
             `${files.length} files, ${dirs.length} subdirectories`
         );
       }
-      await downloadRecursive(url, options, limit, onProgress);
+      await downloadRecursive(url, options, limit, onProgress, { files, dirs });
     } else {
       await limit(() => downloadFile(url, options, onProgress));
     }
