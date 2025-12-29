@@ -42,20 +42,42 @@ async function saveDiscoveryCache() {
 
 const progressBars = new cliProgress.MultiBar(
   {
-    format: `${colors.cyan("{bar}")} {percentage}% | {filename} | {speed}`,
-    barCompleteChar: "\u2588",
-    barIncompleteChar: "\u2591",
     hideCursor: true,
     clearOnComplete: false,
+    format: "{filename}", // Default, will be overridden
+    forceRedraw: true,
   },
   cliProgress.Presets.shades_grey
 );
+
+let activeDownloadCount = 0;
+const processedUrls = new Set<string>();
+const downloadedUrls = new Set<string>();
+
+function formatSize(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || isNaN(seconds) || !isFinite(seconds)) return "--:--:--";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return [h, m, s].map((v) => v.toString().padStart(2, "0")).join(":");
+}
 
 export async function downloadFile(
   url: string,
   options: DownloadOptions,
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<void> {
+  if (downloadedUrls.has(url)) return;
+  downloadedUrls.add(url);
+
   // Ensure destination folder exists
   await fs.mkdir(options.output, { recursive: true });
 
@@ -72,14 +94,37 @@ export async function downloadFile(
     forceResume: false,
   });
 
-  let bar: ReturnType<typeof progressBars.create> | null = null;
+  let bars: { header: cliProgress.SingleBar; progress: cliProgress.SingleBar } | null = null;
 
-  const createBar = (total: number, current: number, status: string = "Starting...") => {
-    if (!bar) {
-      bar = progressBars.create(total, current, {
-        filename,
-        speed: status,
-      });
+  const createBar = (total: number, current: number, status: string = "Starting") => {
+    if (!bars) {
+      activeDownloadCount++;
+
+      // Row 1: Name (Status)
+      const header = progressBars.create(
+        1,
+        0,
+        { filename: `${colors.cyan("●")} ${colors.bold.white(filename)} ${colors.gray(status)}` },
+        { format: "{filename}" }
+      );
+      // Row 2: Bar % | Downloaded/Total | Speed | ETA
+      const progress = progressBars.create(
+        total,
+        current,
+        {
+          speed: "---".padEnd(10, " "),
+          downloadedPadded: `${formatSize(current)} / ${formatSize(total)}`.padEnd(25, " "),
+          percentagePadded: current.toString().padStart(3, " "),
+          etaPadded: "ETA: --:--:--".padEnd(14, " "),
+        },
+        {
+          format: `  ${colors.green("{bar}")} ${colors.bold.white("{percentagePadded}%")}  ${colors.gray("•")}  ${colors.gray("{downloadedPadded}")}  ${colors.gray("•")}  ${colors.yellow("{speed}")}  ${colors.gray("•")}  ${colors.cyan("{etaPadded}")}`,
+          barCompleteChar: "━",
+          barIncompleteChar: "─",
+          barsize: 25,
+        }
+      );
+      bars = { header, progress };
     }
   };
 
@@ -89,50 +134,92 @@ export async function downloadFile(
 
   return new Promise((resolve, reject) => {
     dl.on("start", () => {
-      createBar(100, 0);
+      // Don't create bar here yet, wait for progress or resume to avoid showing bars for skipped files
       if (options.verbose) console.log(colors.gray(`[DEBUG] Started: ${filename}`));
     });
 
     dl.on("resume", (isResume) => {
       if (isResume) {
-        if (options.verbose) console.log(colors.blue(`[DEBUG] Resuming: ${filename}`));
-        createBar(100, 0, "Resuming...");
-        if (bar) bar.update(0, { speed: "Resuming..." });
+        createBar(100, 0, "Resuming");
+        if (bars) {
+          bars.header.update(0, {
+            filename: `${colors.cyan("●")} ${colors.bold.white(filename)} ${colors.dim("(Resuming)")}`,
+          });
+        }
       }
     });
 
-    dl.on("retry", (attempt, opts, err) => {
+    dl.on("retry", (attempt, _opts, err) => {
       if (options.verbose)
         console.log(colors.yellow(`[DEBUG] Retry ${attempt}: ${filename} - ${err?.message || "Unknown error"}`));
     });
 
     dl.on("end", () => {
-      if (bar) {
-        bar.update(100, { speed: "Done" });
-        bar.stop();
+      if (bars) {
+        const total = bars.progress.getTotal();
+        const sizeStr = formatSize(total);
+        progressBars.log(
+          `${colors.green("✔")} ${colors.bold.green(filename)} ${colors.gray(`(${sizeStr})`)} ${colors.green("(Done)")}\n`
+        );
+
+        bars.header.update(0, {
+          filename: `${colors.green("✔")} ${colors.bold.green(filename)} ${colors.gray("(Done)")}`,
+        });
+        bars.progress.update(total, {
+          speed: "Done".padEnd(10, " "),
+          downloadedPadded: `${sizeStr} / ${sizeStr}`.padEnd(25, " "),
+          percentagePadded: "100",
+          etaPadded: "ETA: 00:00:00".padEnd(14, " "),
+        });
+        bars.header.stop();
+        bars.progress.stop();
       }
-      if (options.verbose) console.log(colors.green(`[DEBUG] Finished: ${filename}`));
       resolve();
     });
 
-    dl.on("skip", (_stats) => {
-      if (options.verbose) console.log(colors.cyan(`[DEBUG] Skipped: ${filename} (Already exists)`));
-      createBar(100, 100, "Already exists");
-      if (bar) bar.update(100, { speed: "Already exists" });
-      if (bar) bar.stop();
+    dl.on("skip", async (_stats) => {
+      try {
+        const fullPath = path.join(options.output, filename);
+        const stats = await fs.stat(fullPath);
+        const sizeStr = formatSize(stats.size);
+        progressBars.log(
+          `${colors.gray("·")} ${colors.dim(filename)} ${colors.gray(`(${sizeStr})`)} ${colors.dim("(Already exists)")}\n`
+        );
+      } catch {
+        progressBars.log(`${colors.gray("·")} ${colors.dim(filename)} ${colors.dim("(Already exists)")}\n`);
+      }
       resolve();
     });
 
     dl.on("error", (err) => {
-      if (options.verbose) console.log(colors.red(`[DEBUG] Error: ${filename} - ${err.message}`));
-      if (bar) bar.stop();
+      if (bars) {
+        bars.header.update(0, { filename: `${colors.bold.red(filename)} ${colors.red(`(Error: ${err.message})`)}` });
+        bars.header.stop();
+        bars.progress.stop();
+      }
       reject(err);
     });
 
     dl.on("progress", (stats) => {
-      if (bar) {
-        bar.update(stats.progress, {
-          speed: `${(stats.speed / 1024 / 1024).toFixed(2)} MB/s`,
+      // Create bar on first progress if it hasn't been created by resume
+      createBar(stats.total, stats.downloaded, "Downloading");
+
+      if (bars) {
+        bars.progress.setTotal(stats.total);
+        const progressVal = Math.floor(stats.progress);
+        const paddedPercentage = progressVal.toString().padStart(3, " ");
+        const sizeStr = `${formatSize(stats.downloaded)} / ${formatSize(stats.total)}`.padEnd(25, " ");
+
+        const remainingBytes = stats.total - stats.downloaded;
+        const etaSeconds = stats.speed > 0 ? remainingBytes / stats.speed : null;
+        const etaStr = `ETA: ${formatDuration(etaSeconds)}`.padEnd(14, " ");
+        const speedStr = `${(stats.speed / 1024 / 1024).toFixed(2)} MB/s`.padEnd(10, " ");
+
+        bars.progress.update(stats.downloaded, {
+          speed: speedStr,
+          downloadedPadded: sizeStr,
+          percentagePadded: paddedPercentage,
+          etaPadded: etaStr,
         });
       }
       if (onProgress) {
@@ -147,7 +234,10 @@ export async function downloadFile(
     });
 
     dl.start().catch((err) => {
-      if (bar) bar.stop();
+      if (bars) {
+        bars.header.stop();
+        bars.progress.stop();
+      }
       reject(err);
     });
   });
@@ -212,7 +302,24 @@ export async function getDirectoryListing(url: string): Promise<{ files: string[
     }
   }
 
-  const result = { files, dirs };
+  // Deduplicate and filter out common Apache navigation/sorting links
+  const result = {
+    files: [...new Set(files)].filter((f) => !f.includes("?C=")),
+    dirs: [...new Set(dirs)].filter((d) => {
+      if (d.includes("?C=")) return false;
+      const pathname = new URL(d).pathname;
+      const normalizedPath = pathname.endsWith("/") ? pathname : pathname + "/";
+      const parentNormalPath = new URL(url).pathname.endsWith("/")
+        ? new URL(url).pathname
+        : new URL(url).pathname + "/";
+
+      // Skip current directory (.) and parent directory (..)
+      if (normalizedPath === parentNormalPath) return false;
+      if (normalizedPath === path.posix.dirname(parentNormalPath.replace(/\/$/, "")) + "/") return false;
+
+      return true;
+    }),
+  };
   // Only cache if we found something, to avoid poisoning the cache with empty results from blocked connections
   if (files.length > 0 || dirs.length > 0) {
     dirListingCache.set(url, result);
@@ -265,7 +372,10 @@ export async function downloadUrl(
       if (files.length === 0 && dirs.length === 0) {
         throw new Error("No files or subdirectories found at this URL. The content might be restricted or private.");
       } else {
-        console.log(colors.gray(`🔍 Discovered ${files.length} files and ${dirs.length} subdirectories`));
+        console.log(
+          `${colors.cyan("●")} ${colors.bold.white("DISCOVERY")}  ` +
+            `${files.length} files, ${dirs.length} subdirectories`
+        );
       }
       await downloadRecursive(url, options, limit, onProgress);
     } else {

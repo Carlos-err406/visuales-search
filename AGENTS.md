@@ -7,7 +7,7 @@ This file contains guidelines and commands for coding agents working in this rep
 - **Runtime**: Node.js (JavaScript/TypeScript runtime)
 - **Language**: TypeScript with strict mode enabled
 - **Module System**: ES Modules (`"type": "module"`)
-- **Package Manager**: **npm ONLY** (enforced via `preinstall` script)
+- **Package Manager**: npm (recommended) or Bun
 - **Purpose**: Unified search and download tool for visuales.uclv.cu content
 
 ## Commands
@@ -28,12 +28,6 @@ npm run format
 npm run lint
 npm run lint:fix
 
-# Run the main script
-npm run src/index.ts
-
-# Run with arguments
-npm run src/index.ts <query1> <query2> <query3>...
-
 # Run the built CLI
 node dist/cli.js search <term1> <term2> <term3>...
 ```
@@ -52,7 +46,11 @@ visuales search <term1> <term2> <term3>...
 
 ```bash
 # Use globally
-visuales download <url> --output <path> [options]
+visuales download "<url>" --output <path> [options]
+
+> [!IMPORTANT]
+> **Always wrap URLs in double quotes.**
+> visuales.uclv.cu URLs often contain spaces, parentheses `()`, and other special characters that the bash shell will try to interpret, causing syntax errors like `bash: syntax error near unexpected token '('`.
 
 # Examples
 visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/" --output ./killing-eve-books --concurrent 5
@@ -93,7 +91,7 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 
 ### Caching System
 
-- **Unified Cache**: All cached data resides in `.cache/`.
+- **Unified Cache**: All cached data resides in `~/.visuales-cli-cache/` (user home directory). This ensures consistency between local dev and global installations.
 - **Cache Registry**: `index.json` tracks all cache segments (`list`, `discovery`, `download`).
 - **Management**: Use `visuales cache` to list, clear, or inspect cached data.
 
@@ -119,7 +117,7 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 
 ## Notes for Agents
 
-- This project is strictly **npm-first**.
+- This project recommends **npm**.
 - Always run `npm run build` after modifying CLI commands to test the distributed version.
 - Maintain the unified cache system when adding new persistent data.
 - Ensure all new code passes `npm run lint` before committing.

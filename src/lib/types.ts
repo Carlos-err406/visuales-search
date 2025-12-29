@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as os from "node:os";
 
 export interface SearchResult {
   url: string;
@@ -101,24 +102,16 @@ export interface DownloadTask {
 export const CONFIG = {
   TARGET_URL: "https://visuales.uclv.cu/listado.html",
   get CACHE_DIR(): string {
-    // lib/types.js is in dist/lib/types.js
-    // cli.js is in dist/cli.js
-    const cliPath = fileURLToPath(new URL("../cli.js", import.meta.url));
-    const projectRoot = path.dirname(path.dirname(cliPath));
-    return path.join(projectRoot, ".cache");
+    return path.join(os.homedir(), ".visuales-cli-cache");
   },
   get CACHE_INDEX_FILE(): string {
     return path.join(this.CACHE_DIR, "index.json");
   },
   get CACHE_FILE(): string {
-    const cliPath = fileURLToPath(new URL("../cli.js", import.meta.url));
-    const projectRoot = path.dirname(path.dirname(cliPath));
-    return path.join(projectRoot, ".cache", "list.json");
+    return path.join(this.CACHE_DIR, "list.json");
   },
   get DOWNLOAD_CACHE_DIR(): string {
-    const cliPath = fileURLToPath(new URL("../cli.js", import.meta.url));
-    const projectRoot = path.dirname(path.dirname(cliPath));
-    return path.join(projectRoot, ".cache", "download");
+    return path.join(this.CACHE_DIR, "download");
   },
   get DISCOVERY_CACHE_FILE(): string {
     return path.join(this.CACHE_DIR, "discovery.json");

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
 import { downloadUrl, DownloadOptions, stopProgress } from "../../lib/download.js";
+import { CONFIG } from "../../lib/types.js";
 import path from "path";
 
 // Helper functions for Download
@@ -19,14 +20,20 @@ export function printDownloadUsage(): void {
   );
 }
 
-export function printDownloading(url: string, outputPath: string): void {
-  console.log(colors.blue(`📂 Starting download from: ${url}`));
-  console.log(colors.gray(`📁 Output directory: ${path.resolve(outputPath)}`));
+export function printDownloading(url: string, outputPath: string, cacheDir: string): void {
+  const line = colors.gray("─".repeat(50));
+  console.log(line);
+  console.log(`${colors.cyan("●")} ${colors.bold.white("VISUALES DOWNLOADER")}`);
+  console.log(line);
+  console.log(`${colors.gray("Source:")}  ${colors.white(url)}`);
+  console.log(`${colors.gray("Target:")}  ${colors.white(path.resolve(outputPath))}`);
+  console.log(`${colors.gray("Cache:")}   ${colors.white(path.resolve(cacheDir))}`);
+  console.log(line);
   console.log();
 }
 
 export function printError(error: unknown): void {
-  console.error(colors.red("\n❌ Error:"));
+  console.error(colors.bold.red("\n[ERROR]"));
   if (error instanceof Error) {
     console.error(colors.red(error.message));
   } else {
@@ -66,12 +73,12 @@ async function downloadCommand(
     verbose: options.verbose,
   };
 
-  printDownloading(url, downloadOptions.output);
+  printDownloading(url, downloadOptions.output, CONFIG.CACHE_DIR);
 
   try {
     await downloadUrl(url, downloadOptions);
     await stopProgress();
-    console.log(colors.green("\n✨ All downloads finished successfully!"));
+    console.log(colors.bold.green("\n[SUCCESS] All downloads finished successfully!"));
   } catch (error) {
     await stopProgress();
     printError(error);
