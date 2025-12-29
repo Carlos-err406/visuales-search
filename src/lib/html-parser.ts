@@ -45,8 +45,7 @@ export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
 
     try {
       decodedPathname = decodeURIComponent(decodeURIComponent(urlObj.pathname));
-    } catch (e) {
-    }
+    } catch (e) {}
 
     decodedPathname = decodedPathname.replace(/\/+/g, "/");
 
@@ -65,12 +64,17 @@ export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
       seenDirectories.add(directory);
     }
 
-    if (searchTerms.length === 0 || matchesSearchTerms(text, normalizedUrl, searchTerms)) {
+    if (
+      searchTerms.length === 0 ||
+      matchesSearchTerms(text, normalizedUrl, searchTerms)
+    ) {
       results.push({
         url: normalizedUrl,
         text,
         directory,
-        encodedUrl: `${urlObj.origin}${urlObj.pathname.replace(/\/+/g, "/")}${urlObj.search}`,
+        encodedUrl: `${urlObj.origin}${urlObj.pathname.replace(/\/+/g, "/")}${
+          urlObj.search
+        }`,
         isDirectoryLink,
       });
     }
@@ -80,7 +84,7 @@ export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
 }
 
 export async function fetchHtml(): Promise<string> {
-  const cached = await import("./cache.js").then(m => m.getCachedHtml());
+  const cached = await import("./cache.js").then((m) => m.getCachedHtml());
   if (cached) {
     return cached;
   }
@@ -93,7 +97,7 @@ export async function fetchHtml(): Promise<string> {
   }
 
   const html = await response.text();
-  await import("./cache.js").then(m => m.setCachedHtml(html));
+  await import("./cache.js").then((m) => m.setCachedHtml(html));
 
   return html;
 }

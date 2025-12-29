@@ -1,5 +1,5 @@
 import colors from "ansi-colors";
-import { type TreeNode, type DisplayOptions } from "./types.js";
+import { type TreeNode, type DisplayOptions } from "../../lib/types.js";
 
 export function makeLink(text: string, url: string): string {
   const linkStart = `\x1b]8;;${url}\x1b\\`;
@@ -7,10 +7,7 @@ export function makeLink(text: string, url: string): string {
   return `${linkStart}${text}${linkEnd}`;
 }
 
-export function displayTree(
-  node: TreeNode,
-  options: DisplayOptions,
-): void {
+export function displayTree(node: TreeNode, options: DisplayOptions): void {
   const { prefix, isLast, isRoot } = options;
   const treePrefix = isRoot ? "" : isLast ? "└── " : "├── ";
   const continuation = isRoot ? "" : isLast ? "    " : "│   ";
@@ -18,16 +15,24 @@ export function displayTree(
   if (!isRoot) {
     if (node.isDirectoryLink && node.ownUrl) {
       const linkText = makeLink(node.name, node.ownUrl);
-      console.log(`${prefix}${colors.gray.dim(treePrefix)}${colors.cyan(linkText)}/`);
+      console.log(
+        `${prefix}${colors.gray.dim(treePrefix)}${colors.cyan(linkText)}/`
+      );
     } else {
-      console.log(`${prefix}${colors.gray.dim(treePrefix)}${colors.yellow.bold(node.name)}/`);
+      console.log(
+        `${prefix}${colors.gray.dim(treePrefix)}${colors.yellow.bold(
+          node.name
+        )}/`
+      );
     }
   }
 
   // Show URL for any node that has a URL (directory or result)
   if (node.isDirectoryLink && node.ownUrl && node.ownEncodedUrl) {
     console.log(
-      `${prefix}${colors.gray.dim(continuation)}${colors.dim(node.ownEncodedUrl)}`
+      `${prefix}${colors.gray.dim(continuation)}${colors.dim(
+        node.ownEncodedUrl
+      )}`
     );
   }
 
@@ -39,16 +44,21 @@ export function displayTree(
     const resultsPrefix = isRoot ? "" : colors.gray.dim(continuation);
 
     node.results.forEach((result, index) => {
-      const isResultLast = index === node.results.length - 1 && node.children.size === 0;
+      const isResultLast =
+        index === node.results.length - 1 && node.children.size === 0;
       const resultPrefix = colors.gray.dim(isResultLast ? "└── " : "├── ");
-      const resultContinuation = colors.gray.dim(isResultLast ? "    " : "│   ");
+      const resultContinuation = colors.gray.dim(
+        isResultLast ? "    " : "│   "
+      );
 
       const linkText = makeLink(result.text, result.url);
       console.log(
         `${prefix}${resultsPrefix}${resultPrefix}${colors.cyan(linkText)}`
       );
       console.log(
-        `${prefix}${resultsPrefix}${resultContinuation}${colors.dim(result.encodedUrl)}`
+        `${prefix}${resultsPrefix}${resultContinuation}${colors.dim(
+          result.encodedUrl
+        )}`
       );
     });
   }

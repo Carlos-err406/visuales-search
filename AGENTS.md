@@ -44,6 +44,38 @@ visuales search <term1> <term2> <term3>...
 visuales search "anti flag"
 visuales search curso python
 visuales search libros pdf
+
+## Download Command
+```bash
+# Install globally from npm registry
+npm i -g visuales
+
+# Or install globally from current directory
+npm i -g .
+
+# Use globally
+visuales download <url> --output <path> [options]
+
+# Examples
+visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/1.pdf" --output ./downloads
+visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/" --output ./killing-eve-books --concurrent 5
+visuales download "https://visuales.uclv.cu/Cursos/Photoshop/" --output ./photoshop-course --concurrent 3
+```
+
+### Download Options
+- `--output, -o`: Output directory (required)
+- `--resume, -r`: Resume interrupted downloads (default: true)
+- `--max-retries`: Maximum retry attempts (default: 3)
+- `--timeout`: Request timeout in seconds (default: Infinity)
+- `--concurrent`: Maximum concurrent downloads (default: 3)
+
+### Download Features
+- **Resumable Downloads**: Automatic resume of interrupted downloads using HTTP Range headers
+- **Concurrent Downloads**: Configurable parallel downloads for directories
+- **Recursive Directory Downloads**: Complete directory tree preservation
+- **Progress Tracking**: Real-time progress bars with speed and ETA
+- **Error Recovery**: Retry logic with exponential backoff
+- **File Structure Preservation**: Maintains original directory structure locally
 ```
 
 ### Testing
