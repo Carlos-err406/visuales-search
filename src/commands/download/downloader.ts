@@ -189,7 +189,7 @@ export async function downloadFile(
 
 export async function getDirectoryListing(
   url: string
-): Promise<{ files: { url: string; size?: number; exact?: boolean }[]; dirs: string[] }> {
+): Promise<{ files: { url: string; size: number; exact?: boolean }[]; dirs: string[] }> {
   const cached = dirListingCache.get(url);
   if (cached && (cached.files.length > 0 || cached.dirs.length > 0)) {
     return cached;
@@ -207,7 +207,7 @@ export async function getDirectoryListing(
 
   const html = await response.text();
   const $ = cheerio.load(html);
-  const files: { url: string; size?: number; exact?: boolean }[] = [];
+  const files: { url: string; size: number; exact?: boolean }[] = [];
   const dirs: string[] = [];
   const baseUrl = url.endsWith("/") ? url : url + "/";
 
@@ -217,16 +217,17 @@ export async function getDirectoryListing(
     const href = $link.attr("href");
     if (!href || href === "../" || href.startsWith("?") || href.startsWith("/") || href.includes("://")) return;
 
-    const sizeText = $row.find('td[align="right"]').first().text().trim();
+    const sizeText = $row.find("td").eq(3).text().trim();
     const fullUrl = new URL(href, baseUrl).toString();
 
     if (href.endsWith("/")) {
       dirs.push(fullUrl);
     } else {
+      const parsedSize = parseSize(sizeText);
       files.push({
         url: fullUrl,
-        size: parseSize(sizeText),
-        exact: false,
+        size: parsedSize,
+        exact: parsedSize > 0, // Only mark as exact if we got a valid size
       });
     }
   });
@@ -244,7 +245,7 @@ export async function downloadRecursive(
   options: DownloadOptions,
   limit: ReturnType<typeof pLimit>,
   onProgress?: (progress: DownloadProgress) => void,
-  initialData?: { files: { url: string; size?: number; exact?: boolean }[]; dirs: string[] }
+  initialData?: { files: { url: string; size: number; exact?: boolean }[]; dirs: string[] }
 ): Promise<void> {
   const { files, dirs } = initialData || (await getDirectoryListing(url));
   await fs.mkdir(options.output, { recursive: true });
@@ -301,7 +302,7 @@ export async function downloadUrl(
       let hasSizeInfo = false;
       let isEstimate = false;
       for (const f of files) {
-        if (f.size) {
+        if (f.size > 0) {
           hasSizeInfo = true;
           totalBytes += f.size;
           if (!f.exact) isEstimate = true;

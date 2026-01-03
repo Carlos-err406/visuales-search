@@ -2,7 +2,7 @@ import { getDiscoveryCache, setDiscoveryCache } from "../../lib/cache.js";
 
 export const dirListingCache = new Map<
   string,
-  { files: { url: string; size?: number; exact?: boolean }[]; dirs: string[] }
+  { files: { url: string; size: number; exact?: boolean }[]; dirs: string[] }
 >();
 
 export async function loadDiscoveryCache() {
