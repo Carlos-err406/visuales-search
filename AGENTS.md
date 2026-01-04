@@ -121,3 +121,4 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 - Always run `npm run build` after modifying CLI commands to test the distributed version.
 - Maintain the unified cache system when adding new persistent data.
 - Ensure all new code passes `npm run lint` before committing.
+- **CLI Operations Timeout**: When testing CLI commands that interact with `visuales.uclv.cu` (slow Apache server), always use very large timeouts (minimum 60-120 seconds) as the server is extremely slow and may take considerable time to respond.
