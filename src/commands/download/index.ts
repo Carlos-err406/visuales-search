@@ -16,7 +16,7 @@ export function printDownloadUsage(): void {
   );
   console.log(
     colors.gray(
-      '  visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/" --output ./killing-eve-books --concurrent 5'
+      '  visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/" --output ./killing-eve-books --concurrent 5 --connections 3'
     )
   );
 }
@@ -50,6 +50,10 @@ async function downloadCommand(
     maxRetries?: string;
     timeout?: string;
     concurrent?: string;
+    connections?: string;
+    compact?: boolean;
+    exclude?: string[];
+    ignore?: string[];
     verbose?: boolean;
   }
 ): Promise<void> {
@@ -71,6 +75,9 @@ async function downloadCommand(
     maxRetries: parseInt(options.maxRetries ?? "3"),
     timeout: options.timeout === "Infinity" ? Infinity : parseInt(options.timeout ?? "Infinity"),
     concurrent: parseInt(options.concurrent ?? "5"),
+    connections: parseInt(options.connections ?? "3"),
+    compact: options.compact ?? false,
+    exclude: [...(options.exclude ?? []), ...(options.ignore ?? [])],
     verbose: options.verbose,
   };
 
@@ -97,8 +104,12 @@ export function setupDownloadCommand(program: Command): void {
     .option("--max-retries <number>", "Maximum retry attempts", "3")
     .option("--timeout <number>", "Request timeout in seconds (Infinity for no timeout)", "Infinity")
     .option("-c, --concurrent <number>", "Maximum concurrent downloads", "5")
+    .option("--connections <number>", "Parallel connections per file", "3")
+    .option("--compact", "Hide individual thread details (default: false)")
+    .option("--exclude <patterns...>", 'Exclude files by glob, e.g. --exclude "*.{jpg,nfo}"')
+    .option("--ignore <patterns...>", "Alias for --exclude")
     .action((url, options, cmd) => {
-      // In subcommands, options is from the command, but we need the program for global options
+      // In subcommands, options is from command, but we need program for global options
       const globalOpts = cmd.parent.opts();
       return downloadCommand(url, { ...options, verbose: globalOpts.verbose });
     });

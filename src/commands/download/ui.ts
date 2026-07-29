@@ -1,6 +1,6 @@
 import cliProgress from "cli-progress";
 import colors from "ansi-colors";
-import { formatSize, formatDuration } from "./utils.js";
+import { formatAverageSpeed, formatDuration, formatSize } from "./utils.js";
 
 export const progressBars = new cliProgress.MultiBar(
   {
@@ -32,24 +32,30 @@ export function createDownloadBar(filename: string, total: number, current: numb
     {
       speed: "---".padEnd(10, " "),
       downloadedPadded: `${formatSize(current)} / ${formatSize(total)}`.padEnd(25, " "),
-      percentagePadded: current.toString().padStart(3, " "),
+      percentagePadded: "0".padStart(3, " "),
       etaPadded: "ETA: --:--:--".padEnd(14, " "),
     },
     {
-      format: `  ${colors.green("{bar}")} ${colors.bold.white("{percentagePadded}%")}  ${colors.gray("•")}  ${colors.gray("{downloadedPadded}")}  ${colors.gray("•")}  ${colors.yellow("{speed}")}  ${colors.gray("•")}  ${colors.cyan("{etaPadded}")}`,
+      format: `  ${colors.green("{bar}")} ${colors.bold.white("{percentagePadded}%")}  ${colors.gray("{downloadedPadded}")}  ${colors.gray("•")}  ${colors.yellow("{speed}")}  ${colors.gray("•")}  ${colors.cyan("{etaPadded}")}`,
       barCompleteChar: "━",
       barIncompleteChar: "─",
-      barsize: 25,
+      barsize: 35,
     }
   );
 
   return { header, progress };
 }
 
-export function logDownloadComplete(filename: string, size: number) {
+export function logDownloadComplete(filename: string, size: number, durationSeconds: number) {
   progressBars.log(
-    `${colors.gray("·")} ${colors.bold.white(filename)} ${colors.gray(`(${formatSize(size)})`)} ${colors.green("(Done)")}\n`
+    `${colors.gray("·")} ${colors.bold.white(filename)} ${colors.gray(`(${formatSize(size)})`)} ${colors.green(
+      `(Done in ${formatDuration(durationSeconds)} • avg ${formatAverageSpeed(size, durationSeconds)})`
+    )}\n`
   );
+}
+
+export function logDownloadSkipped(filename: string, reason: string) {
+  progressBars.log(`${colors.gray("·")} ${colors.bold.white(filename)} ${colors.gray(`(Skipped: ${reason})`)}\n`);
 }
 
 export function logDownloadError(filename: string, error: string) {

@@ -1,5 +1,4 @@
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import * as os from "node:os";
 
 export interface SearchResult {

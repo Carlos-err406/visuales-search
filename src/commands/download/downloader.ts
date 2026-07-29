@@ -1,22 +1,85 @@
 import EasyDl from "easydl";
 import * as cheerio from "cheerio";
+import { execFile } from "node:child_process";
 import path from "path";
 import fs from "fs/promises";
 import colors from "ansi-colors";
 import pLimit from "p-limit";
 import { DownloadOptions, DownloadProgress } from "./types.js";
-import { formatSize, formatDuration, parseSize } from "./utils.js";
-import { dirListingCache, loadDiscoveryCache, saveDiscoveryCache, updateCachedFileSize } from "./discovery-cache.js";
+import { createGlobMatcher, formatSize, formatDuration, parseSize } from "./utils.js";
+import {
+  dirListingCache,
+  getCachedFileSize,
+  loadDiscoveryCache,
+  saveDiscoveryCache,
+  updateCachedFileSize,
+} from "./discovery-cache.js";
 import {
   progressBars,
   createDownloadBar,
   logDownloadComplete,
+  logDownloadSkipped,
   decrementActiveDownloads,
   incrementActiveDownloads,
 } from "./ui.js";
 
-const processedUrls = new Set<string>();
 const downloadedUrls = new Set<string>();
+const SMALL_FILE_SINGLE_CONNECTION_THRESHOLD = 10 * 1024 * 1024;
+const PARTS_DIRECTORY_NAME = ".visuales-parts";
+const DOWNLOAD_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+function getConnectionCount(options: DownloadOptions, expectedSize?: number): number {
+  if (expectedSize && expectedSize <= SMALL_FILE_SINGLE_CONNECTION_THRESHOLD) {
+    return 1;
+  }
+
+  return Math.max(1, options.connections);
+}
+
+async function fetchExpectedFileSize(url: string, options: DownloadOptions): Promise<number> {
+  try {
+    const timeoutMs = Number.isFinite(options.timeout) ? options.timeout * 1000 : undefined;
+    const response = await fetch(url, {
+      method: "HEAD",
+      headers: {
+        "User-Agent": DOWNLOAD_USER_AGENT,
+      },
+      signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
+    });
+    const contentLength = response.headers.get("content-length");
+    const size = contentLength ? parseInt(contentLength, 10) : 0;
+
+    return response.ok && Number.isFinite(size) ? size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(filePath);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function hidePartsDirectory(directory: string): void {
+  if (process.platform === "darwin") {
+    execFile("chflags", ["hidden", directory], () => {});
+  } else if (process.platform === "win32") {
+    execFile("attrib", ["+h", directory], () => {});
+  }
+}
+
+async function removePartsDirectoryIfEmpty(directory: string): Promise<void> {
+  try {
+    await fs.rmdir(directory);
+  } catch {
+    // Keep the sidecar directory when other downloads still have active or resumable parts.
+  }
+}
 
 export async function downloadFile(
   url: string,
@@ -31,17 +94,32 @@ export async function downloadFile(
 
   const encodedFilename = path.basename(url);
   const filename = decodeURIComponent(encodedFilename);
-  const dl = new EasyDl(url, path.join(options.output, filename), {
-    connections: 3,
+  expectedSize ||= getCachedFileSize(url);
+  expectedSize ||= await fetchExpectedFileSize(url, options);
+  const connections = getConnectionCount(options, expectedSize);
+  const startedAt = Date.now();
+  const finalPath = path.join(options.output, filename);
+  const partsDirectory = path.join(options.output, PARTS_DIRECTORY_NAME);
+  const tempPath = path.join(partsDirectory, filename);
+
+  if (await fileExists(finalPath)) {
+    logDownloadSkipped(filename, "already exists");
+    return;
+  }
+
+  await fs.mkdir(partsDirectory, { recursive: true });
+  hidePartsDirectory(partsDirectory);
+
+  const dl = new EasyDl(url, tempPath, {
+    connections,
     existBehavior: "ignore",
-    maxRetry: 10,
+    maxRetry: options.maxRetries,
     retryDelay: 5000,
     retryBackoff: 3000,
-    chunkSize: (size) => Math.max(size / 5, 10 * 1024 * 1024), // Min 10MB chunks to avoid tiny-file spam
+    chunkSize: (size) => Math.min(size / 10, SMALL_FILE_SINGLE_CONNECTION_THRESHOLD),
     httpOptions: {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": DOWNLOAD_USER_AGENT,
       },
     },
   });
@@ -67,7 +145,9 @@ export async function downloadFile(
         }
       }
       if (options.verbose) {
-        console.log(colors.gray(`[DEBUG] Metadata: ${filename} - Size: ${meta.size} bytes`));
+        console.log(
+          colors.gray(`[DEBUG] Metadata: ${filename} - Size: ${meta.size} bytes, Connections: ${connections}`)
+        );
       }
     });
 
@@ -85,17 +165,6 @@ export async function downloadFile(
         });
         bars.progress.update(progress.percentage);
       }
-    });
-
-    dl.on("end", () => {
-      if (bars) {
-        const sizeToLog = expectedSize || downloadedTotal;
-        updateCachedFileSize(url, sizeToLog);
-        logDownloadComplete(filename, sizeToLog);
-        progressBars.remove(bars.header);
-        progressBars.remove(bars.progress);
-      }
-      cleanup();
     });
 
     dl.on("error", (err) => {
@@ -157,16 +226,34 @@ export async function downloadFile(
     });
 
     dl.wait()
-      .then((completed) => {
+      .then(async (completed) => {
         if (!completed && !options.resume) {
           // If not completed and we didn't ask to resume, it might be a partial failure
           reject(new Error("Download finished but file is incomplete"));
           return;
         }
+
+        if (completed) {
+          await fs.rename(tempPath, finalPath);
+          await removePartsDirectoryIfEmpty(partsDirectory);
+
+          if (bars) {
+            const sizeToLog = expectedSize || downloadedTotal;
+            const durationSeconds = (Date.now() - startedAt) / 1000;
+            updateCachedFileSize(url, sizeToLog);
+            logDownloadComplete(filename, sizeToLog, durationSeconds);
+            progressBars.remove(bars.header);
+            progressBars.remove(bars.progress);
+          }
+        }
+
+        cleanup();
         resolve();
       })
-      .catch((err: any) => {
-        const isAbort = err.message === "aborted" || err.code === "ECONNRESET";
+      .catch((err: unknown) => {
+        const error = err instanceof Error ? err : new Error(String(err));
+        const errorCode = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+        const isAbort = error.message === "aborted" || errorCode === "ECONNRESET";
         if (options.verbose) {
           console.error(
             colors.red(`\n[DEBUG] dl.wait() ${isAbort ? "Aborted/Reset" : "Rejected"} (${filename}):`),
@@ -174,7 +261,7 @@ export async function downloadFile(
           );
         }
         if (bars) {
-          const status = isAbort ? "(Connection Reset)" : `(Error: ${err.message})`;
+          const status = isAbort ? "(Connection Reset)" : `(Error: ${error.message})`;
           bars.header.update(0, {
             filename: `${colors.bold.red(filename)} ${colors.red(status)}`,
           });
@@ -182,7 +269,7 @@ export async function downloadFile(
           bars.progress.stop();
         }
         cleanup(); // Ensure UI count is decremented even on failure
-        reject(err);
+        reject(error);
       });
   });
 }
@@ -197,8 +284,7 @@ export async function getDirectoryListing(
 
   const response = await fetch(url, {
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "User-Agent": DOWNLOAD_USER_AGENT,
     },
   });
   if (!response.ok) {
@@ -245,18 +331,31 @@ export async function downloadRecursive(
   options: DownloadOptions,
   limit: ReturnType<typeof pLimit>,
   onProgress?: (progress: DownloadProgress) => void,
-  initialData?: { files: { url: string; size: number; exact?: boolean }[]; dirs: string[] }
+  initialData?: { files: { url: string; size: number; exact?: boolean }[]; dirs: string[] },
+  relativePath: string = ""
 ): Promise<void> {
   const { files, dirs } = initialData || (await getDirectoryListing(url));
   await fs.mkdir(options.output, { recursive: true });
+  const isExcluded = createGlobMatcher(options.exclude);
+  const includedFiles = files.filter((file) => {
+    const filename = decodeURIComponent(path.basename(file.url));
+    const relativeFilePath = path.posix.join(relativePath, filename);
+    const excluded = isExcluded(filename) || isExcluded(relativeFilePath);
 
-  const downloadTasks = files.map((file) =>
+    if (excluded) {
+      logDownloadSkipped(relativeFilePath, "excluded");
+    }
+
+    return !excluded;
+  });
+
+  const downloadTasks = includedFiles.map((file) =>
     limit(async () => {
       try {
         await downloadFile(file.url, options, onProgress, file.size);
-      } catch (err: any) {
+      } catch (err: unknown) {
         // Log the error but don't rethrow to keep other downloads going
-        const errorMsg = err.message || String(err);
+        const errorMsg = err instanceof Error ? err.message : String(err);
         progressBars.log(
           `${colors.bold.red("✖")} ${colors.bold.white(
             decodeURIComponent(path.basename(file.url))
@@ -270,8 +369,8 @@ export async function downloadRecursive(
     try {
       const dirName = decodeURIComponent(path.basename(new URL(dirUrl).pathname));
       const subOptions = { ...options, output: path.join(options.output, dirName) };
-      await downloadRecursive(dirUrl, subOptions, limit, onProgress);
-    } catch (err: any) {
+      await downloadRecursive(dirUrl, subOptions, limit, onProgress, undefined, path.posix.join(relativePath, dirName));
+    } catch {
       // Sub-directory traversal failed, but we continue
     }
   });

@@ -1,15 +1,17 @@
 import { getDiscoveryCache, setDiscoveryCache } from "../../lib/cache.js";
 
-export const dirListingCache = new Map<
-  string,
-  { files: { url: string; size: number; exact?: boolean }[]; dirs: string[] }
->();
+export interface DirectoryListing {
+  files: { url: string; size: number; exact?: boolean }[];
+  dirs: string[];
+}
+
+export const dirListingCache = new Map<string, DirectoryListing>();
 
 export async function loadDiscoveryCache() {
   const data = await getDiscoveryCache();
   if (data) {
     for (const [url, entries] of Object.entries(data)) {
-      dirListingCache.set(url, entries as any);
+      dirListingCache.set(url, entries as DirectoryListing);
     }
   }
 }
@@ -34,4 +36,18 @@ export function updateCachedFileSize(fileUrl: string, bytes: number) {
   } catch {
     // Ignore URL parsing errors
   }
+}
+
+export function getCachedFileSize(fileUrl: string): number {
+  try {
+    const parentUrl = fileUrl.substring(0, fileUrl.lastIndexOf("/") + 1);
+    const cached = dirListingCache.get(parentUrl);
+    if (cached) {
+      const file = cached.files.find((f) => f.url === fileUrl);
+      return file?.size || 0;
+    }
+  } catch {
+    // Ignore URL parsing errors
+  }
+  return 0;
 }
