@@ -1,21 +1,23 @@
 {
   "name": "visuales",
   "version": "1.0.0",
-  "description": "Search tool for visuales.uclv.cu content",
-  "main": "cli.ts",
+  "description": "Search and download visuales.uclv.cu content from the terminal",
+  "main": "dist/cli.js",
+  "types": "dist/cli.d.ts",
   "bin": {
     "visuales": "dist/cli.js"
   },
   "type": "module",
   "scripts": {
-    "preinstall": "npx only-allow npm",
     "build": "npm run clean && tsc",
     "clean": "rm -rf dist",
     "format": "prettier --write .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "prepare": "husky",
-    "prepublishOnly": "npm run build",
+    "check": "npm run lint && npm run build",
+    "prepare": "node scripts/prepare.js",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check",
     "postbuild": "chmod +x dist/cli.js"
   },
   "lint-staged": {
@@ -24,14 +26,28 @@
   },
   "keywords": [
     "search",
+    "download",
     "cli",
     "visuales",
     "uclv"
   ],
-  "author": "",
+  "author": "Carlos Daniel Vilaseca Illnait",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Carlos-err406/visuales-search.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Carlos-err406/visuales-search/issues"
+  },
+  "homepage": "https://github.com/Carlos-err406/visuales-search#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map",
+    "!dist/**/*.tsbuildinfo"
   ],
   "devDependencies": {
     "@types/cli-progress": "^3.11.6",

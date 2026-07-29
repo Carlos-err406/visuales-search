@@ -1,18 +1,30 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { readFileSync } from "node:fs";
 import { setupSearchCommand } from "./commands/search/index.js";
 import { setupDownloadCommand } from "./commands/download/index.js";
 import { setupCacheCommand } from "./commands/cache/index.js";
 import { setupUpdateCommand } from "./commands/update/index.js";
+
+function readPackageVersion(): string {
+  try {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as {
+      version?: string;
+    };
+    return packageJson.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 function createProgram(): Command {
   const program = new Command();
 
   program
     .name("visuales")
-    .description("Search tool for visuales.uclv.cu content")
-    .version("1.0.0", "-v, --version", "display version number")
+    .description("Search and download visuales.uclv.cu content")
+    .version(readPackageVersion(), "-v, --version", "display version number")
     .helpOption("-h, --help", "display help for command");
 
   // Global options
