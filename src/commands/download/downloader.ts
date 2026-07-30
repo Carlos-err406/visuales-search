@@ -31,6 +31,22 @@ const PARTS_DIRECTORY_NAME = ".visuales-parts";
 const DOWNLOAD_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+interface DownloadFailure {
+  filePath: string;
+  error: string;
+}
+
+function formatDownloadFailures(failures: DownloadFailure[]): string {
+  const shownFailures = failures
+    .slice(0, 10)
+    .map((failure) => `- ${failure.filePath}: ${failure.error}`)
+    .join("\n");
+  const remainingCount = failures.length - 10;
+  const suffix = remainingCount > 0 ? `\n...and ${remainingCount} more.` : "";
+
+  return `${failures.length} download${failures.length === 1 ? "" : "s"} failed:\n${shownFailures}${suffix}`;
+}
+
 function getConnectionCount(options: DownloadOptions, expectedSize?: number): number {
   if (expectedSize && expectedSize <= SMALL_FILE_SINGLE_CONNECTION_THRESHOLD) {
     return 1;
@@ -131,6 +147,7 @@ export async function downloadFile(
 
   return new Promise((resolve, reject) => {
     let decremented = false;
+    let lastDownloadError: Error | null = null;
     const cleanup = () => {
       if (bars && !decremented) {
         decrementActiveDownloads();
@@ -171,6 +188,7 @@ export async function downloadFile(
 
     dl.on("error", (err) => {
       const errorMsg = err.message || String(err);
+      lastDownloadError = err instanceof Error ? err : new Error(errorMsg);
       if (options.verbose) {
         console.error(colors.red(`\n[DEBUG] EasyDL Error (${filename}):`), err);
       }
@@ -229,9 +247,9 @@ export async function downloadFile(
 
     dl.wait()
       .then(async (completed) => {
-        if (!completed && !options.resume) {
-          // If not completed and we didn't ask to resume, it might be a partial failure
-          reject(new Error("Download finished but file is incomplete"));
+        if (!completed) {
+          cleanup();
+          reject(lastDownloadError ?? new Error("Download finished but file is incomplete"));
           return;
         }
 
@@ -254,6 +272,7 @@ export async function downloadFile(
       })
       .catch((err: unknown) => {
         const error = err instanceof Error ? err : new Error(String(err));
+        lastDownloadError = error;
         const errorCode = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
         const isAbort = error.message === "aborted" || errorCode === "ECONNRESET";
         if (options.verbose) {
@@ -367,10 +386,11 @@ export async function downloadRecursive(
   onProgress?: (progress: DownloadProgress) => void,
   initialData?: { files: { url: string; size: number; exact?: boolean }[]; dirs: string[] },
   relativePath: string = ""
-): Promise<void> {
+): Promise<DownloadFailure[]> {
   const { files, dirs } = initialData || (await getDirectoryListing(url));
   await fs.mkdir(options.output, { recursive: true });
   const isExcluded = createGlobMatcher(options.exclude);
+  const failures: DownloadFailure[] = [];
   const includedFiles = files.filter((file) => {
     const filename = decodeURIComponent(path.basename(file.url));
     const relativeFilePath = path.posix.join(relativePath, filename);
@@ -395,6 +415,10 @@ export async function downloadRecursive(
             decodeURIComponent(path.basename(file.url))
           )} ${colors.red(`(Failed: ${errorMsg})`)}\n`
         );
+        failures.push({
+          filePath: path.posix.join(relativePath, decodeURIComponent(path.basename(file.url))),
+          error: errorMsg,
+        });
       }
     })
   );
@@ -403,13 +427,29 @@ export async function downloadRecursive(
     try {
       const dirName = decodeURIComponent(path.basename(new URL(dirUrl).pathname));
       const subOptions = { ...options, output: path.join(options.output, dirName) };
-      await downloadRecursive(dirUrl, subOptions, limit, onProgress, undefined, path.posix.join(relativePath, dirName));
-    } catch {
-      // Sub-directory traversal failed, but we continue
+      return await downloadRecursive(
+        dirUrl,
+        subOptions,
+        limit,
+        onProgress,
+        undefined,
+        path.posix.join(relativePath, dirName)
+      );
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      failures.push({
+        filePath: path.posix.join(relativePath, decodeURIComponent(path.basename(new URL(dirUrl).pathname))),
+        error: errorMsg,
+      });
+
+      return [];
     }
   });
 
-  await Promise.all([...downloadTasks, ...recursionTasks]);
+  await Promise.all(downloadTasks);
+  const subFailures = await Promise.all(recursionTasks);
+
+  return failures.concat(subFailures.flat());
 }
 
 export async function stopProgress(): Promise<void> {
@@ -447,7 +487,11 @@ export async function downloadUrl(
         `${colors.cyan("●")} ${colors.bold.white("DISCOVERY  ")} ${files.length} files, ${dirs.length} subdirectories${sizeSummary}`
       );
 
-      await downloadRecursive(url, options, limit, onProgress, { files, dirs });
+      const failures = await downloadRecursive(url, options, limit, onProgress, { files, dirs });
+
+      if (failures.length > 0) {
+        throw new Error(formatDownloadFailures(failures));
+      }
     } else {
       await downloadFile(url, options, onProgress);
     }
