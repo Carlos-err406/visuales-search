@@ -8,11 +8,13 @@ import pLimit from "p-limit";
 import { DownloadOptions, DownloadProgress } from "./types.js";
 import { createGlobMatcher, formatSize, formatDuration, parseSize } from "./utils.js";
 import {
+  DIRECTORY_LISTING_PARSER_VERSION,
   dirListingCache,
   getCachedFileSize,
   loadDiscoveryCache,
   saveDiscoveryCache,
   updateCachedFileSize,
+  type DirectoryListing,
 } from "./discovery-cache.js";
 import {
   progressBars,
@@ -274,11 +276,48 @@ export async function downloadFile(
   });
 }
 
-export async function getDirectoryListing(
-  url: string
-): Promise<{ files: { url: string; size: number; exact?: boolean }[]; dirs: string[] }> {
+function isRelativeListingHref(href: string): boolean {
+  return href !== "../" && !href.startsWith("?") && !href.startsWith("/") && !href.includes("://");
+}
+
+function getPreformattedListingSize(text: string | undefined): string {
+  const fields = text?.trim().split(/\s+/) ?? [];
+
+  return fields.at(-1) ?? "";
+}
+
+function addDirectoryListingEntry(
+  href: string | undefined,
+  sizeText: string,
+  baseUrl: string,
+  listing: DirectoryListing,
+  seenUrls: Set<string>
+): void {
+  if (!href || !isRelativeListingHref(href)) return;
+
+  const fullUrl = new URL(href, baseUrl).toString();
+  if (seenUrls.has(fullUrl)) return;
+  seenUrls.add(fullUrl);
+
+  if (href.endsWith("/")) {
+    listing.dirs.push(fullUrl);
+    return;
+  }
+
+  const parsedSize = parseSize(sizeText);
+  listing.files.push({
+    url: fullUrl,
+    size: parsedSize,
+    exact: parsedSize > 0,
+  });
+}
+
+export async function getDirectoryListing(url: string): Promise<DirectoryListing> {
   const cached = dirListingCache.get(url);
-  if (cached && (cached.files.length > 0 || cached.dirs.length > 0)) {
+  if (
+    cached?.parserVersion === DIRECTORY_LISTING_PARSER_VERSION &&
+    (cached.files.length > 0 || cached.dirs.length > 0)
+  ) {
     return cached;
   }
 
@@ -293,33 +332,28 @@ export async function getDirectoryListing(
 
   const html = await response.text();
   const $ = cheerio.load(html);
-  const files: { url: string; size: number; exact?: boolean }[] = [];
-  const dirs: string[] = [];
+  const result: DirectoryListing = { files: [], dirs: [], parserVersion: DIRECTORY_LISTING_PARSER_VERSION };
   const baseUrl = url.endsWith("/") ? url : url + "/";
+  const seenUrls = new Set<string>();
 
   $("tr").each((_, element) => {
     const $row = $(element);
     const $link = $row.find("td a").first();
-    const href = $link.attr("href");
-    if (!href || href === "../" || href.startsWith("?") || href.startsWith("/") || href.includes("://")) return;
-
     const sizeText = $row.find("td").eq(3).text().trim();
-    const fullUrl = new URL(href, baseUrl).toString();
 
-    if (href.endsWith("/")) {
-      dirs.push(fullUrl);
-    } else {
-      const parsedSize = parseSize(sizeText);
-      files.push({
-        url: fullUrl,
-        size: parsedSize,
-        exact: parsedSize > 0, // Only mark as exact if we got a valid size
-      });
-    }
+    addDirectoryListingEntry($link.attr("href"), sizeText, baseUrl, result, seenUrls);
   });
 
-  const result = { files, dirs };
-  if (files.length > 0 || dirs.length > 0) {
+  $("pre a").each((_, element) => {
+    const href = $(element).attr("href");
+    const nextSibling = element.nextSibling;
+    const nextText = nextSibling?.type === "text" ? nextSibling.data : undefined;
+    const sizeText = getPreformattedListingSize(nextText);
+
+    addDirectoryListingEntry(href, sizeText, baseUrl, result, seenUrls);
+  });
+
+  if (result.files.length > 0 || result.dirs.length > 0) {
     dirListingCache.set(url, result);
     await saveDiscoveryCache();
   }

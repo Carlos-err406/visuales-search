@@ -5,6 +5,23 @@ import * as util from "node:util";
 
 const execAsync = util.promisify(exec);
 
+function getErrorOutput(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const output = ["stdout", "stderr"]
+      .map((key) => (key in error ? String(error[key as keyof typeof error] ?? "") : ""))
+      .join("\n")
+      .trim();
+
+    if (output) return output;
+  }
+
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isPermissionError(output: string): boolean {
+  return /\b(EACCES|EPERM)\b/i.test(output) || /permission denied/i.test(output);
+}
+
 async function updateCommand(): Promise<void> {
   console.log(colors.blue("🔄 Updating Visuales CLI..."));
 
@@ -15,12 +32,20 @@ async function updateCommand(): Promise<void> {
 
     console.log(colors.green("\n🎉 Visuales CLI updated successfully!"));
   } catch (error) {
+    const output = getErrorOutput(error);
+
     console.error(colors.red("\n❌ Update failed:"));
-    if (error instanceof Error) {
-      console.error(colors.red(error.message));
-    } else {
-      console.error(colors.red(String(error)));
+    console.error(colors.red(output));
+
+    if (isPermissionError(output)) {
+      console.error();
+      console.error(colors.yellow("This looks like a global npm permissions issue."));
+      console.error(colors.gray("Try one of these:"));
+      console.error(colors.gray("  sudo npm install -g visuales@latest"));
+      console.error(colors.gray("  npm config set prefix ~/.npm-global"));
+      console.error(colors.gray('  export PATH="$HOME/.npm-global/bin:$PATH"'));
     }
+
     process.exit(1);
   }
 }

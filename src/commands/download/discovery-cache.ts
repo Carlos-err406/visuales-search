@@ -3,7 +3,10 @@ import { getDiscoveryCache, setDiscoveryCache } from "../../lib/cache.js";
 export interface DirectoryListing {
   files: { url: string; size: number; exact?: boolean }[];
   dirs: string[];
+  parserVersion?: number;
 }
+
+export const DIRECTORY_LISTING_PARSER_VERSION = 2;
 
 export const dirListingCache = new Map<string, DirectoryListing>();
 
