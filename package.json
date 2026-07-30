@@ -1,6 +1,6 @@
 {
   "name": "visuales",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Search and download visuales.uclv.cu content from the terminal",
   "main": "dist/cli.js",
   "types": "dist/cli.d.ts",
@@ -36,7 +36,7 @@
     "uclv"
   ],
   "author": "Carlos Daniel Vilaseca Illnait",
-  "license": "ISC",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Carlos-err406/visuales-search.git"
