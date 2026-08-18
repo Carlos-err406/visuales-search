@@ -7,6 +7,13 @@ export interface SearchResult {
   directory: string;
   encodedUrl: string;
   isDirectoryLink: boolean;
+  downloadId?: string;
+}
+
+export interface SearchAliasCache {
+  version: string;
+  updated: number;
+  entries: Record<string, string>;
 }
 
 export interface TreeNode {
@@ -17,6 +24,7 @@ export interface TreeNode {
   isDirectoryLink: boolean;
   ownUrl?: string;
   ownEncodedUrl?: string;
+  ownDownloadId?: string;
 }
 
 export interface CacheData {
@@ -114,5 +122,8 @@ export const CONFIG = {
   },
   get DISCOVERY_CACHE_FILE(): string {
     return path.join(this.CACHE_DIR, "discovery.json");
+  },
+  get SEARCH_ALIAS_FILE(): string {
+    return path.join(this.CACHE_DIR, "search-aliases.json");
   },
 } as const;

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
 import { parseHtml, fetchHtml } from "../../lib/html-parser.js";
+import { saveSearchAliases } from "../../lib/cache.js";
 import { buildTree } from "./tree-builder.js";
 import { displayResults } from "./display.js";
 
@@ -34,7 +35,11 @@ export function printError(error: unknown): void {
   }
 }
 
-async function searchCommand(terms: string[]) {
+interface SearchCommandOptions {
+  cache?: boolean;
+}
+
+async function searchCommand(terms: string[], options: SearchCommandOptions = {}) {
   if (terms.length === 0) {
     console.log(colors.yellow("Please provide at least one search term"));
     console.log(colors.gray("Example: visuales search photoshop course beginners"));
@@ -44,7 +49,7 @@ async function searchCommand(terms: string[]) {
   printSearching(terms);
 
   try {
-    const html = await fetchHtml();
+    const html = await fetchHtml({ noCache: options.cache === false });
     console.log();
 
     // Parse all results (no search terms) to get all directory links
@@ -58,9 +63,15 @@ async function searchCommand(terms: string[]) {
       return;
     }
 
+    const downloadAliases = await saveSearchAliases(allResults.map((result) => result.encodedUrl));
+    for (const result of [...allResults, ...searchResults]) {
+      result.downloadId = downloadAliases.get(result.encodedUrl);
+    }
+
     // Build tree with all directory URLs available
     const tree = buildTree(searchResults, allResults);
     displayResults(tree);
+    console.log(colors.gray("\nDownload any item with: visuales download <id>"));
 
     printResults(searchResults.length);
   } catch (error) {
@@ -74,5 +85,6 @@ export function setupSearchCommand(program: Command): void {
     .command("search")
     .description("Search for content on visuales.uclv.cu")
     .argument("<terms...>", "search terms (all must be present in results)")
+    .option("--no-cache", "Bypass cached search data and refresh it")
     .action(searchCommand);
 }

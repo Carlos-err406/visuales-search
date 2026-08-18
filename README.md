@@ -38,11 +38,19 @@ visuales search supernatural season 5
 
 All search terms must be present in a result.
 
+Bypass the search cache and refresh it from visuales.uclv.cu:
+
+```bash
+visuales search --no-cache supernatural season 5
+```
+
 Download a directory:
 
 ```bash
 visuales download "http://visuales.uclv.cu/Series/Ingles/Supernatural/S05/" -o supernatural_5
 ```
+
+If `--output` is omitted, directory URLs download into a folder named after the final URL path segment in the current directory. File URLs download into the current directory.
 
 Always quote visuales URLs. They often contain spaces, parentheses, and other shell-sensitive characters.
 
@@ -56,7 +64,7 @@ visuales download "http://visuales.uclv.cu/Series/Ingles/Supernatural/S06/" \
 
 Useful download options:
 
-- `--output, -o`: output directory.
+- `--output, -o`: output directory. Optional; defaults to the current directory for file URLs and a target-named folder for directory URLs.
 - `--concurrent, -c`: maximum number of files to download at once. Default: `5`.
 - `--connections`: parallel connections per large file. Default: `3`.
 - `--exclude`: skip files by glob. Can be repeated or comma-separated.
@@ -64,10 +72,52 @@ Useful download options:
 - `--resume, -r`: resume interrupted downloads. Default: `true`.
 - `--max-retries`: maximum retry attempts. Default: `3`.
 - `--timeout`: request timeout in seconds. Default: `Infinity`.
+- `--detach, -d`: start the download in the background and return immediately.
+
+Recursive downloads show a whole-job file counter such as `FILES 7/24`, so you can see how many files are complete across the full directory tree.
 
 Downloaded file parts are staged in a hidden `.visuales-parts/` sidecar directory and moved into the target folder when assembly finishes.
 
 The downloader supports both legacy table-style Apache listings and the newer preformatted Apache listings currently returned by `visuales.uclv.cu`.
+
+List interrupted or failed download tasks:
+
+```bash
+visuales tasks
+```
+
+Clear saved download task history:
+
+```bash
+visuales tasks --clear
+```
+
+Resume a previous task by id or URL:
+
+```bash
+visuales tasks resume <task-id-or-url>
+```
+
+Show one task:
+
+```bash
+visuales tasks status <task-id-or-url>
+```
+
+Run a download in the background:
+
+```bash
+visuales download "http://visuales.uclv.cu/Series/Ingles/Supernatural/S05/" -o supernatural_5 --detach
+```
+
+Detached downloads keep updating the task file, so `visuales tasks` shows the running PID, last progress, and log file. Stop a running background download with:
+
+```bash
+visuales tasks cancel <task-id-or-url>
+```
+
+Each download stores its source URL, output path, options, and last progress in `~/.visuales-cli-cache/download/tasks.json`.
+By default, partial multi-connection chunks are preserved so interrupted downloads can resume. Use `--resume false` to discard existing chunk state and start a download cleanly.
 
 ## Cache
 

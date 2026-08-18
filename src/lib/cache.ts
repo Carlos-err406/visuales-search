@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { formatDistanceToNow } from "date-fns";
 import colors from "ansi-colors";
-import { CONFIG, type CacheData, type CacheIndex, type CacheEntry } from "./types.js";
+import { CONFIG, type CacheData, type CacheIndex, type CacheEntry, type SearchAliasCache } from "./types.js";
 
 export async function ensureCacheDirectory(): Promise<void> {
   if (!fs.existsSync(CONFIG.CACHE_DIR)) {
@@ -120,6 +121,22 @@ export async function listCaches(): Promise<CacheEntry[]> {
         path: "discovery.json",
         created: stats.birthtimeMs,
         description: "Cached directory listings for faster discovery",
+      });
+    }
+  }
+
+  // Auto-detect search aliases if they exist
+  if (fs.existsSync(CONFIG.SEARCH_ALIAS_FILE)) {
+    const aliasesEntryExists = index.entries.some((e) => e.id === "search-aliases");
+    if (!aliasesEntryExists) {
+      const stats = fs.statSync(CONFIG.SEARCH_ALIAS_FILE);
+      await updateCacheEntry("search-aliases", {
+        id: "search-aliases",
+        name: "Search Download Aliases",
+        type: "file",
+        path: "search-aliases.json",
+        created: stats.birthtimeMs,
+        description: "Short ids for URLs shown by visuales search",
       });
     }
   }
@@ -258,6 +275,89 @@ export async function setCachedHtml(html: string): Promise<void> {
   } catch {
     console.log(colors.yellow("⚠️  Failed to cache HTML"));
   }
+}
+
+function createSearchAliasId(url: string, length = 8): string {
+  return createHash("sha256").update(url).digest("hex").slice(0, length);
+}
+
+function loadSearchAliasCache(): SearchAliasCache {
+  if (!fs.existsSync(CONFIG.SEARCH_ALIAS_FILE)) {
+    return {
+      version: "1.0.0",
+      updated: Date.now(),
+      entries: {},
+    };
+  }
+
+  try {
+    const content = fs.readFileSync(CONFIG.SEARCH_ALIAS_FILE, "utf-8");
+    const cache = JSON.parse(content) as SearchAliasCache;
+
+    return {
+      version: cache.version ?? "1.0.0",
+      updated: cache.updated ?? Date.now(),
+      entries: cache.entries ?? {},
+    };
+  } catch {
+    console.log(colors.yellow("⚠️  Search aliases cache corrupted, creating new one"));
+    return {
+      version: "1.0.0",
+      updated: Date.now(),
+      entries: {},
+    };
+  }
+}
+
+function findAvailableSearchAliasId(url: string, entries: Record<string, string>): string {
+  for (const length of [8, 10, 12, 16, 24, 32]) {
+    const id = createSearchAliasId(url, length);
+
+    if (!entries[id] || entries[id] === url) {
+      return id;
+    }
+  }
+
+  return createSearchAliasId(url, 64);
+}
+
+export async function saveSearchAliases(urls: string[]): Promise<Map<string, string>> {
+  await ensureCacheDirectory();
+  const cache = loadSearchAliasCache();
+  const aliases = new Map<string, string>();
+
+  for (const url of urls) {
+    const id = findAvailableSearchAliasId(url, cache.entries);
+    cache.entries[id] = url;
+    aliases.set(url, id);
+  }
+
+  cache.updated = Date.now();
+
+  try {
+    fs.writeFileSync(CONFIG.SEARCH_ALIAS_FILE, JSON.stringify(cache));
+    await updateCacheEntry("search-aliases", {
+      id: "search-aliases",
+      name: "Search Download Aliases",
+      type: "file",
+      path: "search-aliases.json",
+      created: cache.updated,
+      description: "Short ids for URLs shown by visuales search",
+    });
+  } catch {
+    console.log(colors.yellow("⚠️  Failed to cache search download aliases"));
+  }
+
+  return aliases;
+}
+
+export async function resolveSearchAlias(idOrUrl: string): Promise<string> {
+  if (idOrUrl.includes("://")) {
+    return idOrUrl;
+  }
+
+  const cache = loadSearchAliasCache();
+  return cache.entries[idOrUrl] ?? idOrUrl;
 }
 
 // Download cache functions

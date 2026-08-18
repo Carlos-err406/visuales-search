@@ -23,8 +23,27 @@ export interface DownloadProgress {
   fileName: string;
   progress: number;
   speed: string;
+  speedBytes?: number;
   totalSize: number;
   downloadedSize: number;
+  overall?: DownloadOverallProgress;
+}
+
+export interface DownloadOverallProgress {
+  completedFiles: number;
+  totalFiles: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  speedBytes: number;
+  activeFiles: DownloadActiveFileProgress[];
+}
+
+export interface DownloadActiveFileProgress {
+  fileName: string;
+  progress: number;
+  downloadedSize: number;
+  totalSize: number;
+  speed: string;
 }
 
 // EasyDL progress event interfaces for better type safety

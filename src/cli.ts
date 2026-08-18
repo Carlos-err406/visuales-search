@@ -6,6 +6,7 @@ import { setupSearchCommand } from "./commands/search/index.js";
 import { setupDownloadCommand } from "./commands/download/index.js";
 import { setupCacheCommand } from "./commands/cache/index.js";
 import { setupUpdateCommand } from "./commands/update/index.js";
+import { setupTasksCommand } from "./commands/tasks/index.js";
 
 function readPackageVersion(): string {
   try {
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
     // Setup subcommands
     setupSearchCommand(program);
     setupDownloadCommand(program);
+    setupTasksCommand(program);
     setupCacheCommand(program);
     setupUpdateCommand(program);
 

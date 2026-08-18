@@ -4,13 +4,14 @@ export function buildTree(results: SearchResult[], allResults: SearchResult[]): 
   const root = new Map<string, TreeNode>();
 
   // First, collect all directory URLs from all results
-  const allDirectoryUrls = new Map<string, { url: string; encodedUrl: string }>();
+  const allDirectoryUrls = new Map<string, { url: string; encodedUrl: string; downloadId?: string }>();
 
   for (const result of allResults) {
     if (result.isDirectoryLink) {
       allDirectoryUrls.set(result.directory, {
         url: result.url,
         encodedUrl: result.encodedUrl,
+        downloadId: result.downloadId,
       });
     }
   }
@@ -52,6 +53,7 @@ export function buildTree(results: SearchResult[], allResults: SearchResult[]): 
         lastNode.isDirectoryLink = true;
         lastNode.ownUrl = result.url;
         lastNode.ownEncodedUrl = result.encodedUrl;
+        lastNode.ownDownloadId = result.downloadId;
       }
     }
   }
@@ -64,6 +66,7 @@ export function buildTree(results: SearchResult[], allResults: SearchResult[]): 
       node.isDirectoryLink = true;
       node.ownUrl = dirInfo.url;
       node.ownEncodedUrl = dirInfo.encodedUrl;
+      node.ownDownloadId = dirInfo.downloadId;
     }
 
     // Recursively set URLs for children
