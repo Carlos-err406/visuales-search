@@ -631,12 +631,14 @@ function formatWatchSummaryLine(count: number, total: number, label: string, col
 }
 
 function printDownloadWatchResumeHint(tasks: DownloadTaskRecord[]): void {
-  const interruptedTaskIds = tasks.filter((task) => task.status === "interrupted").map((task) => task.id);
-  if (interruptedTaskIds.length === 0) return;
+  const resumableTaskIds = tasks
+    .filter((task) => task.status === "failed" || task.status === "interrupted")
+    .map((task) => task.id);
+  if (resumableTaskIds.length === 0) return;
 
   console.log();
-  console.log(colors.gray("Resume interrupted tasks:"));
-  console.log(colors.white(`visuales tasks resume ${interruptedTaskIds.join(" ")} --detach`));
+  console.log(colors.gray("Resume unfinished tasks:"));
+  console.log(colors.white(`visuales tasks resume ${resumableTaskIds.join(" ")} --detach`));
 }
 
 function printDownloadWatchHeading(idOrUrl: string | undefined): void {
