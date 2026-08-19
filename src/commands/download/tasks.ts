@@ -134,8 +134,7 @@ async function loadTaskStore(): Promise<DownloadTaskStore> {
       tasks: Array.isArray(store.tasks)
         ? store.tasks.map((task) => ({
             ...task,
-            interruptedCause:
-              task.status === "interrupted" ? (task.interruptedCause ?? "unknown") : task.interruptedCause,
+            interruptedCause: normalizeInterruptedCause(task),
             options: normalizeStoredOptions(task.options),
           }))
         : [],
@@ -143,6 +142,13 @@ async function loadTaskStore(): Promise<DownloadTaskStore> {
   } catch {
     return { version: 1, tasks: [] };
   }
+}
+
+function normalizeInterruptedCause(task: DownloadTaskRecord): DownloadTaskInterruptedCause | undefined {
+  if (task.status !== "interrupted") return task.interruptedCause;
+  if (task.interruptedCause && task.interruptedCause !== "unknown") return task.interruptedCause;
+  if (task.logFile) return "process-exited";
+  return "unknown";
 }
 
 async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
