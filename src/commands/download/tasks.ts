@@ -327,11 +327,17 @@ interface CapturedOutput<T> {
   output: string;
 }
 
+interface PrintDownloadTaskProgressOptions {
+  includeDetails?: boolean;
+  fileNameWidth?: number;
+}
+
 const ANSI_CLEAR_SCREEN = "\x1B[2J";
 const ANSI_CLEAR_TO_END = "\x1B[J";
 const ANSI_CURSOR_HOME = "\x1B[H";
 const ANSI_HIDE_CURSOR = "\x1B[?25l";
 const ANSI_SHOW_CURSOR = "\x1B[?25h";
+const WATCH_FILE_NAME_WIDTH = 72;
 
 function isActionableTask(task: DownloadTaskRecord): boolean {
   return task.status === "running" || task.status === "interrupted";
@@ -381,7 +387,6 @@ export async function printDownloadTaskStatus(idOrUrl: string): Promise<boolean>
 export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloadTasksOptions = {}): Promise<boolean> {
   const intervalMs = parseWatchIntervalMs(options.interval);
   let stopped = false;
-  let renderedOnce = false;
   let wakeWatcher: (() => void) | undefined;
   const stopWatching = (): void => {
     stopped = true;
@@ -393,8 +398,7 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
   try {
     while (!stopped) {
       const frame = await renderDownloadWatchFrame(idOrUrl, intervalMs);
-      writeDownloadWatchFrame(frame.output, renderedOnce);
-      renderedOnce = true;
+      writeDownloadWatchFrame(frame.output);
 
       if (!frame.result.found) return false;
       if (!frame.result.shouldContinue || stopped) return true;
@@ -422,9 +426,8 @@ async function renderDownloadWatchFrame(
   });
 }
 
-function writeDownloadWatchFrame(output: string, renderedOnce: boolean): void {
-  const prefix = renderedOnce ? ANSI_CURSOR_HOME : `${ANSI_HIDE_CURSOR}${ANSI_CLEAR_SCREEN}${ANSI_CURSOR_HOME}`;
-  process.stdout.write(`${prefix}${output}${ANSI_CLEAR_TO_END}`);
+function writeDownloadWatchFrame(output: string): void {
+  process.stdout.write(`${ANSI_HIDE_CURSOR}${ANSI_CLEAR_SCREEN}${ANSI_CURSOR_HOME}${output}${ANSI_CLEAR_TO_END}`);
 }
 
 async function captureConsoleOutput<T>(callback: () => Promise<T>): Promise<CapturedOutput<T>> {
@@ -477,7 +480,7 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
   }
 
   for (const task of displayedTasks) {
-    printDownloadTaskProgress(task);
+    printDownloadTaskProgress(task, { includeDetails: false, fileNameWidth: WATCH_FILE_NAME_WIDTH });
     console.log();
   }
 
@@ -513,7 +516,8 @@ async function sleep(ms: number, registerWake?: (wake: () => void) => void): Pro
   });
 }
 
-function printDownloadTaskProgress(task: DownloadTaskRecord): void {
+function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownloadTaskProgressOptions = {}): void {
+  const includeDetails = options.includeDetails ?? true;
   const updatedAge = formatDistanceToNow(new Date(task.updatedAt), { addSuffix: true });
   console.log(`${colors.cyan.bold(task.id)} ${formatStatus(task)} ${colors.gray(`updated ${updatedAge}`)}`);
 
@@ -521,7 +525,9 @@ function printDownloadTaskProgress(task: DownloadTaskRecord): void {
     const waitingMessage =
       task.status === "running" ? "Waiting for the first progress update..." : "No progress saved.";
     console.log(`           ${colors.gray("Progress:")} ${colors.yellow(waitingMessage)}`);
-    printDownloadTaskDetails(task, false);
+    if (includeDetails) {
+      printDownloadTaskDetails(task, false);
+    }
     return;
   }
 
@@ -549,34 +555,56 @@ function printDownloadTaskProgress(task: DownloadTaskRecord): void {
       `           ${colors.gray("Active:")}  ${colors.white(`${activeFiles.length} file${activeFiles.length === 1 ? "" : "s"}`)}`
     );
     for (const file of activeFiles) {
-      printActiveFileProgress(file);
+      printActiveFileProgress(file, options);
     }
   } else {
-    console.log(`           ${colors.gray("Last file:")} ${colors.white(task.lastProgress.fileName)}`);
-    printActiveFileProgress(task.lastProgress);
+    console.log(
+      `           ${colors.gray("Last file:")} ${colors.white(formatDisplayFileName(task.lastProgress.fileName, options.fileNameWidth))}`
+    );
+    printActiveFileProgress(task.lastProgress, options);
   }
 
   console.log(`           ${colors.gray("Sample:")}   ${colors.gray(progressAge)}`);
-  printDownloadTaskDetails(task, false);
+  if (includeDetails) {
+    printDownloadTaskDetails(task, false);
+  }
 }
 
-function printActiveFileProgress(file: {
-  fileName: string;
-  progress: number;
-  downloadedSize: number;
-  totalSize: number;
-  speed: string;
-}): void {
+function printActiveFileProgress(
+  file: {
+    fileName: string;
+    progress: number;
+    downloadedSize: number;
+    totalSize: number;
+    speed: string;
+  },
+  options: PrintDownloadTaskProgressOptions = {}
+): void {
   const filePercent = clampPercentage(file.progress);
   const fileDownloadedSize = formatSize(file.downloadedSize);
   const fileTotalSize = file.totalSize > 0 ? formatSize(file.totalSize) : "unknown";
   const fileBar = renderProgressBar(filePercent);
+  const fileName = formatDisplayFileName(file.fileName, options.fileNameWidth);
 
   console.log(
     `           ${colors.gray("File:")}    ${fileBar} ${colors.bold.white(`${Math.floor(filePercent)}%`)} ${colors.gray(
       `${fileDownloadedSize} / ${fileTotalSize}`
-    )} ${colors.white(file.fileName)} ${colors.gray(file.speed)}`
+    )} ${colors.white(fileName)} ${colors.gray(file.speed)}`
   );
+}
+
+function formatDisplayFileName(fileName: string, width: number | undefined): string {
+  if (!width) return fileName;
+  return truncateMiddle(fileName, width);
+}
+
+function truncateMiddle(value: string, width: number): string {
+  if (value.length <= width) return value;
+  if (width <= 3) return value.slice(0, width);
+
+  const headLength = Math.ceil((width - 3) / 2);
+  const tailLength = Math.floor((width - 3) / 2);
+  return `${value.slice(0, headLength)}...${value.slice(-tailLength)}`;
 }
 
 function renderProgressBar(percent: number): string {
