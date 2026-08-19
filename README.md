@@ -179,7 +179,7 @@ npm run release:patch
 git push origin main
 ```
 
-Use `release:minor` or `release:major` instead of `release:patch` when appropriate. The publish workflow detects the package version, creates the matching `vX.Y.Z` tag and GitHub Release when needed, validates the package, builds `dist/`, verifies package contents, publishes to npm with provenance, and updates the Homebrew tap formula.
+Use `release:minor` or `release:major` instead of `release:patch` when appropriate. The publish workflow detects the package version, creates the matching `vX.Y.Z` tag and GitHub Release when needed, validates the package, builds `dist`, verifies package contents, publishes to npm, and updates the Homebrew tap formula.
 
 Manual npm publishing is still possible when needed:
 

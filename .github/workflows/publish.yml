@@ -105,9 +105,7 @@ jobs:
 
       - name: Publish package
         if: steps.state.outputs.should_publish == 'true'
-        run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish
 
       - name: Report already published
         if: steps.state.outputs.should_publish != 'true'
