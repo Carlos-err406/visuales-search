@@ -21,6 +21,7 @@ import {
   startDownloadTask,
   startDownloadTaskWithPid,
   updateDownloadTaskProgress,
+  type DownloadTaskRecord,
 } from "./tasks.js";
 
 interface DownloadCommandOptions {
@@ -340,30 +341,45 @@ function registerInterruptHandler(taskId: string): () => void {
 }
 
 export async function resumeCommand(
-  idOrUrl: string,
+  idOrUrls: string | string[],
   options: {
     detach?: boolean;
     verbose?: boolean;
   }
 ): Promise<void> {
-  const task = await findDownloadTask(idOrUrl);
-  if (!task) {
-    console.error(colors.red(`No download task found for '${idOrUrl}'.`));
-    console.log(colors.gray("Run `visuales tasks` to see resumable downloads."));
+  const inputs = Array.isArray(idOrUrls) ? idOrUrls : [idOrUrls];
+  const resumableTasks: DownloadTaskRecord[] = [];
+  const missingTasks: string[] = [];
+
+  for (const idOrUrl of inputs) {
+    const task = await findDownloadTask(idOrUrl);
+    if (!task) {
+      missingTasks.push(idOrUrl);
+      console.error(colors.red(`No download task found for '${idOrUrl}'.`));
+      console.log(colors.gray("Run `visuales tasks` to see resumable downloads."));
+      continue;
+    }
+
+    if (task.status === "completed") {
+      console.log(colors.yellow(`Task ${task.id} is already completed.`));
+      continue;
+    }
+
+    resumableTasks.push(task);
+  }
+
+  if (missingTasks.length > 0) {
     process.exit(1);
   }
 
-  if (task.status === "completed") {
-    console.log(colors.yellow(`Task ${task.id} is already completed.`));
-    return;
+  for (const task of resumableTasks) {
+    await downloadCommand(task.urls ?? task.url, {
+      ...task.options,
+      resume: true,
+      detach: options.detach,
+      verbose: options.verbose ?? task.options.verbose,
+    });
   }
-
-  await downloadCommand(task.urls ?? task.url, {
-    ...task.options,
-    resume: true,
-    detach: options.detach,
-    verbose: options.verbose ?? task.options.verbose,
-  });
 }
 
 async function tasksCommand(options: { all?: boolean; clear?: boolean }): Promise<void> {
@@ -375,16 +391,35 @@ async function tasksCommand(options: { all?: boolean; clear?: boolean }): Promis
   await printDownloadTasks({ all: options.all });
 }
 
-export async function cancelCommand(idOrUrl: string): Promise<void> {
-  const task = await cancelDownloadTask(idOrUrl);
-  if (!task) {
-    console.error(colors.red(`No download task found for '${idOrUrl}'.`));
-    console.log(colors.gray("Run `visuales tasks` to see running downloads."));
-    process.exit(1);
+export async function cancelCommand(idOrUrls: string | string[]): Promise<void> {
+  const inputs = Array.isArray(idOrUrls) ? idOrUrls : [idOrUrls];
+  const missingTasks: string[] = [];
+
+  for (const idOrUrl of inputs) {
+    const task = await cancelDownloadTask(idOrUrl);
+    if (!task) {
+      missingTasks.push(idOrUrl);
+      console.error(colors.red(`No download task found for '${idOrUrl}'.`));
+      console.log(colors.gray("Run `visuales tasks` to see running downloads."));
+      continue;
+    }
+
+    if (task.status === "completed") {
+      console.log(colors.yellow(`Task ${task.id} is already completed.`));
+      continue;
+    }
+
+    if (task.status === "interrupted" && task.interruptedCause !== "canceled") {
+      console.log(colors.yellow(`Task ${task.id} is already interrupted.`));
+    } else {
+      console.log(colors.yellow(`Canceled task ${task.id}.`));
+    }
+    console.log(colors.gray(`Resume with: visuales tasks resume ${task.id}`));
   }
 
-  console.log(colors.yellow(`Canceled task ${task.id}.`));
-  console.log(colors.gray(`Resume with: visuales tasks resume ${task.id}`));
+  if (missingTasks.length > 0) {
+    process.exit(1);
+  }
 }
 
 export function setupDownloadCommand(program: Command): void {

@@ -109,13 +109,13 @@ visuales tasks --clear
 Resume a previous task by id or URL:
 
 ```bash
-visuales tasks resume <task-id-or-url>
+visuales tasks resume <task-id-or-url> [more-task-ids-or-urls...]
 ```
 
 Show one task:
 
 ```bash
-visuales tasks status <task-id-or-url>
+visuales tasks status <task-id-or-url> [more-task-ids-or-urls...]
 ```
 
 Watch one task by id or URL:
@@ -133,8 +133,10 @@ visuales download "http://visuales.uclv.cu/Series/Ingles/Supernatural/S05/" -o s
 Detached downloads keep updating the task file, so `visuales tasks` shows the running PID, last progress, and log file. Stop a running background download with:
 
 ```bash
-visuales tasks cancel <task-id-or-url>
+visuales tasks cancel <task-id-or-url> [more-task-ids-or-urls...]
 ```
+
+`resume`, `status`, and `cancel` accept multiple task ids or URLs.
 
 Each download stores its source URL, output path, options, and last progress in `~/.visuales-cli-cache/download/tasks.json`.
 Interrupted tasks also store why they stopped when the CLI can determine it, such as a user cancellation, interrupt signal, or unexpected process exit.

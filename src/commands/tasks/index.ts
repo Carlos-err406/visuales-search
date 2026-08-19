@@ -17,11 +17,23 @@ async function listTasksCommand(options: { all?: boolean; clear?: boolean }): Pr
   await printDownloadTasks({ all: options.all });
 }
 
-async function statusCommand(idOrUrl: string): Promise<void> {
-  const found = await printDownloadTaskStatus(idOrUrl);
-  if (!found) {
-    console.error(colors.red(`No download task found for '${idOrUrl}'.`));
-    console.log(colors.gray("Run `visuales tasks` to see known tasks."));
+async function statusCommand(idOrUrls: string[]): Promise<void> {
+  const missingTasks: string[] = [];
+
+  for (const [index, idOrUrl] of idOrUrls.entries()) {
+    if (index > 0) {
+      console.log();
+    }
+
+    const found = await printDownloadTaskStatus(idOrUrl);
+    if (!found) {
+      missingTasks.push(idOrUrl);
+      console.error(colors.red(`No download task found for '${idOrUrl}'.`));
+      console.log(colors.gray("Run `visuales tasks` to see known tasks."));
+    }
+  }
+
+  if (missingTasks.length > 0) {
     process.exit(1);
   }
 }
@@ -43,18 +55,18 @@ export function setupTasksCommand(program: Command): void {
 
   tasks
     .command("resume")
-    .description("Resume a previous download task by task id or URL")
-    .argument("<task>", "Task id or URL")
+    .description("Resume previous download tasks by task id or URL")
+    .argument("<tasks...>", "Task ids or URLs")
     .option("-d, --detach", "Run the resumed download in the background")
-    .action((idOrUrl, options, cmd) => {
+    .action((idOrUrls, options, cmd) => {
       const globalOpts = cmd.parent.parent.opts();
-      return resumeCommand(idOrUrl, { detach: options.detach, verbose: globalOpts.verbose });
+      return resumeCommand(idOrUrls, { detach: options.detach, verbose: globalOpts.verbose });
     });
 
   tasks
     .command("cancel")
-    .description("Cancel a running download task by task id or URL")
-    .argument("<task>", "Task id or URL")
+    .description("Cancel running download tasks by task id or URL")
+    .argument("<tasks...>", "Task ids or URLs")
     .action(cancelCommand);
 
   tasks
@@ -66,7 +78,7 @@ export function setupTasksCommand(program: Command): void {
 
   tasks
     .command("status")
-    .description("Show details for one download task")
-    .argument("<task>", "Task id or URL")
+    .description("Show details for download tasks")
+    .argument("<tasks...>", "Task ids or URLs")
     .action(statusCommand);
 }
