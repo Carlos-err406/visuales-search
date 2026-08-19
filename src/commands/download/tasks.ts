@@ -322,6 +322,17 @@ interface DownloadWatchFrameResult {
   shouldContinue: boolean;
 }
 
+interface CapturedOutput<T> {
+  result: T;
+  output: string;
+}
+
+const ANSI_CLEAR_SCREEN = "\x1B[2J";
+const ANSI_CLEAR_TO_END = "\x1B[J";
+const ANSI_CURSOR_HOME = "\x1B[H";
+const ANSI_HIDE_CURSOR = "\x1B[?25l";
+const ANSI_SHOW_CURSOR = "\x1B[?25h";
+
 function isActionableTask(task: DownloadTaskRecord): boolean {
   return task.status === "running" || task.status === "interrupted";
 }
@@ -370,6 +381,7 @@ export async function printDownloadTaskStatus(idOrUrl: string): Promise<boolean>
 export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloadTasksOptions = {}): Promise<boolean> {
   const intervalMs = parseWatchIntervalMs(options.interval);
   let stopped = false;
+  let renderedOnce = false;
   let wakeWatcher: (() => void) | undefined;
   const stopWatching = (): void => {
     stopped = true;
@@ -380,12 +392,12 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
 
   try {
     while (!stopped) {
-      clearTerminal();
-      const frame = await printDownloadWatchFrame(idOrUrl);
-      printDownloadWatchFooter(intervalMs);
+      const frame = await renderDownloadWatchFrame(idOrUrl, intervalMs);
+      writeDownloadWatchFrame(frame.output, renderedOnce);
+      renderedOnce = true;
 
-      if (!frame.found) return false;
-      if (!frame.shouldContinue || stopped) return true;
+      if (!frame.result.found) return false;
+      if (!frame.result.shouldContinue || stopped) return true;
       await sleep(intervalMs, (wake) => {
         wakeWatcher = wake;
       });
@@ -395,6 +407,43 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
     return true;
   } finally {
     process.removeListener("SIGINT", stopWatching);
+    process.stdout.write(ANSI_SHOW_CURSOR);
+  }
+}
+
+async function renderDownloadWatchFrame(
+  idOrUrl: string | undefined,
+  intervalMs: number
+): Promise<CapturedOutput<DownloadWatchFrameResult>> {
+  return captureConsoleOutput(async () => {
+    const frame = await printDownloadWatchFrame(idOrUrl);
+    printDownloadWatchFooter(intervalMs);
+    return frame;
+  });
+}
+
+function writeDownloadWatchFrame(output: string, renderedOnce: boolean): void {
+  const prefix = renderedOnce ? ANSI_CURSOR_HOME : `${ANSI_HIDE_CURSOR}${ANSI_CLEAR_SCREEN}${ANSI_CURSOR_HOME}`;
+  process.stdout.write(`${prefix}${output}${ANSI_CLEAR_TO_END}`);
+}
+
+async function captureConsoleOutput<T>(callback: () => Promise<T>): Promise<CapturedOutput<T>> {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines: string[] = [];
+  const appendLine = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+
+  console.log = appendLine;
+  console.error = appendLine;
+
+  try {
+    const result = await callback();
+    return { result, output: lines.length > 0 ? `${lines.join("\n")}\n` : "" };
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
   }
 }
 
@@ -452,10 +501,6 @@ function parseWatchIntervalMs(interval: number | string | undefined): number {
   const seconds = interval === undefined ? 2 : Number(interval);
   const safeSeconds = Number.isFinite(seconds) ? Math.max(1, seconds) : 2;
   return safeSeconds * 1000;
-}
-
-function clearTerminal(): void {
-  process.stdout.write("\x1B[2J\x1B[H");
 }
 
 async function sleep(ms: number, registerWake?: (wake: () => void) => void): Promise<void> {
