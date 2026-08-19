@@ -123,8 +123,7 @@ function getSystemicFailureMessage(failures: DownloadFailure[]): string | null {
 }
 
 function getConnectionCount(options: DownloadOptions, expectedSize?: number): number {
-  // EasyDl's multipart assembly can emit unhandled ERR_STREAM_DESTROYED on Node 26+.
-  if (NODE_MAJOR_VERSION >= 26) {
+  if (usesNativeFetchDownloader()) {
     return 1;
   }
 
@@ -133,6 +132,10 @@ function getConnectionCount(options: DownloadOptions, expectedSize?: number): nu
   }
 
   return Math.max(1, options.connections);
+}
+
+function usesNativeFetchDownloader(): boolean {
+  return NODE_MAJOR_VERSION >= 20;
 }
 
 function isUnavailableResponse(response: Response): boolean {
@@ -507,7 +510,7 @@ export async function downloadFile(
 
   for (let attempt = 1; attempt <= maxFileAttempts; attempt++) {
     try {
-      if (NODE_MAJOR_VERSION >= 26) {
+      if (usesNativeFetchDownloader()) {
         let downloadedTotal = 0;
         let bars: ReturnType<typeof createDownloadBar> | null = slotBar ?? null;
         let countedActive = false;

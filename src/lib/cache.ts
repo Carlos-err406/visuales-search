@@ -11,6 +11,12 @@ export async function ensureCacheDirectory(): Promise<void> {
   }
 }
 
+function writeJsonFileAtomic(filePath: string, data: unknown): void {
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temporaryPath, JSON.stringify(data));
+  fs.renameSync(temporaryPath, filePath);
+}
+
 // Cache index management
 async function loadCacheIndex(): Promise<CacheIndex> {
   if (!fs.existsSync(CONFIG.CACHE_INDEX_FILE)) {
@@ -39,7 +45,7 @@ async function loadCacheIndex(): Promise<CacheIndex> {
 async function saveCacheIndex(index: CacheIndex): Promise<void> {
   await ensureCacheDirectory();
   try {
-    fs.writeFileSync(CONFIG.CACHE_INDEX_FILE, JSON.stringify(index));
+    writeJsonFileAtomic(CONFIG.CACHE_INDEX_FILE, index);
   } catch {
     console.log(colors.yellow("⚠️  Failed to save cache index"));
   }
@@ -259,7 +265,7 @@ export async function setCachedHtml(html: string): Promise<void> {
   };
 
   try {
-    fs.writeFileSync(CONFIG.CACHE_FILE, JSON.stringify(data));
+    writeJsonFileAtomic(CONFIG.CACHE_FILE, data);
 
     // Update cache index
     await updateCacheEntry("list", {
@@ -335,7 +341,7 @@ export async function saveSearchAliases(urls: string[]): Promise<Map<string, str
   cache.updated = Date.now();
 
   try {
-    fs.writeFileSync(CONFIG.SEARCH_ALIAS_FILE, JSON.stringify(cache));
+    writeJsonFileAtomic(CONFIG.SEARCH_ALIAS_FILE, cache);
     await updateCacheEntry("search-aliases", {
       id: "search-aliases",
       name: "Search Download Aliases",
@@ -441,7 +447,7 @@ export async function getDiscoveryCache(): Promise<Record<string, unknown> | nul
 export async function setDiscoveryCache(data: Record<string, unknown>): Promise<void> {
   await ensureCacheDirectory();
   try {
-    fs.writeFileSync(CONFIG.DISCOVERY_CACHE_FILE, JSON.stringify(data));
+    writeJsonFileAtomic(CONFIG.DISCOVERY_CACHE_FILE, data);
 
     // Update index
     await updateCacheEntry("discovery", {
