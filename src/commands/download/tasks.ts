@@ -10,6 +10,7 @@ import type { DownloadOptions, DownloadProgress } from "./types.js";
 import { formatSize } from "./utils.js";
 
 export type DownloadTaskStatus = "running" | "completed" | "failed" | "interrupted";
+export type DownloadTaskInterruptedCause = "canceled" | "process-exited" | "signal" | "unknown";
 export type StoredDownloadOptions = Omit<DownloadOptions, "timeout"> & { timeout: number | "Infinity" };
 
 export interface DownloadTaskRecord {
@@ -26,6 +27,7 @@ export interface DownloadTaskRecord {
   startedAt?: number;
   completedAt?: number;
   interruptedAt?: number;
+  interruptedCause?: DownloadTaskInterruptedCause;
   lastError?: string;
   lastProgress?: {
     fileName: string;
@@ -132,6 +134,8 @@ async function loadTaskStore(): Promise<DownloadTaskStore> {
       tasks: Array.isArray(store.tasks)
         ? store.tasks.map((task) => ({
             ...task,
+            interruptedCause:
+              task.status === "interrupted" ? (task.interruptedCause ?? "unknown") : task.interruptedCause,
             options: normalizeStoredOptions(task.options),
           }))
         : [],
@@ -157,6 +161,7 @@ function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
     ...task,
     status: "interrupted",
     interruptedAt: task.interruptedAt ?? Date.now(),
+    interruptedCause: task.interruptedCause ?? "process-exited",
     updatedAt: Date.now(),
     pid: undefined,
   };
@@ -216,6 +221,10 @@ export async function startDownloadTaskWithPid(
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     startedAt: now,
+    interruptedAt: undefined,
+    interruptedCause: undefined,
+    completedAt: undefined,
+    lastError: undefined,
     lastProgress: existing?.lastProgress,
   };
 
@@ -234,6 +243,8 @@ export async function completeDownloadTask(id: string): Promise<void> {
     status: "completed",
     pid: undefined,
     completedAt: Date.now(),
+    interruptedAt: undefined,
+    interruptedCause: undefined,
     lastError: undefined,
   });
 }
@@ -242,15 +253,18 @@ export async function failDownloadTask(id: string, error: unknown): Promise<void
   await updateTask(id, {
     status: "failed",
     pid: undefined,
+    interruptedAt: undefined,
+    interruptedCause: undefined,
     lastError: error instanceof Error ? error.message : String(error),
   });
 }
 
-export async function interruptDownloadTask(id: string): Promise<void> {
+export async function interruptDownloadTask(id: string, cause: DownloadTaskInterruptedCause = "signal"): Promise<void> {
   await updateTask(id, {
     status: "interrupted",
     pid: undefined,
     interruptedAt: Date.now(),
+    interruptedCause: cause,
   });
 }
 
@@ -258,9 +272,14 @@ export async function cancelDownloadTask(idOrUrl: string): Promise<DownloadTaskR
   const task = await findDownloadTask(idOrUrl);
   if (!task) return null;
 
-  if (task.status !== "running" || !task.pid || !isProcessAlive(task.pid)) {
-    await interruptDownloadTask(task.id);
-    return { ...task, status: "interrupted", pid: undefined, interruptedAt: Date.now() };
+  if (task.status !== "running") {
+    return task;
+  }
+
+  if (!task.pid || !isProcessAlive(task.pid)) {
+    const interruptedAt = Date.now();
+    await interruptDownloadTask(task.id, "process-exited");
+    return { ...task, status: "interrupted", pid: undefined, interruptedAt, interruptedCause: "process-exited" };
   }
 
   try {
@@ -269,8 +288,9 @@ export async function cancelDownloadTask(idOrUrl: string): Promise<DownloadTaskR
     // If the process exits between the liveness check and signal, still mark the task resumable.
   }
 
-  await interruptDownloadTask(task.id);
-  return { ...task, status: "interrupted", pid: undefined, interruptedAt: Date.now() };
+  const interruptedAt = Date.now();
+  await interruptDownloadTask(task.id, "canceled");
+  return { ...task, status: "interrupted", pid: undefined, interruptedAt, interruptedCause: "canceled" };
 }
 
 export async function updateDownloadTaskProgress(id: string, progress: DownloadProgress): Promise<void> {
@@ -311,6 +331,13 @@ function formatStatus(task: DownloadTaskRecord): string {
   if (task.status === "running") return colors.cyan("running");
   if (task.status === "failed") return colors.red("failed");
   return colors.yellow("interrupted");
+}
+
+function formatInterruptedCause(cause: DownloadTaskInterruptedCause | undefined): string {
+  if (cause === "canceled") return "canceled by user";
+  if (cause === "process-exited") return "process exited unexpectedly";
+  if (cause === "signal") return "received interrupt signal";
+  return "unknown cause";
 }
 
 interface PrintDownloadTasksOptions {
@@ -608,6 +635,9 @@ function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownl
   }
 
   console.log(`           ${colors.gray("Sample:")}   ${colors.gray(progressAge)}`);
+  if (task.status === "interrupted" && !includeDetails) {
+    printInterruptedCauseLine(task);
+  }
   if (includeDetails) {
     printDownloadTaskDetails(task, false);
   }
@@ -734,6 +764,9 @@ function printDownloadTaskDetails(task: DownloadTaskRecord, includeProgressSumma
   if (task.lastError) {
     console.log(`           ${colors.gray("Error:")}  ${colors.red(task.lastError)}`);
   }
+  if (task.status === "interrupted") {
+    printInterruptedCauseLine(task);
+  }
 
   if (task.status !== "completed") {
     console.log(`           ${colors.gray("Resume:")} ${colors.white(`visuales tasks resume ${task.id}`)}`);
@@ -741,6 +774,12 @@ function printDownloadTaskDetails(task: DownloadTaskRecord, includeProgressSumma
   if (task.status === "running") {
     console.log(`           ${colors.gray("Cancel:")} ${colors.white(`visuales tasks cancel ${task.id}`)}`);
   }
+}
+
+function printInterruptedCauseLine(task: DownloadTaskRecord): void {
+  console.log(
+    `           ${colors.gray("Interrupted:")} ${colors.yellow(formatInterruptedCause(task.interruptedCause))}`
+  );
 }
 
 export async function clearAndPrintDownloadTasks(): Promise<void> {

@@ -137,6 +137,7 @@ visuales tasks cancel <task-id-or-url>
 ```
 
 Each download stores its source URL, output path, options, and last progress in `~/.visuales-cli-cache/download/tasks.json`.
+Interrupted tasks also store why they stopped when the CLI can determine it, such as a user cancellation, interrupt signal, or unexpected process exit.
 By default, partial multi-connection chunks are preserved so interrupted downloads can resume. Use `--resume false` to discard existing chunk state and start a download cleanly.
 
 ## Cache

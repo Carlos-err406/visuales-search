@@ -324,7 +324,7 @@ function registerInterruptHandler(taskId: string): () => void {
   const handler = () => {
     void (async () => {
       await stopProgress();
-      await interruptDownloadTask(taskId);
+      await interruptDownloadTask(taskId, "signal");
       console.log(colors.yellow(`\nDownload interrupted. Resume with: visuales tasks resume ${taskId}`));
       process.exit(130);
     })();
