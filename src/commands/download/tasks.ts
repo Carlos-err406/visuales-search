@@ -337,7 +337,8 @@ const ANSI_CLEAR_TO_END = "\x1B[J";
 const ANSI_CURSOR_HOME = "\x1B[H";
 const ANSI_HIDE_CURSOR = "\x1B[?25l";
 const ANSI_SHOW_CURSOR = "\x1B[?25h";
-const WATCH_FILE_NAME_WIDTH = 72;
+const WATCH_MAX_FILE_NAME_WIDTH = 72;
+const WATCH_MIN_FILE_NAME_WIDTH = 12;
 
 function isActionableTask(task: DownloadTaskRecord): boolean {
   return task.status === "running" || task.status === "interrupted";
@@ -480,7 +481,7 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
   }
 
   for (const task of displayedTasks) {
-    printDownloadTaskProgress(task, { includeDetails: false, fileNameWidth: WATCH_FILE_NAME_WIDTH });
+    printDownloadTaskProgress(task, { includeDetails: false, fileNameWidth: WATCH_MAX_FILE_NAME_WIDTH });
     console.log();
   }
 
@@ -583,14 +584,35 @@ function printActiveFileProgress(
   const filePercent = clampPercentage(file.progress);
   const fileDownloadedSize = formatSize(file.downloadedSize);
   const fileTotalSize = file.totalSize > 0 ? formatSize(file.totalSize) : "unknown";
+  const percent = `${Math.floor(filePercent)}%`;
+  const size = `${fileDownloadedSize} / ${fileTotalSize}`;
   const fileBar = renderProgressBar(filePercent);
-  const fileName = formatDisplayFileName(file.fileName, options.fileNameWidth);
+  const fileNameWidth = calculateFileNameWidth(file.speed, percent, size, options.fileNameWidth);
+  const fileName = formatDisplayFileName(file.fileName, fileNameWidth);
 
   console.log(
-    `           ${colors.gray("File:")}    ${fileBar} ${colors.bold.white(`${Math.floor(filePercent)}%`)} ${colors.gray(
-      `${fileDownloadedSize} / ${fileTotalSize}`
-    )} ${colors.white(fileName)} ${colors.gray(file.speed)}`
+    `           ${colors.gray("File:")}    ${fileBar} ${colors.bold.white(percent)} ${colors.gray(size)} ${colors.white(
+      fileName
+    )} ${colors.gray(file.speed)}`
   );
+}
+
+function calculateFileNameWidth(
+  speed: string,
+  percent: string,
+  size: string,
+  requestedWidth: number | undefined
+): number | undefined {
+  if (!requestedWidth) return undefined;
+
+  const columns = process.stdout.columns;
+  if (!columns) return requestedWidth;
+
+  const prefixWidth = "           File:    ".length;
+  const barWidth = STATUS_BAR_WIDTH + 2;
+  const fixedWidth = prefixWidth + barWidth + 1 + percent.length + 1 + size.length + 1 + 1 + speed.length;
+  const availableWidth = columns - fixedWidth - 1;
+  return Math.max(WATCH_MIN_FILE_NAME_WIDTH, Math.min(requestedWidth, availableWidth));
 }
 
 function formatDisplayFileName(fileName: string, width: number | undefined): string {
