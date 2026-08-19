@@ -332,6 +332,10 @@ interface PrintDownloadTaskProgressOptions {
   fileNameWidth?: number;
 }
 
+interface WatchInputMode {
+  restore: () => void;
+}
+
 const ANSI_CLEAR_SCREEN = "\x1B[2J";
 const ANSI_CLEAR_TO_END = "\x1B[J";
 const ANSI_CURSOR_HOME = "\x1B[H";
@@ -401,6 +405,7 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
 
   process.once("SIGINT", stopWatching);
   process.on("SIGWINCH", wake);
+  const inputMode = enterWatchInputMode(stopWatching);
   process.stdout.write(`${ANSI_ENTER_ALTERNATE_SCREEN}${ANSI_HIDE_CURSOR}`);
 
   try {
@@ -420,8 +425,33 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
   } finally {
     process.removeListener("SIGINT", stopWatching);
     process.removeListener("SIGWINCH", wake);
+    inputMode?.restore();
     process.stdout.write(`${ANSI_SHOW_CURSOR}${ANSI_EXIT_ALTERNATE_SCREEN}`);
   }
+}
+
+function enterWatchInputMode(stopWatching: () => void): WatchInputMode | undefined {
+  if (!process.stdin.isTTY) return undefined;
+
+  const stdin = process.stdin;
+  const wasRaw = stdin.isRaw;
+  const onData = (data: Buffer): void => {
+    if (data.includes(3)) {
+      stopWatching();
+    }
+  };
+
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.on("data", onData);
+
+  return {
+    restore: () => {
+      stdin.removeListener("data", onData);
+      stdin.setRawMode(wasRaw);
+      stdin.pause();
+    },
+  };
 }
 
 async function renderDownloadWatchFrame(
