@@ -337,6 +337,8 @@ const ANSI_CLEAR_TO_END = "\x1B[J";
 const ANSI_CURSOR_HOME = "\x1B[H";
 const ANSI_HIDE_CURSOR = "\x1B[?25l";
 const ANSI_SHOW_CURSOR = "\x1B[?25h";
+const ANSI_ENTER_ALTERNATE_SCREEN = "\x1B[?1049h";
+const ANSI_EXIT_ALTERNATE_SCREEN = "\x1B[?1049l";
 const WATCH_MAX_FILE_NAME_WIDTH = 72;
 const WATCH_MIN_FILE_NAME_WIDTH = 12;
 
@@ -389,12 +391,17 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
   const intervalMs = parseWatchIntervalMs(options.interval);
   let stopped = false;
   let wakeWatcher: (() => void) | undefined;
+  const wake = (): void => {
+    wakeWatcher?.();
+  };
   const stopWatching = (): void => {
     stopped = true;
-    wakeWatcher?.();
+    wake();
   };
 
   process.once("SIGINT", stopWatching);
+  process.on("SIGWINCH", wake);
+  process.stdout.write(`${ANSI_ENTER_ALTERNATE_SCREEN}${ANSI_HIDE_CURSOR}`);
 
   try {
     while (!stopped) {
@@ -412,7 +419,8 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
     return true;
   } finally {
     process.removeListener("SIGINT", stopWatching);
-    process.stdout.write(ANSI_SHOW_CURSOR);
+    process.removeListener("SIGWINCH", wake);
+    process.stdout.write(`${ANSI_SHOW_CURSOR}${ANSI_EXIT_ALTERNATE_SCREEN}`);
   }
 }
 
@@ -428,7 +436,7 @@ async function renderDownloadWatchFrame(
 }
 
 function writeDownloadWatchFrame(output: string): void {
-  process.stdout.write(`${ANSI_HIDE_CURSOR}${ANSI_CLEAR_SCREEN}${ANSI_CURSOR_HOME}${output}${ANSI_CLEAR_TO_END}`);
+  process.stdout.write(`${ANSI_CLEAR_SCREEN}${ANSI_CURSOR_HOME}${output}${ANSI_CLEAR_TO_END}`);
 }
 
 async function captureConsoleOutput<T>(callback: () => Promise<T>): Promise<CapturedOutput<T>> {
