@@ -100,6 +100,8 @@ Watch running download tasks until they finish or become interrupted:
 visuales tasks watch
 ```
 
+When watch exits, it prints a summary of what happened to the watched tasks.
+
 Clear saved download task history:
 
 ```bash

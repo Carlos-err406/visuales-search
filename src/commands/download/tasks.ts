@@ -357,6 +357,7 @@ interface WatchDownloadTasksOptions {
 interface DownloadWatchFrameResult {
   found: boolean;
   shouldContinue: boolean;
+  taskIds: string[];
 }
 
 interface CapturedOutput<T> {
@@ -430,6 +431,8 @@ export async function printDownloadTaskStatus(idOrUrl: string): Promise<boolean>
 
 export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloadTasksOptions = {}): Promise<boolean> {
   const intervalMs = parseWatchIntervalMs(options.interval);
+  const watchedTaskIds = new Set<string>();
+  let shouldPrintSummary = false;
   let stopped = false;
   let wakeWatcher: (() => void) | undefined;
   const wake = (): void => {
@@ -437,6 +440,7 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
   };
   const stopWatching = (): void => {
     stopped = true;
+    shouldPrintSummary = true;
     wake();
   };
 
@@ -449,9 +453,15 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
     while (!stopped) {
       const frame = await renderDownloadWatchFrame(idOrUrl, intervalMs);
       writeDownloadWatchFrame(frame.output);
+      for (const taskId of frame.result.taskIds) {
+        watchedTaskIds.add(taskId);
+      }
 
       if (!frame.result.found) return false;
-      if (!frame.result.shouldContinue || stopped) return true;
+      if (!frame.result.shouldContinue || stopped) {
+        shouldPrintSummary = true;
+        return true;
+      }
       await sleep(intervalMs, (wake) => {
         wakeWatcher = wake;
       });
@@ -464,6 +474,9 @@ export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloa
     process.removeListener("SIGWINCH", wake);
     inputMode?.restore();
     process.stdout.write(`${ANSI_SHOW_CURSOR}${ANSI_EXIT_ALTERNATE_SCREEN}`);
+    if (shouldPrintSummary) {
+      await printDownloadWatchSummary([...watchedTaskIds]);
+    }
   }
 }
 
@@ -534,11 +547,11 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
     if (!task) {
       console.error(colors.red(`No download task found for '${idOrUrl}'.`));
       console.log(colors.gray("Run `visuales tasks` to see known tasks."));
-      return { found: false, shouldContinue: false };
+      return { found: false, shouldContinue: false, taskIds: [] };
     }
 
     printDownloadTaskProgress(task);
-    return { found: true, shouldContinue: task.status === "running" };
+    return { found: true, shouldContinue: task.status === "running", taskIds: [task.id] };
   }
 
   const tasks = await listDownloadTasks();
@@ -546,13 +559,13 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
 
   if (tasks.length === 0) {
     console.log(colors.yellow("No download tasks found."));
-    return { found: true, shouldContinue: false };
+    return { found: true, shouldContinue: false, taskIds: [] };
   }
 
   if (displayedTasks.length === 0) {
     console.log(colors.yellow("No running or interrupted download tasks found."));
     console.log(colors.gray("Run `visuales tasks --all` to see completed and failed task history."));
-    return { found: true, shouldContinue: false };
+    return { found: true, shouldContinue: false, taskIds: [] };
   }
 
   for (const task of displayedTasks) {
@@ -560,7 +573,60 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
     console.log();
   }
 
-  return { found: true, shouldContinue: displayedTasks.some((task) => task.status === "running") };
+  return {
+    found: true,
+    shouldContinue: displayedTasks.some((task) => task.status === "running"),
+    taskIds: displayedTasks.map((task) => task.id),
+  };
+}
+
+async function printDownloadWatchSummary(taskIds: string[]): Promise<void> {
+  if (taskIds.length === 0) return;
+
+  const tasks = await listDownloadTasks();
+  const watchedTasks = taskIds
+    .map((taskId) => tasks.find((task) => task.id === taskId))
+    .filter((task): task is DownloadTaskRecord => Boolean(task));
+  if (watchedTasks.length === 0) return;
+
+  console.log(colors.blue.bold("\nDownload Watch Summary:"));
+  console.log(colors.gray("──────────────────────────────────────────────────"));
+  for (const line of buildDownloadWatchSummaryLines(watchedTasks)) {
+    console.log(line);
+  }
+}
+
+function buildDownloadWatchSummaryLines(tasks: DownloadTaskRecord[]): string[] {
+  const total = tasks.length;
+  const completed = tasks.filter((task) => task.status === "completed").length;
+  const failed = tasks.filter((task) => task.status === "failed").length;
+  const running = tasks.filter((task) => task.status === "running").length;
+  const canceled = tasks.filter((task) => task.status === "interrupted" && task.interruptedCause === "canceled").length;
+  const processExited = tasks.filter(
+    (task) => task.status === "interrupted" && task.interruptedCause === "process-exited"
+  ).length;
+  const signalInterrupted = tasks.filter(
+    (task) => task.status === "interrupted" && task.interruptedCause === "signal"
+  ).length;
+  const unknownInterrupted = tasks.filter(
+    (task) => task.status === "interrupted" && (!task.interruptedCause || task.interruptedCause === "unknown")
+  ).length;
+
+  return [
+    formatWatchSummaryLine(completed, total, "completed", colors.green),
+    formatWatchSummaryLine(failed, total, "failed", colors.red),
+    formatWatchSummaryLine(processExited, total, "exited unexpectedly", colors.yellow),
+    formatWatchSummaryLine(canceled, total, "canceled by user", colors.yellow),
+    formatWatchSummaryLine(signalInterrupted, total, "interrupted by signal", colors.yellow),
+    formatWatchSummaryLine(unknownInterrupted, total, "interrupted for unknown cause", colors.yellow),
+    formatWatchSummaryLine(running, total, "still running", colors.cyan),
+  ].filter((line) => line.length > 0);
+}
+
+function formatWatchSummaryLine(count: number, total: number, label: string, color: (value: string) => string): string {
+  if (count === 0) return "";
+  const taskLabel = count === 1 ? "task" : "tasks";
+  return color(`${count}/${total} ${taskLabel} ${label}`);
 }
 
 function printDownloadWatchHeading(idOrUrl: string | undefined): void {
