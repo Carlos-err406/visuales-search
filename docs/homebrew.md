@@ -32,9 +32,9 @@ git push origin main
 
 ## Automatic Updates
 
-When a GitHub Release is published, `.github/workflows/publish.yml` publishes the npm package, downloads the
-published tarball, computes its SHA-256 checksum, updates `Formula/visuales.rb` in the tap, and pushes a commit to
-`Carlos-err406/homebrew-visuales`.
+When `package.json` changes on `main`, `.github/workflows/publish.yml` creates the matching git tag and GitHub Release,
+publishes the npm package, downloads the published tarball, computes its SHA-256 checksum, updates
+`Formula/visuales.rb` in the tap, and pushes a commit to `Carlos-err406/homebrew-visuales`.
 
 Required repository secret:
 

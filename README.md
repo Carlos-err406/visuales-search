@@ -162,7 +162,7 @@ npm install -g .
 
 ## Publishing
 
-The npm package is published from GitHub Actions when a GitHub Release is published.
+The npm package is published from GitHub Actions when `package.json` changes on `main`.
 
 One-time setup:
 
@@ -176,10 +176,10 @@ For each npm release:
 ```bash
 npm run release:check
 npm run release:patch
-git push --follow-tags
+git push origin main
 ```
 
-Use `release:minor` or `release:major` instead of `release:patch` when appropriate. Then create and publish a GitHub Release for the pushed tag. The publish workflow validates the package, builds `dist/`, verifies package contents, publishes to npm with provenance, and updates the Homebrew tap formula.
+Use `release:minor` or `release:major` instead of `release:patch` when appropriate. The publish workflow detects the package version, creates the matching `vX.Y.Z` tag and GitHub Release when needed, validates the package, builds `dist/`, verifies package contents, publishes to npm with provenance, and updates the Homebrew tap formula.
 
 Manual npm publishing is still possible when needed:
 

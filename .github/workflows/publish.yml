@@ -1,23 +1,35 @@
 name: Publish
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/publish.yml
   release:
     types:
       - published
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
   npm:
-    name: Publish to npm
+    name: Tag, release, and publish npm
     runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.package.outputs.version }}
+      should_publish: ${{ steps.state.outputs.should_publish }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -29,13 +41,77 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Read package version
+        id: package
+        run: |
+          version="$(node -e 'console.log(require("./package.json").version)')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Check release state
+        id: state
+        run: |
+          version="${{ steps.package.outputs.version }}"
+          tag="${{ steps.package.outputs.tag }}"
+          published="$(npm view "visuales@${version}" version 2>/dev/null || true)"
+
+          if [ "$published" = "$version" ]; then
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          git fetch --force --tags origin
+          if git rev-parse --verify --quiet "$tag" >/dev/null; then
+            tag_commit="$(git rev-list -n 1 "$tag")"
+            head_commit="$(git rev-parse HEAD)"
+            if [ "$tag_commit" != "$head_commit" ]; then
+              echo "::error::${tag} already exists at ${tag_commit}, but HEAD is ${head_commit}."
+              exit 1
+            fi
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Validate package
+        if: steps.state.outputs.should_publish == 'true'
         run: npm run release:check
 
+      - name: Create git tag
+        if: steps.state.outputs.should_publish == 'true' && steps.state.outputs.tag_exists == 'false'
+        run: |
+          tag="${{ steps.package.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+
+      - name: Create GitHub release
+        if: steps.state.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.package.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists."
+            exit 0
+          fi
+
+          gh release create "$tag" \
+            --title "$tag" \
+            --notes "Release $tag" \
+            --verify-tag
+
       - name: Publish package
+        if: steps.state.outputs.should_publish == 'true'
         run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Report already published
+        if: steps.state.outputs.should_publish != 'true'
+        run: echo "visuales@${{ steps.package.outputs.version }} is already published to npm."
 
   homebrew:
     name: Publish to Homebrew tap
@@ -43,18 +119,9 @@ jobs:
     needs: npm
 
     steps:
-      - name: Checkout package
-        uses: actions/checkout@v6
-
-      - name: Read package version
-        id: package
-        run: |
-          version="$(node -e 'console.log(require("./package.json").version)')"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
       - name: Download npm tarball
         run: |
-          version="${{ steps.package.outputs.version }}"
+          version="${{ needs.npm.outputs.package_version }}"
           curl --fail --location --retry 12 --retry-delay 10 \
             "https://registry.npmjs.org/visuales/-/visuales-${version}.tgz" \
             --output "/tmp/visuales-${version}.tgz"
@@ -75,7 +142,7 @@ jobs:
 
       - name: Update formula
         run: |
-          version="${{ steps.package.outputs.version }}"
+          version="${{ needs.npm.outputs.package_version }}"
           formula="homebrew-tap/Formula/visuales.rb"
 
           sed -i -E "s#url \"https://registry.npmjs.org/visuales/-/visuales-[^\"]+\.tgz\"#url \"https://registry.npmjs.org/visuales/-/visuales-${version}.tgz\"#" "$formula"
@@ -84,7 +151,7 @@ jobs:
       - name: Commit formula update
         working-directory: homebrew-tap
         run: |
-          version="${{ steps.package.outputs.version }}"
+          version="${{ needs.npm.outputs.package_version }}"
 
           if git diff --quiet -- Formula/visuales.rb; then
             echo "Homebrew formula already points to visuales ${version}."
