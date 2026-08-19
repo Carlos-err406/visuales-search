@@ -360,18 +360,40 @@ function delay(ms: number): Promise<void> {
 }
 
 function getErrorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
+  if (typeof error !== "object" || error === null) return undefined;
+
+  if ("code" in error && typeof error.code === "string") {
+    return error.code;
+  }
+
+  if ("cause" in error) {
+    return getErrorCode(error.cause);
+  }
+
+  return undefined;
 }
 
 function isTransientDownloadError(error: Error): boolean {
   const code = getErrorCode(error);
-  if (code && ["ECONNRESET", "ECONNABORTED", "ENETRESET", "EPIPE", "ETIMEDOUT", "EAI_AGAIN"].includes(code)) {
+  if (
+    code &&
+    [
+      "ECONNRESET",
+      "ECONNABORTED",
+      "ENETRESET",
+      "EPIPE",
+      "ETIMEDOUT",
+      "EAI_AGAIN",
+      "ENOTFOUND",
+      "UND_ERR_SOCKET",
+    ].includes(code)
+  ) {
     return true;
   }
 
-  return /ECONNRESET|EPIPE|ETIMEDOUT|EAI_AGAIN|read timed out|socket hang up|network timeout/i.test(error.message);
+  return /ECONNRESET|EPIPE|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|aborted|terminated|read timed out|socket hang up|network timeout/i.test(
+    error.message
+  );
 }
 
 function updateOverallDownloadProgress(progress: FileCountProgress): void {
