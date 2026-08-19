@@ -30,7 +30,21 @@ git commit -m "Add visuales formula"
 git push origin main
 ```
 
-## Update The Formula
+## Automatic Updates
+
+When a GitHub Release is published, `.github/workflows/publish.yml` publishes the npm package, downloads the
+published tarball, computes its SHA-256 checksum, updates `Formula/visuales.rb` in the tap, and pushes a commit to
+`Carlos-err406/homebrew-visuales`.
+
+Required repository secret:
+
+```text
+HOMEBREW_TAP_TOKEN
+```
+
+The token needs write access to `Carlos-err406/homebrew-visuales`.
+
+## Manual Fallback
 
 After publishing a new npm version:
 

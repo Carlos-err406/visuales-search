@@ -177,6 +177,8 @@ One-time setup:
 
 1. Create an npm automation token with publish access.
 2. Add it to the GitHub repository secrets as `NPM_TOKEN`.
+3. Create a GitHub token with write access to `Carlos-err406/homebrew-visuales`.
+4. Add it to the GitHub repository secrets as `HOMEBREW_TAP_TOKEN`.
 
 For each npm release:
 
@@ -186,7 +188,7 @@ npm run release:patch
 git push --follow-tags
 ```
 
-Use `release:minor` or `release:major` instead of `release:patch` when appropriate. Then create and publish a GitHub Release for the pushed tag. The publish workflow validates the package, builds `dist/`, verifies package contents, and publishes to npm with provenance.
+Use `release:minor` or `release:major` instead of `release:patch` when appropriate. Then create and publish a GitHub Release for the pushed tag. The publish workflow validates the package, builds `dist/`, verifies package contents, publishes to npm with provenance, and updates the Homebrew tap formula.
 
 Manual npm publishing is still possible when needed:
 
@@ -195,4 +197,4 @@ npm run release:check
 npm publish
 ```
 
-After publishing a new npm version, update the Homebrew formula in [docs/homebrew.md](docs/homebrew.md).
+The Homebrew tap update is automatic in GitHub Actions. See [docs/homebrew.md](docs/homebrew.md) for the manual fallback.

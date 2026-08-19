@@ -33,4 +33,66 @@ jobs:
         run: npm run release:check
 
       - name: Publish package
-        run: npm publish
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  homebrew:
+    name: Publish to Homebrew tap
+    runs-on: ubuntu-latest
+    needs: npm
+
+    steps:
+      - name: Checkout package
+        uses: actions/checkout@v6
+
+      - name: Read package version
+        id: package
+        run: |
+          version="$(node -e 'console.log(require("./package.json").version)')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Download npm tarball
+        run: |
+          version="${{ steps.package.outputs.version }}"
+          curl --fail --location --retry 12 --retry-delay 10 \
+            "https://registry.npmjs.org/visuales/-/visuales-${version}.tgz" \
+            --output "/tmp/visuales-${version}.tgz"
+
+          echo "sha256=$(sha256sum "/tmp/visuales-${version}.tgz" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Verify Homebrew tap token
+        run: test -n "$HOMEBREW_TAP_TOKEN"
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v6
+        with:
+          repository: Carlos-err406/homebrew-visuales
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          version="${{ steps.package.outputs.version }}"
+          formula="homebrew-tap/Formula/visuales.rb"
+
+          sed -i -E "s#url \"https://registry.npmjs.org/visuales/-/visuales-[^\"]+\.tgz\"#url \"https://registry.npmjs.org/visuales/-/visuales-${version}.tgz\"#" "$formula"
+          sed -i -E "s#sha256 \"[a-f0-9]+\"#sha256 \"${sha256}\"#" "$formula"
+
+      - name: Commit formula update
+        working-directory: homebrew-tap
+        run: |
+          version="${{ steps.package.outputs.version }}"
+
+          if git diff --quiet -- Formula/visuales.rb; then
+            echo "Homebrew formula already points to visuales ${version}."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/visuales.rb
+          git commit -m "Update visuales to ${version}"
+          git push
