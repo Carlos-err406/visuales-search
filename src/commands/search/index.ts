@@ -71,7 +71,7 @@ async function searchCommand(terms: string[], options: SearchCommandOptions = {}
     // Build tree with all directory URLs available
     const tree = buildTree(searchResults, allResults);
     displayResults(tree);
-    console.log(colors.gray("\nDownload any item with: visuales download <id>"));
+    console.log(colors.gray("\nDownload any item with: visuales download <id> [id...]"));
 
     printResults(searchResults.length);
   } catch (error) {

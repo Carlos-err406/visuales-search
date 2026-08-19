@@ -86,7 +86,7 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 
 ### Modular Architecture
 
-- **src/commands/**: Dedicated subdirectories for each CLI command (`search`, `download`, `cache`, `update`).
+- **src/commands/**: Dedicated subdirectories for each CLI command (`search`, `download`, `cache`, `tasks`).
 - **src/lib/**: Isolated core logic (download management, cache handling, HTML parsing).
 
 ### Caching System

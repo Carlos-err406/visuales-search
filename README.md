@@ -52,6 +52,14 @@ visuales download "http://visuales.uclv.cu/Series/Ingles/Supernatural/S05/" -o s
 
 If `--output` is omitted, directory URLs download into a folder named after the final URL path segment in the current directory. File URLs download into the current directory.
 
+Download multiple search results as one synthetic folder:
+
+```bash
+visuales download 7zM4aQ 8B2vcc 9CgNxD -o supernatural-picks
+```
+
+For multiple targets, `--output` is the parent folder. File targets download into that folder, and directory targets download into child folders named after their final URL path segment.
+
 Always quote visuales URLs. They often contain spaces, parentheses, and other shell-sensitive characters.
 
 Download a season while skipping artwork, metadata, and text files:
@@ -64,7 +72,7 @@ visuales download "http://visuales.uclv.cu/Series/Ingles/Supernatural/S06/" \
 
 Useful download options:
 
-- `--output, -o`: output directory. Optional; defaults to the current directory for file URLs and a target-named folder for directory URLs.
+- `--output, -o`: output directory. Optional; defaults to the current directory for file URLs and a target-named folder for directory URLs. With multiple targets, this is the parent directory.
 - `--concurrent, -c`: maximum number of files to download at once. Default: `5`.
 - `--connections`: parallel connections per large file. Default: `3`.
 - `--exclude`: skip files by glob. Can be repeated or comma-separated.
@@ -74,13 +82,13 @@ Useful download options:
 - `--timeout`: request timeout in seconds. Default: `Infinity`.
 - `--detach, -d`: start the download in the background and return immediately.
 
-Recursive downloads show a whole-job file counter such as `FILES 7/24`, so you can see how many files are complete across the full directory tree.
+Recursive and multi-target downloads show a whole-job file counter such as `FILES 7/24`, so you can see how many files are complete across the full synthetic directory tree.
 
 Downloaded file parts are staged in a hidden `.visuales-parts/` sidecar directory and moved into the target folder when assembly finishes.
 
 The downloader supports both legacy table-style Apache listings and the newer preformatted Apache listings currently returned by `visuales.uclv.cu`.
 
-List interrupted or failed download tasks:
+List running or interrupted download tasks:
 
 ```bash
 visuales tasks
@@ -130,23 +138,6 @@ visuales cache clear --all
 ```
 
 The discovery cache stores directory listings so repeated recursive downloads do not need to rediscover every folder.
-
-## Updating
-
-For npm installs:
-
-```bash
-visuales update
-```
-
-This reinstalls the latest published npm package globally. If npm reports a permissions error, either run the install with elevated permissions or configure npm to use a user-writable global prefix.
-
-For Homebrew installs:
-
-```bash
-brew update
-brew upgrade visuales
-```
 
 ## Development
 

@@ -14,6 +14,7 @@ export type StoredDownloadOptions = Omit<DownloadOptions, "timeout"> & { timeout
 export interface DownloadTaskRecord {
   id: string;
   url: string;
+  urls?: string[];
   output: string;
   options: StoredDownloadOptions;
   status: DownloadTaskStatus;
@@ -64,9 +65,13 @@ function tasksFilePath(): string {
   return path.join(CONFIG.DOWNLOAD_CACHE_DIR, TASKS_FILE_NAME);
 }
 
-export function createDownloadTaskId(url: string, output: string): string {
+function normalizeTaskUrls(urls: string | string[]): string[] {
+  return Array.isArray(urls) ? urls : [urls];
+}
+
+export function createDownloadTaskId(urls: string | string[], output: string): string {
   return createHash("sha1")
-    .update(`${url}\0${path.resolve(output)}`)
+    .update(`${normalizeTaskUrls(urls).join("\0")}\0${path.resolve(output)}`)
     .digest("hex")
     .slice(0, 10);
 }
@@ -165,7 +170,7 @@ export async function listDownloadTasks(): Promise<DownloadTaskRecord[]> {
 
 export async function findDownloadTask(idOrUrl: string): Promise<DownloadTaskRecord | null> {
   const tasks = await listDownloadTasks();
-  return tasks.find((task) => task.id === idOrUrl || task.url === idOrUrl) ?? null;
+  return tasks.find((task) => task.id === idOrUrl || task.url === idOrUrl || task.urls?.includes(idOrUrl)) ?? null;
 }
 
 export async function clearDownloadTasks(): Promise<number> {
@@ -176,23 +181,28 @@ export async function clearDownloadTasks(): Promise<number> {
   return tasks.length;
 }
 
-export async function startDownloadTask(url: string, options: DownloadOptions): Promise<DownloadTaskRecord> {
-  return startDownloadTaskWithPid(url, options, process.pid);
+export async function startDownloadTask(
+  urls: string | string[],
+  options: DownloadOptions
+): Promise<DownloadTaskRecord> {
+  return startDownloadTaskWithPid(urls, options, process.pid);
 }
 
 export async function startDownloadTaskWithPid(
-  url: string,
+  urls: string | string[],
   options: DownloadOptions,
   pid: number,
   logFile?: string
 ): Promise<DownloadTaskRecord> {
   const store = await loadTaskStore();
-  const id = createDownloadTaskId(url, options.output);
+  const normalizedUrls = normalizeTaskUrls(urls);
+  const id = createDownloadTaskId(normalizedUrls, options.output);
   const now = Date.now();
   const existing = store.tasks.find((task) => task.id === id);
   const record: DownloadTaskRecord = {
     id,
-    url,
+    url: normalizedUrls[0],
+    urls: normalizedUrls.length > 1 ? normalizedUrls : undefined,
     output: path.resolve(options.output),
     options: storeDownloadOptions(options),
     status: "running",
@@ -432,7 +442,17 @@ function printDownloadTask(task: DownloadTaskRecord): void {
 }
 
 function printDownloadTaskDetails(task: DownloadTaskRecord, includeProgressSummary: boolean): void {
-  console.log(`           ${colors.gray("Source:")} ${colors.white(task.url)}`);
+  if (task.urls && task.urls.length > 1) {
+    console.log(`           ${colors.gray("Sources:")} ${colors.white(`${task.urls.length} targets`)}`);
+    for (const url of task.urls.slice(0, 5)) {
+      console.log(`           ${colors.gray("        ")} ${colors.white(url)}`);
+    }
+    if (task.urls.length > 5) {
+      console.log(`           ${colors.gray("        ")} ${colors.gray(`...and ${task.urls.length - 5} more`)}`);
+    }
+  } else {
+    console.log(`           ${colors.gray("Source:")} ${colors.white(task.url)}`);
+  }
   console.log(`           ${colors.gray("Target:")} ${colors.white(task.output)}`);
   if (task.pid) {
     console.log(`           ${colors.gray("PID:")}    ${colors.white(task.pid.toString())}`);

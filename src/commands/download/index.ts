@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
-import { downloadUrl, stopProgress } from "./downloader.js";
+import { createHash } from "node:crypto";
+import { downloadUrl, downloadUrls, stopProgress, type DownloadTarget } from "./downloader.js";
 import { DownloadOptions } from "./types.js";
 import { CONFIG } from "../../lib/types.js";
 import { ensureDownloadCacheDirectory, resolveSearchAlias } from "../../lib/cache.js";
@@ -22,9 +23,23 @@ import {
   updateDownloadTaskProgress,
 } from "./tasks.js";
 
+interface DownloadCommandOptions {
+  output?: string;
+  resume?: boolean | string;
+  maxRetries?: number | string;
+  timeout?: number | string;
+  concurrent?: number | string;
+  connections?: number | string;
+  compact?: boolean;
+  detach?: boolean;
+  exclude?: string[];
+  ignore?: string[];
+  verbose?: boolean;
+}
+
 // Helper functions for Download
 export function printDownloadUsage(): void {
-  console.log(colors.yellow("Usage: visuales download <url> [--output <path>] [options]"));
+  console.log(colors.yellow("Usage: visuales download <url-or-id...> [--output <path>] [options]"));
   console.log(colors.gray("Examples:"));
   console.log(
     colors.gray(
@@ -36,6 +51,7 @@ export function printDownloadUsage(): void {
       '  visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/" --output ./killing-eve-books --concurrent 5 --connections 3'
     )
   );
+  console.log(colors.gray("  visuales download 7zM4aQ 8B2vcc 9CgNxD --output ./downloads"));
   console.log(colors.gray('  visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"'));
 }
 
@@ -75,35 +91,29 @@ function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
-export async function downloadCommand(
-  url: string,
-  options: {
-    output?: string;
-    resume?: boolean | string;
-    maxRetries?: number | string;
-    timeout?: number | string;
-    concurrent?: number | string;
-    connections?: number | string;
-    compact?: boolean;
-    detach?: boolean;
-    exclude?: string[];
-    ignore?: string[];
-    verbose?: boolean;
-  }
-): Promise<void> {
-  if (!url) {
-    console.log(colors.yellow("Please provide a URL to download"));
+export async function downloadCommand(urls: string | string[], options: DownloadCommandOptions): Promise<void> {
+  const inputs = Array.isArray(urls) ? urls : [urls].filter(Boolean);
+
+  if (inputs.length === 0) {
+    console.log(colors.yellow("Please provide at least one URL or search result id to download"));
     printDownloadUsage();
     return;
   }
 
-  const resolvedUrl = await resolveSearchAlias(url);
-  if (resolvedUrl !== url) {
-    console.log(colors.gray(`Resolved ${url} to ${resolvedUrl}`));
+  const resolvedUrls: string[] = [];
+  for (const input of inputs) {
+    const resolvedUrl = await resolveSearchAlias(input);
+    validateResolvedUrl(input, resolvedUrl);
+    if (resolvedUrl !== input) {
+      console.log(colors.gray(`Resolved ${input} to ${resolvedUrl}`));
+    }
+    resolvedUrls.push(resolvedUrl);
   }
 
+  const isBatch = resolvedUrls.length > 1;
+  const output = options.output ?? (isBatch ? process.cwd() : getDefaultOutputPath(resolvedUrls[0]));
   const downloadOptions: DownloadOptions = {
-    output: options.output ?? getDefaultOutputPath(resolvedUrl),
+    output,
     resume: parseBooleanOption(options.resume, true),
     maxRetries: parseNumberOption(options.maxRetries, 3),
     timeout: parseNumberOption(options.timeout, Infinity),
@@ -115,18 +125,28 @@ export async function downloadCommand(
   };
 
   if (options.detach) {
-    await startDetachedDownload(resolvedUrl, downloadOptions);
+    await startDetachedDownload(resolvedUrls, downloadOptions);
     return;
   }
 
-  printDownloading(resolvedUrl, downloadOptions.output, CONFIG.CACHE_DIR);
-  const task = await startDownloadTask(resolvedUrl, downloadOptions);
+  printDownloading(
+    isBatch ? `${resolvedUrls.length} selected targets` : resolvedUrls[0],
+    downloadOptions.output,
+    CONFIG.CACHE_DIR
+  );
+  const task = await startDownloadTask(resolvedUrls, downloadOptions);
   const removeInterruptHandler = registerInterruptHandler(task.id);
 
   try {
-    await downloadUrl(resolvedUrl, downloadOptions, (progress) => {
-      void updateDownloadTaskProgress(task.id, progress);
-    });
+    if (isBatch) {
+      await downloadUrls(createDownloadTargets(resolvedUrls, downloadOptions.output), downloadOptions, (progress) => {
+        void updateDownloadTaskProgress(task.id, progress);
+      });
+    } else {
+      await downloadUrl(resolvedUrls[0], downloadOptions, (progress) => {
+        void updateDownloadTaskProgress(task.id, progress);
+      });
+    }
     await stopProgress();
     await completeDownloadTask(task.id);
     console.log(colors.bold.green("\n[SUCCESS] All downloads finished successfully!"));
@@ -141,12 +161,27 @@ export async function downloadCommand(
   }
 }
 
-async function startDetachedDownload(url: string, options: DownloadOptions): Promise<void> {
-  const id = createDownloadTaskId(url, options.output);
+function validateResolvedUrl(input: string, resolvedUrl: string): void {
+  try {
+    new URL(resolvedUrl);
+  } catch {
+    throw new Error(`No search alias found for '${input}'. Run \`visuales search\` first or pass a full URL.`);
+  }
+}
+
+async function startDetachedDownload(urls: string | string[], options: DownloadOptions): Promise<void> {
+  const normalizedUrls = Array.isArray(urls) ? urls : [urls];
+  const id = createDownloadTaskId(normalizedUrls, options.output);
   const logFile = getDownloadTaskLogPath(id);
   await ensureDownloadCacheDirectory();
   const out = openSync(logFile, "a");
-  const childArgs = [process.argv[1], ...buildGlobalArgs(options), "download", url, ...buildDownloadArgs(options)];
+  const childArgs = [
+    process.argv[1],
+    ...buildGlobalArgs(options),
+    "download",
+    ...normalizedUrls,
+    ...buildDownloadArgs(options),
+  ];
   const child = spawn(process.execPath, childArgs, {
     detached: true,
     stdio: ["ignore", out, out],
@@ -161,9 +196,12 @@ async function startDetachedDownload(url: string, options: DownloadOptions): Pro
     throw new Error("Could not start detached download process.");
   }
 
-  await startDownloadTaskWithPid(url, options, child.pid, logFile);
+  await startDownloadTaskWithPid(normalizedUrls, options, child.pid, logFile);
 
   console.log(colors.green(`Detached download started as task ${id}.`));
+  if (normalizedUrls.length > 1) {
+    console.log(colors.gray(`Targets: ${normalizedUrls.length}`));
+  }
   console.log(colors.gray(`PID: ${child.pid}`));
   console.log(colors.gray(`Progress: visuales tasks`));
   console.log(colors.gray(`Cancel:   visuales tasks cancel ${id}`));
@@ -210,6 +248,53 @@ function getDefaultOutputPath(url: string): string {
   const targetName = decodePathSegment(path.basename(trimmedPathname));
 
   return targetName ? path.join(process.cwd(), targetName) : process.cwd();
+}
+
+function createDownloadTargets(urls: string[], outputBasePath: string): DownloadTarget[] {
+  const usedDirectoryNames = new Map<string, string>();
+
+  return urls.map((url) => {
+    if (!url.endsWith("/")) {
+      return {
+        url,
+        output: outputBasePath,
+        relativePath: "",
+      };
+    }
+
+    const directoryName = getUrlDirectoryName(url);
+    const uniqueDirectoryName = getUniqueDirectoryName(directoryName, url, usedDirectoryNames);
+
+    return {
+      url,
+      output: path.join(outputBasePath, uniqueDirectoryName),
+      relativePath: uniqueDirectoryName,
+    };
+  });
+}
+
+function getUrlDirectoryName(url: string): string {
+  const trimmedPathname = new URL(url).pathname.replace(/\/+$/, "");
+  const directoryName = decodePathSegment(path.basename(trimmedPathname));
+
+  return directoryName || "download";
+}
+
+function getUniqueDirectoryName(directoryName: string, url: string, usedDirectoryNames: Map<string, string>): string {
+  const existingUrl = usedDirectoryNames.get(directoryName);
+  if (!existingUrl) {
+    usedDirectoryNames.set(directoryName, url);
+    return directoryName;
+  }
+
+  if (existingUrl === url) {
+    return directoryName;
+  }
+
+  const suffix = createHash("sha1").update(url).digest("hex").slice(0, 6);
+  const uniqueDirectoryName = `${directoryName}-${suffix}`;
+  usedDirectoryNames.set(uniqueDirectoryName, url);
+  return uniqueDirectoryName;
 }
 
 function decodePathSegment(segment: string): string {
@@ -273,7 +358,7 @@ export async function resumeCommand(
     return;
   }
 
-  await downloadCommand(task.url, {
+  await downloadCommand(task.urls ?? task.url, {
     ...task.options,
     resume: true,
     detach: options.detach,
@@ -306,8 +391,8 @@ export function setupDownloadCommand(program: Command): void {
   const download = program
     .command("download")
     .description("Download files or directories from visuales.uclv.cu")
-    .argument("<url>", "URL to download (file or directory)")
-    .option("-o, --output <path>", "Output directory")
+    .argument("<urls...>", "URLs or search result ids to download")
+    .option("-o, --output <path>", "Output directory. For multiple targets, this is the parent directory")
     .option("-r, --resume <boolean>", "Resume interrupted downloads", true)
     .option("--max-retries <number>", "Maximum retry attempts", "3")
     .option("--timeout <number>", "Request timeout in seconds (Infinity for no timeout)", "Infinity")
@@ -317,10 +402,10 @@ export function setupDownloadCommand(program: Command): void {
     .option("-d, --detach", "Run the download in the background")
     .option("--exclude <patterns...>", 'Exclude files by glob, e.g. --exclude "*.{jpg,nfo}"')
     .option("--ignore <patterns...>", "Alias for --exclude")
-    .action((url, options, cmd) => {
+    .action((urls, options, cmd) => {
       // In subcommands, options is from command, but we need program for global options
       const globalOpts = cmd.parent.opts();
-      return downloadCommand(url, { ...options, verbose: globalOpts.verbose });
+      return downloadCommand(urls, { ...options, verbose: globalOpts.verbose });
     });
 
   download

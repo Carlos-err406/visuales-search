@@ -49,6 +49,12 @@ interface DownloadPlanSummary {
   isEstimate: boolean;
 }
 
+export interface DownloadTarget {
+  url: string;
+  output: string;
+  relativePath: string;
+}
+
 interface ExpectedFileSize {
   size: number;
   exact: boolean;
@@ -202,6 +208,76 @@ async function getFileSize(filePath: string): Promise<number | null> {
   }
 }
 
+async function downloadWithFetch(
+  url: string,
+  tempPath: string,
+  options: DownloadOptions,
+  expectedFileSize: ExpectedFileSize,
+  onProgress?: (progress: {
+    downloadedBytes: number;
+    speedBytes: number;
+    percentage: number;
+    totalBytes: number;
+  }) => void
+): Promise<void> {
+  const timeoutMs = Number.isFinite(options.timeout) ? options.timeout * 1000 : undefined;
+  const existingBytes = options.resume ? ((await getFileSize(tempPath)) ?? 0) : 0;
+  const headers: Record<string, string> = {
+    "User-Agent": DOWNLOAD_USER_AGENT,
+  };
+
+  if (existingBytes > 0) {
+    headers.Range = `bytes=${existingBytes}-`;
+  }
+
+  const response = await fetch(url, {
+    headers,
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
+  });
+
+  if (!response.ok && response.status !== 206) {
+    throw new Error(`Download failed: ${response.statusText} (${response.status})`);
+  }
+
+  const shouldAppend = existingBytes > 0 && response.status === 206;
+  const startingBytes = shouldAppend ? existingBytes : 0;
+  const contentLength = parseInt(response.headers.get("content-length") ?? "0", 10);
+  const totalBytes = expectedFileSize.size || (response.status === 206 ? startingBytes + contentLength : contentLength);
+
+  if (isUnavailableResponse(response)) {
+    throw new Error("Download returned the visuales unavailable-page response; retry later");
+  }
+
+  if (!response.body) {
+    throw new Error("Download response did not include a readable body");
+  }
+
+  await fs.mkdir(path.dirname(tempPath), { recursive: true });
+  const file = await fs.open(tempPath, shouldAppend ? "a" : "w");
+  const startedAt = Date.now();
+  let downloadedBytes = startingBytes;
+
+  try {
+    for await (const chunk of response.body) {
+      const buffer = Buffer.from(chunk);
+      await file.write(buffer);
+      downloadedBytes += buffer.length;
+      const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
+      const speedBytes = (downloadedBytes - startingBytes) / elapsedSeconds;
+      const percentage = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
+
+      onProgress?.({
+        downloadedBytes,
+        speedBytes,
+        percentage,
+        totalBytes,
+      });
+    }
+  } finally {
+    await file.close();
+  }
+}
+
 async function getExistingFileState(filePath: string): Promise<ExistingFileState | null> {
   const size = await getFileSize(filePath);
   if (size === null) return null;
@@ -322,6 +398,22 @@ function getOverallDownloadProgress(progress: FileCountProgress): DownloadProgre
   };
 }
 
+function createFileCountProgressState(totalFiles: number, totalBytes: number, concurrent: number): FileCountProgress {
+  return {
+    totalFiles,
+    completedFiles: 0,
+    totalBytes,
+    completedBytes: 0,
+    activeBytes: new Map<string, number>(),
+    activeSpeeds: new Map<string, number>(),
+    activeFiles: new Map(),
+    freeSlots: Array.from({ length: concurrent }, (_, index) => index + 1),
+    nextSlot: concurrent + 1,
+    bar: createFileCountBar(totalFiles),
+    slotBars: [] as ReturnType<typeof createDownloadBar>[],
+  };
+}
+
 function acquireDownloadSlot(progress?: FileCountProgress): number {
   if (!progress) return 1;
 
@@ -415,6 +507,113 @@ export async function downloadFile(
 
   for (let attempt = 1; attempt <= maxFileAttempts; attempt++) {
     try {
+      if (NODE_MAJOR_VERSION >= 26) {
+        let downloadedTotal = 0;
+        let bars: ReturnType<typeof createDownloadBar> | null = slotBar ?? null;
+        let countedActive = false;
+        let decremented = false;
+        const cleanup = () => {
+          if (countedActive && !decremented) {
+            decrementActiveDownloads();
+            decremented = true;
+          }
+        };
+        const removeBar = () => {
+          if (!bars) return;
+
+          if (ownsBar) {
+            progressBars.remove(bars.progress);
+          } else {
+            resetDownloadBar(bars);
+          }
+          bars = null;
+        };
+
+        try {
+          await downloadWithFetch(url, tempPath, options, expectedFileSize, (progress) => {
+            downloadedTotal = progress.downloadedBytes;
+
+            if (!bars) {
+              incrementActiveDownloads();
+              countedActive = true;
+              bars = createDownloadBar(filename, 100, progress.percentage, "Starting", slot);
+            }
+
+            const progressVal = Math.floor(progress.percentage);
+            const paddedPercentage = progressVal.toString().padStart(3, " ");
+            const sizeStr = `${formatSize(progress.downloadedBytes)} / ${formatSize(progress.totalBytes)}`.padEnd(
+              21,
+              " "
+            );
+            const speedStr = `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`.padEnd(10, " ");
+
+            bars.progress.update(progressVal, {
+              ...createDownloadBarPayload(filename, slot),
+              downloadedPadded: sizeStr,
+              percentagePadded: paddedPercentage,
+              statusPadded: speedStr,
+            });
+
+            onProgress?.({
+              fileName: filename,
+              progress: progress.percentage,
+              speed: `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`,
+              speedBytes: progress.speedBytes,
+              totalSize: progress.totalBytes,
+              downloadedSize: progress.downloadedBytes,
+            });
+          });
+
+          const completedSize = await getFileSize(tempPath);
+          if (completedSize === null || !isDownloadedFileComplete(completedSize, expectedFileSize)) {
+            if (completedSize !== null && expectedFileSize.exact) {
+              await fs.rm(tempPath, { force: true });
+            }
+            throw new Error(
+              expectedFileSize.exact
+                ? `Download finished but file size is ${formatSize(completedSize ?? 0)}; expected ${formatSize(
+                    expectedFileSize.size
+                  )}`
+                : "Download finished but file is missing"
+            );
+          }
+
+          if (await isUnavailablePageFile(tempPath)) {
+            await fs.rm(tempPath, { force: true });
+            throw new Error("Download returned the visuales unavailable-page response; retry later");
+          }
+
+          if (shouldReplaceExistingFile) {
+            await fs.rm(finalPath, { force: true });
+          }
+          await fs.rename(tempPath, finalPath);
+          await cleanFileDownloadParts(tempPath);
+
+          if (bars) {
+            const sizeToLog = expectedFileSize.size || completedSize || downloadedTotal;
+            const durationSeconds = (Date.now() - startedAt) / 1000;
+            if (expectedFileSize.exact) {
+              updateCachedFileSize(url, sizeToLog);
+            }
+            logDownloadComplete(filename, sizeToLog, durationSeconds);
+            removeBar();
+          }
+
+          cleanup();
+          return;
+        } catch (error) {
+          if (bars) {
+            bars.progress.update(0, {
+              ...createDownloadBarPayload(filename, slot),
+              statusPadded: "Failed".padEnd(11, " "),
+            });
+            removeBar();
+          }
+          cleanup();
+          throw error;
+        }
+      }
+
       await new Promise<void>((resolve, reject) => {
         const dl = new EasyDl(url, tempPath, {
           connections,
@@ -783,6 +982,101 @@ async function summarizeDirectoryDownload(
   return summary;
 }
 
+function addSummary(target: DownloadPlanSummary, source: DownloadPlanSummary): void {
+  target.fileCount += source.fileCount;
+  target.totalBytes += source.totalBytes;
+  target.hasSizeInfo ||= source.hasSizeInfo;
+  target.isEstimate ||= source.isEstimate;
+}
+
+async function summarizeFileDownload(url: string, options: DownloadOptions): Promise<DownloadPlanSummary> {
+  const expectedFileSize = await fetchExpectedFileSize(url, options);
+  const cachedFileSize = getCachedFileSizeInfo(url);
+  const size = expectedFileSize.size || cachedFileSize.size;
+  const exact = expectedFileSize.size ? expectedFileSize.exact : cachedFileSize.exact;
+
+  return {
+    fileCount: 1,
+    totalBytes: size,
+    hasSizeInfo: size > 0,
+    isEstimate: size > 0 && !exact,
+  };
+}
+
+async function downloadFileWithOverallProgress(
+  fileUrl: string,
+  options: DownloadOptions,
+  filePath: string,
+  fileCountProgress: FileCountProgress | undefined,
+  onProgress?: (progress: DownloadProgress) => void,
+  expectedSize?: number
+): Promise<DownloadFailure | null> {
+  let lastDownloadedBytes = 0;
+  const slot = acquireDownloadSlot(fileCountProgress);
+
+  try {
+    await downloadFile(
+      fileUrl,
+      options,
+      (progress) => {
+        lastDownloadedBytes = progress.downloadedSize;
+        if (fileCountProgress) {
+          const expectedBytes = expectedSize || progress.totalSize || progress.downloadedSize;
+          fileCountProgress.activeBytes.set(fileUrl, Math.min(progress.downloadedSize, expectedBytes));
+          fileCountProgress.activeSpeeds.set(fileUrl, progress.speedBytes ?? 0);
+          fileCountProgress.activeFiles.set(fileUrl, {
+            fileName: progress.fileName,
+            progress: progress.progress,
+            downloadedSize: progress.downloadedSize,
+            totalSize: progress.totalSize,
+            speed: progress.speed,
+          });
+          updateOverallDownloadProgress(fileCountProgress);
+        }
+        onProgress?.({
+          ...progress,
+          overall: fileCountProgress ? getOverallDownloadProgress(fileCountProgress) : undefined,
+        });
+      },
+      expectedSize,
+      slot,
+      fileCountProgress?.slotBars[slot - 1]
+    );
+
+    if (fileCountProgress) {
+      fileCountProgress.activeBytes.delete(fileUrl);
+      fileCountProgress.activeSpeeds.delete(fileUrl);
+      fileCountProgress.activeFiles.delete(fileUrl);
+      fileCountProgress.completedFiles++;
+      fileCountProgress.completedBytes += expectedSize || lastDownloadedBytes;
+      updateOverallDownloadProgress(fileCountProgress);
+    }
+
+    return null;
+  } catch (err: unknown) {
+    fileCountProgress?.activeBytes.delete(fileUrl);
+    fileCountProgress?.activeSpeeds.delete(fileUrl);
+    fileCountProgress?.activeFiles.delete(fileUrl);
+    if (fileCountProgress) {
+      updateOverallDownloadProgress(fileCountProgress);
+    }
+
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    progressBars.log(
+      `${colors.bold.red("✖")} ${colors.bold.white(
+        decodeURIComponent(path.basename(fileUrl))
+      )} ${colors.red(`(Failed: ${errorMsg})`)}\n`
+    );
+
+    return {
+      filePath,
+      error: errorMsg,
+    };
+  } finally {
+    releaseDownloadSlot(fileCountProgress, slot);
+  }
+}
+
 export async function downloadRecursive(
   url: string,
   options: DownloadOptions,
@@ -810,65 +1104,16 @@ export async function downloadRecursive(
 
   const downloadTasks = includedFiles.map((file) =>
     limit(async () => {
-      let lastDownloadedBytes = 0;
-      const slot = acquireDownloadSlot(fileCountProgress);
-      try {
-        await downloadFile(
-          file.url,
-          options,
-          (progress) => {
-            lastDownloadedBytes = progress.downloadedSize;
-            if (fileCountProgress) {
-              const expectedBytes = file.size || progress.totalSize || progress.downloadedSize;
-              fileCountProgress.activeBytes.set(file.url, Math.min(progress.downloadedSize, expectedBytes));
-              fileCountProgress.activeSpeeds.set(file.url, progress.speedBytes ?? 0);
-              fileCountProgress.activeFiles.set(file.url, {
-                fileName: progress.fileName,
-                progress: progress.progress,
-                downloadedSize: progress.downloadedSize,
-                totalSize: progress.totalSize,
-                speed: progress.speed,
-              });
-              updateOverallDownloadProgress(fileCountProgress);
-            }
-            onProgress?.({
-              ...progress,
-              overall: fileCountProgress ? getOverallDownloadProgress(fileCountProgress) : undefined,
-            });
-          },
-          file.size,
-          slot,
-          fileCountProgress?.slotBars[slot - 1]
-        );
-        if (fileCountProgress) {
-          fileCountProgress.activeBytes.delete(file.url);
-          fileCountProgress.activeSpeeds.delete(file.url);
-          fileCountProgress.activeFiles.delete(file.url);
-          fileCountProgress.completedFiles++;
-          fileCountProgress.completedBytes += file.size || lastDownloadedBytes;
-          updateOverallDownloadProgress(fileCountProgress);
-        }
-      } catch (err: unknown) {
-        fileCountProgress?.activeBytes.delete(file.url);
-        fileCountProgress?.activeSpeeds.delete(file.url);
-        fileCountProgress?.activeFiles.delete(file.url);
-        if (fileCountProgress) {
-          updateOverallDownloadProgress(fileCountProgress);
-        }
-        // Log the error but don't rethrow to keep other downloads going
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        progressBars.log(
-          `${colors.bold.red("✖")} ${colors.bold.white(
-            decodeURIComponent(path.basename(file.url))
-          )} ${colors.red(`(Failed: ${errorMsg})`)}\n`
-        );
-        failures.push({
-          filePath: path.posix.join(relativePath, decodeURIComponent(path.basename(file.url))),
-          error: errorMsg,
-        });
-      } finally {
-        releaseDownloadSlot(fileCountProgress, slot);
-      }
+      const filePath = path.posix.join(relativePath, decodeURIComponent(path.basename(file.url)));
+      const failure = await downloadFileWithOverallProgress(
+        file.url,
+        options,
+        filePath,
+        fileCountProgress,
+        onProgress,
+        file.size
+      );
+      if (failure) failures.push(failure);
     })
   );
 
@@ -904,6 +1149,151 @@ export async function downloadRecursive(
   return failures.concat(subFailures.flat());
 }
 
+export async function downloadUrls(
+  targets: DownloadTarget[],
+  options: DownloadOptions,
+  onProgress?: (progress: DownloadProgress) => void
+): Promise<void> {
+  await loadDiscoveryCache();
+  const limit = pLimit(options.concurrent);
+  const summary: DownloadPlanSummary = {
+    fileCount: 0,
+    totalBytes: 0,
+    hasSizeInfo: false,
+    isEstimate: false,
+  };
+  const directoryTargets: {
+    target: DownloadTarget;
+    listing: DirectoryListing;
+    summary: DownloadPlanSummary;
+  }[] = [];
+  const fileTargets: {
+    target: DownloadTarget;
+    summary: DownloadPlanSummary;
+  }[] = [];
+  const discoveryFailures: DownloadFailure[] = [];
+
+  try {
+    for (const target of targets) {
+      if (target.url.endsWith("/")) {
+        try {
+          const listing = await getDirectoryListing(target.url);
+          if (listing.files.length === 0 && listing.dirs.length === 0) {
+            discoveryFailures.push({
+              filePath: target.relativePath || decodeURIComponent(path.basename(new URL(target.url).pathname)),
+              error: "No files or subdirectories found at this URL.",
+            });
+            continue;
+          }
+
+          const targetSummary = await summarizeDirectoryDownload(target.url, options, listing, target.relativePath);
+          addSummary(summary, targetSummary);
+          directoryTargets.push({ target, listing, summary: targetSummary });
+        } catch (err: unknown) {
+          discoveryFailures.push({
+            filePath: target.relativePath || decodeURIComponent(path.basename(new URL(target.url).pathname)),
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } else {
+        const targetSummary = await summarizeFileDownload(target.url, options);
+        addSummary(summary, targetSummary);
+        fileTargets.push({ target, summary: targetSummary });
+      }
+    }
+
+    if (summary.fileCount === 0 && directoryTargets.length === 0 && fileTargets.length === 0) {
+      throw new Error(formatDownloadFailures(discoveryFailures));
+    }
+
+    const sizeSummary = summary.hasSizeInfo
+      ? colors.gray(` [${summary.isEstimate ? "~" : ""}${formatSize(summary.totalBytes)}]`)
+      : "";
+    const directoryCount = directoryTargets.length;
+    console.log(
+      `${colors.cyan("●")} ${colors.bold.white("DISCOVERY  ")} ${summary.fileCount} files, ${directoryCount} top-level directories${sizeSummary}`
+    );
+
+    const fileCountProgress =
+      summary.fileCount > 0
+        ? createFileCountProgressState(summary.fileCount, summary.totalBytes, options.concurrent)
+        : undefined;
+    if (!fileCountProgress) {
+      const directoryFailures = await Promise.all(
+        directoryTargets.map(({ target, listing }) =>
+          downloadRecursive(
+            target.url,
+            { ...options, output: target.output },
+            limit,
+            onProgress,
+            listing,
+            target.relativePath
+          )
+        )
+      );
+      const failures = discoveryFailures.concat(directoryFailures.flat());
+      if (failures.length > 0) {
+        throw new Error(formatDownloadFailures(failures));
+      }
+      return;
+    }
+
+    updateOverallDownloadProgress(fileCountProgress);
+    progressBars.log(`${colors.bold.white("Slots")}\n`);
+    fileCountProgress.slotBars = Array.from({ length: options.concurrent }, (_, index) =>
+      createDownloadBar("", 100, 0, "", index + 1)
+    );
+
+    const fileTasks = fileTargets.map(({ target, summary: targetSummary }) =>
+      limit(async () => {
+        const filePath = path.posix.join(target.relativePath, decodeURIComponent(path.basename(target.url)));
+        return await downloadFileWithOverallProgress(
+          target.url,
+          { ...options, output: target.output },
+          filePath,
+          fileCountProgress,
+          onProgress,
+          targetSummary.totalBytes
+        );
+      })
+    );
+
+    const directoryTasks = directoryTargets.map(({ target, listing }) =>
+      downloadRecursive(
+        target.url,
+        { ...options, output: target.output },
+        limit,
+        onProgress,
+        listing,
+        target.relativePath,
+        fileCountProgress
+      )
+    );
+
+    const fileFailures = await Promise.all(fileTasks);
+    const directoryFailures = await Promise.all(directoryTasks);
+    updateFileCountBar(
+      fileCountProgress.bar,
+      fileCountProgress.completedFiles,
+      fileCountProgress.totalFiles,
+      fileCountProgress.completedBytes,
+      fileCountProgress.totalBytes,
+      0
+    );
+
+    const failures = discoveryFailures.concat(
+      fileFailures.filter((failure): failure is DownloadFailure => Boolean(failure))
+    );
+    failures.push(...directoryFailures.flat());
+
+    if (failures.length > 0) {
+      throw new Error(formatDownloadFailures(failures));
+    }
+  } finally {
+    await saveDiscoveryCache();
+  }
+}
+
 export async function stopProgress(): Promise<void> {
   progressBars.stop();
 }
@@ -933,19 +1323,7 @@ export async function downloadUrl(
 
       const fileCountProgress =
         summary.fileCount > 0
-          ? {
-              totalFiles: summary.fileCount,
-              completedFiles: 0,
-              totalBytes: summary.totalBytes,
-              completedBytes: 0,
-              activeBytes: new Map<string, number>(),
-              activeSpeeds: new Map<string, number>(),
-              activeFiles: new Map(),
-              freeSlots: Array.from({ length: options.concurrent }, (_, index) => index + 1),
-              nextSlot: options.concurrent + 1,
-              bar: createFileCountBar(summary.fileCount),
-              slotBars: [] as ReturnType<typeof createDownloadBar>[],
-            }
+          ? createFileCountProgressState(summary.fileCount, summary.totalBytes, options.concurrent)
           : undefined;
       if (fileCountProgress) {
         updateOverallDownloadProgress(fileCountProgress);
