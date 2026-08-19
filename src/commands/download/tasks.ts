@@ -594,6 +594,7 @@ async function printDownloadWatchSummary(taskIds: string[]): Promise<void> {
   for (const line of buildDownloadWatchSummaryLines(watchedTasks)) {
     console.log(line);
   }
+  printDownloadWatchResumeHint(watchedTasks);
 }
 
 function buildDownloadWatchSummaryLines(tasks: DownloadTaskRecord[]): string[] {
@@ -627,6 +628,15 @@ function formatWatchSummaryLine(count: number, total: number, label: string, col
   if (count === 0) return "";
   const taskLabel = count === 1 ? "task" : "tasks";
   return color(`${count}/${total} ${taskLabel} ${label}`);
+}
+
+function printDownloadWatchResumeHint(tasks: DownloadTaskRecord[]): void {
+  const interruptedTaskIds = tasks.filter((task) => task.status === "interrupted").map((task) => task.id);
+  if (interruptedTaskIds.length === 0) return;
+
+  console.log();
+  console.log(colors.gray("Resume interrupted tasks:"));
+  console.log(colors.white(`visuales tasks resume ${interruptedTaskIds.join(" ")} --detach`));
 }
 
 function printDownloadWatchHeading(idOrUrl: string | undefined): void {
