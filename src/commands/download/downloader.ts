@@ -355,6 +355,26 @@ async function cleanFileDownloadParts(filePath: string): Promise<void> {
   }
 }
 
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+function getUrlBasename(url: string): string {
+  try {
+    return path.basename(new URL(url).pathname);
+  } catch {
+    return path.basename(url);
+  }
+}
+
+function getDecodedUrlBasename(url: string): string {
+  return decodePathSegment(getUrlBasename(url));
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -486,8 +506,7 @@ export async function downloadFile(
 
   await fs.mkdir(options.output, { recursive: true });
 
-  const encodedFilename = path.basename(url);
-  const filename = decodeURIComponent(encodedFilename);
+  const filename = getDecodedUrlBasename(url);
   let expectedFileSize = await fetchExpectedFileSize(url, options);
   const cachedFileSize = getCachedFileSizeInfo(url);
   if (!expectedFileSize.size && cachedFileSize.size) {
@@ -989,7 +1008,7 @@ async function summarizeDirectoryDownload(
   };
 
   for (const file of files) {
-    const filename = decodeURIComponent(path.basename(file.url));
+    const filename = getDecodedUrlBasename(file.url);
     const relativeFilePath = path.posix.join(relativePath, filename);
     if (isExcluded(filename) || isExcluded(relativeFilePath)) continue;
 
@@ -1003,7 +1022,7 @@ async function summarizeDirectoryDownload(
 
   const subSummaries = await Promise.all(
     dirs.map(async (dirUrl) => {
-      const dirName = decodeURIComponent(path.basename(new URL(dirUrl).pathname));
+      const dirName = getDecodedUrlBasename(dirUrl);
       return summarizeDirectoryDownload(dirUrl, options, undefined, path.posix.join(relativePath, dirName));
     })
   );
@@ -1100,7 +1119,7 @@ async function downloadFileWithOverallProgress(
     const errorMsg = err instanceof Error ? err.message : String(err);
     progressBars.log(
       `${colors.bold.red("✖")} ${colors.bold.white(
-        decodeURIComponent(path.basename(fileUrl))
+        getDecodedUrlBasename(fileUrl)
       )} ${colors.red(`(Failed: ${errorMsg})`)}\n`
     );
 
@@ -1127,7 +1146,7 @@ export async function downloadRecursive(
   const isExcluded = createGlobMatcher(options.exclude);
   const failures: DownloadFailure[] = [];
   const includedFiles = files.filter((file) => {
-    const filename = decodeURIComponent(path.basename(file.url));
+    const filename = getDecodedUrlBasename(file.url);
     const relativeFilePath = path.posix.join(relativePath, filename);
     const excluded = isExcluded(filename) || isExcluded(relativeFilePath);
 
@@ -1140,7 +1159,7 @@ export async function downloadRecursive(
 
   const downloadTasks = includedFiles.map((file) =>
     limit(async () => {
-      const filePath = path.posix.join(relativePath, decodeURIComponent(path.basename(file.url)));
+      const filePath = path.posix.join(relativePath, getDecodedUrlBasename(file.url));
       const failure = await downloadFileWithOverallProgress(
         file.url,
         options,
@@ -1155,7 +1174,7 @@ export async function downloadRecursive(
 
   const recursionTasks = dirs.map(async (dirUrl) => {
     try {
-      const dirName = decodeURIComponent(path.basename(new URL(dirUrl).pathname));
+      const dirName = getDecodedUrlBasename(dirUrl);
       const subOptions = { ...options, output: path.join(options.output, dirName) };
       return await downloadRecursive(
         dirUrl,
@@ -1169,7 +1188,7 @@ export async function downloadRecursive(
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       failures.push({
-        filePath: path.posix.join(relativePath, decodeURIComponent(path.basename(new URL(dirUrl).pathname))),
+        filePath: path.posix.join(relativePath, getDecodedUrlBasename(dirUrl)),
         error: errorMsg,
       });
 
@@ -1216,7 +1235,7 @@ export async function downloadUrls(
           const listing = await getDirectoryListing(target.url);
           if (listing.files.length === 0 && listing.dirs.length === 0) {
             discoveryFailures.push({
-              filePath: target.relativePath || decodeURIComponent(path.basename(new URL(target.url).pathname)),
+              filePath: target.relativePath || getDecodedUrlBasename(target.url),
               error: "No files or subdirectories found at this URL.",
             });
             continue;
@@ -1227,7 +1246,7 @@ export async function downloadUrls(
           directoryTargets.push({ target, listing, summary: targetSummary });
         } catch (err: unknown) {
           discoveryFailures.push({
-            filePath: target.relativePath || decodeURIComponent(path.basename(new URL(target.url).pathname)),
+            filePath: target.relativePath || getDecodedUrlBasename(target.url),
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -1282,7 +1301,7 @@ export async function downloadUrls(
 
     const fileTasks = fileTargets.map(({ target, summary: targetSummary }) =>
       limit(async () => {
-        const filePath = path.posix.join(target.relativePath, decodeURIComponent(path.basename(target.url)));
+        const filePath = path.posix.join(target.relativePath, getDecodedUrlBasename(target.url));
         return await downloadFileWithOverallProgress(
           target.url,
           { ...options, output: target.output },
