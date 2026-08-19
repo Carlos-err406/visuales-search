@@ -281,13 +281,13 @@ export async function resumeCommand(
   });
 }
 
-async function tasksCommand(options: { clear?: boolean }): Promise<void> {
+async function tasksCommand(options: { all?: boolean; clear?: boolean }): Promise<void> {
   if (options.clear) {
     await clearAndPrintDownloadTasks();
     return;
   }
 
-  await printDownloadTasks();
+  await printDownloadTasks({ all: options.all });
 }
 
 export async function cancelCommand(idOrUrl: string): Promise<void> {
@@ -326,6 +326,7 @@ export function setupDownloadCommand(program: Command): void {
   download
     .command("tasks", { hidden: true })
     .description("Alias for visuales tasks")
+    .option("-a, --all", "Show completed and failed task history")
     .option("--clear", "Clear saved download task history")
     .action(tasksCommand);
 

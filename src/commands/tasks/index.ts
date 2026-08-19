@@ -3,13 +3,13 @@ import colors from "ansi-colors";
 import { cancelCommand, resumeCommand } from "../download/index.js";
 import { clearAndPrintDownloadTasks, printDownloadTasks, printDownloadTaskStatus } from "../download/tasks.js";
 
-async function listTasksCommand(options: { clear?: boolean }): Promise<void> {
+async function listTasksCommand(options: { all?: boolean; clear?: boolean }): Promise<void> {
   if (options.clear) {
     await clearAndPrintDownloadTasks();
     return;
   }
 
-  await printDownloadTasks();
+  await printDownloadTasks({ all: options.all });
 }
 
 async function statusCommand(idOrUrl: string): Promise<void> {
@@ -25,6 +25,7 @@ export function setupTasksCommand(program: Command): void {
   const tasks = program
     .command("tasks")
     .description("Manage background and resumable download tasks")
+    .option("-a, --all", "Show completed and failed task history")
     .option("--clear", "Clear saved download task history")
     .action(listTasksCommand);
 

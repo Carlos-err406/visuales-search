@@ -298,18 +298,34 @@ function formatStatus(task: DownloadTaskRecord): string {
   return colors.yellow("interrupted");
 }
 
-export async function printDownloadTasks(): Promise<void> {
+interface PrintDownloadTasksOptions {
+  all?: boolean;
+}
+
+function isActionableTask(task: DownloadTaskRecord): boolean {
+  return task.status === "running" || task.status === "interrupted";
+}
+
+export async function printDownloadTasks(options: PrintDownloadTasksOptions = {}): Promise<void> {
   const tasks = await listDownloadTasks();
+  const displayedTasks = options.all ? tasks : tasks.filter(isActionableTask);
 
   if (tasks.length === 0) {
     console.log(colors.yellow("No download tasks found."));
     return;
   }
 
-  console.log(colors.blue.bold("\nDownload Tasks:"));
+  if (displayedTasks.length === 0) {
+    console.log(colors.yellow("No running or interrupted download tasks found."));
+    console.log(colors.gray("Run `visuales tasks --all` to see completed and failed task history."));
+    return;
+  }
+
+  const heading = options.all ? "Download Tasks:" : "Active Download Tasks:";
+  console.log(colors.blue.bold(`\n${heading}`));
   console.log(colors.gray("──────────────────────────────────────────────────"));
 
-  for (const task of tasks) {
+  for (const task of [...displayedTasks].reverse()) {
     printDownloadTask(task);
     console.log();
   }
