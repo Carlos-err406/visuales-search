@@ -399,12 +399,18 @@ function isTransientDownloadError(error: Error): boolean {
 function updateOverallDownloadProgress(progress: FileCountProgress): void {
   const activeBytes = [...progress.activeBytes.values()].reduce((sum, bytes) => sum + bytes, 0);
   const activeSpeed = [...progress.activeSpeeds.values()].reduce((sum, bytesPerSecond) => sum + bytesPerSecond, 0);
+  const activeTotalBytes = [...progress.activeFiles.values()].reduce(
+    (sum, file) => sum + (file.totalSize > 0 ? file.totalSize : file.downloadedSize),
+    0
+  );
+  const totalBytes = Math.max(progress.totalBytes, progress.completedBytes + activeTotalBytes);
+
   updateFileCountBar(
     progress.bar,
     progress.completedFiles,
     progress.totalFiles,
-    progress.completedBytes + activeBytes,
-    progress.totalBytes,
+    Math.min(progress.completedBytes + activeBytes, totalBytes),
+    totalBytes,
     activeSpeed
   );
 }
@@ -412,12 +418,17 @@ function updateOverallDownloadProgress(progress: FileCountProgress): void {
 function getOverallDownloadProgress(progress: FileCountProgress): DownloadProgress["overall"] {
   const activeBytes = [...progress.activeBytes.values()].reduce((sum, bytes) => sum + bytes, 0);
   const activeSpeed = [...progress.activeSpeeds.values()].reduce((sum, bytesPerSecond) => sum + bytesPerSecond, 0);
+  const activeTotalBytes = [...progress.activeFiles.values()].reduce(
+    (sum, file) => sum + (file.totalSize > 0 ? file.totalSize : file.downloadedSize),
+    0
+  );
+  const totalBytes = Math.max(progress.totalBytes, progress.completedBytes + activeTotalBytes);
 
   return {
     completedFiles: progress.completedFiles,
     totalFiles: progress.totalFiles,
-    downloadedBytes: Math.min(progress.completedBytes + activeBytes, progress.totalBytes),
-    totalBytes: progress.totalBytes,
+    downloadedBytes: Math.min(progress.completedBytes + activeBytes, totalBytes),
+    totalBytes,
     speedBytes: activeSpeed,
     activeFiles: [...progress.activeFiles.values()],
   };

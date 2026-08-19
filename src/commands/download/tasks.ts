@@ -245,6 +245,9 @@ export async function startDownloadTaskWithPid(
 }
 
 export async function completeDownloadTask(id: string): Promise<void> {
+  const task = await findDownloadTask(id);
+  const overallProgress = task?.overallProgress ? getCompletedOverallProgress(task.overallProgress) : undefined;
+
   await updateTask(id, {
     status: "completed",
     pid: undefined,
@@ -252,6 +255,7 @@ export async function completeDownloadTask(id: string): Promise<void> {
     interruptedAt: undefined,
     interruptedCause: undefined,
     lastError: undefined,
+    overallProgress,
   });
 }
 
@@ -688,22 +692,22 @@ function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownl
   const progressAge = formatDistanceToNow(new Date(task.lastProgress.updatedAt), { addSuffix: true });
 
   if (task.overallProgress) {
+    const displayProgress = getDisplayOverallProgress(task.overallProgress, task.status);
     const overallPercent = clampPercentage(
-      task.status === "completed" ? 100 : calculateOverallPercentage(task.overallProgress)
+      task.status === "completed" ? 100 : calculateOverallPercentage(displayProgress)
     );
     const overallBar = renderProgressBar(overallPercent);
-    const overallDownloadedSize = formatSize(task.overallProgress.downloadedBytes);
-    const overallTotalSize =
-      task.overallProgress.totalBytes > 0 ? formatSize(task.overallProgress.totalBytes) : "unknown";
+    const overallDownloadedSize = formatSize(displayProgress.downloadedBytes);
+    const overallTotalSize = displayProgress.totalBytes > 0 ? formatSize(displayProgress.totalBytes) : "unknown";
 
     console.log(
       `           ${colors.gray("Overall:")} ${overallBar} ${colors.bold.white(`${Math.floor(overallPercent)}%`)} ${colors.gray(
         `${overallDownloadedSize} / ${overallTotalSize}`
-      )} ${colors.gray(`(${task.overallProgress.completedFiles}/${task.overallProgress.totalFiles} files)`)}`
+      )} ${colors.gray(`(${displayProgress.completedFiles}/${displayProgress.totalFiles} files)`)}`
     );
   }
 
-  const activeFiles = task.overallProgress?.activeFiles;
+  const activeFiles = task.status === "completed" ? [] : task.overallProgress?.activeFiles;
   if (activeFiles && activeFiles.length > 0) {
     console.log(
       `           ${colors.gray("Active:")}  ${colors.white(`${activeFiles.length} file${activeFiles.length === 1 ? "" : "s"}`)}`
@@ -711,7 +715,7 @@ function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownl
     for (const file of activeFiles) {
       printActiveFileProgress(file, options);
     }
-  } else {
+  } else if (task.status !== "completed") {
     console.log(
       `           ${colors.gray("Last file:")} ${colors.white(formatDisplayFileName(task.lastProgress.fileName, options.fileNameWidth))}`
     );
@@ -797,9 +801,54 @@ function clampPercentage(percent: number): number {
   return Math.max(0, Math.min(100, percent));
 }
 
+function getDisplayOverallProgress(
+  progress: NonNullable<DownloadTaskRecord["overallProgress"]>,
+  status: DownloadTaskStatus
+): NonNullable<DownloadTaskRecord["overallProgress"]> {
+  if (status === "completed") {
+    return getCompletedOverallProgress(progress);
+  }
+
+  const activeRemainingBytes = (progress.activeFiles ?? []).reduce(
+    (sum, file) => sum + Math.max((file.totalSize || 0) - file.downloadedSize, 0),
+    0
+  );
+
+  if (activeRemainingBytes <= 0 || progress.totalBytes <= 0) {
+    return progress;
+  }
+
+  const totalBytes = Math.max(progress.totalBytes, progress.downloadedBytes + activeRemainingBytes);
+  return {
+    ...progress,
+    downloadedBytes: Math.min(progress.downloadedBytes, totalBytes),
+    totalBytes,
+  };
+}
+
+function getCompletedOverallProgress(
+  progress: NonNullable<DownloadTaskRecord["overallProgress"]>
+): NonNullable<DownloadTaskRecord["overallProgress"]> {
+  const totalBytes = Math.max(progress.totalBytes, progress.downloadedBytes);
+  return {
+    ...progress,
+    completedFiles: progress.totalFiles,
+    downloadedBytes: totalBytes,
+    totalBytes,
+    speedBytes: 0,
+    activeFiles: [],
+  };
+}
+
 function calculateOverallPercentage(progress: NonNullable<DownloadTaskRecord["overallProgress"]>): number {
   if (progress.totalBytes > 0) {
-    return (Math.min(progress.downloadedBytes, progress.totalBytes) / progress.totalBytes) * 100;
+    const bytePercentage = (Math.min(progress.downloadedBytes, progress.totalBytes) / progress.totalBytes) * 100;
+
+    if ((progress.activeFiles?.length ?? 0) > 0 || progress.completedFiles < progress.totalFiles) {
+      return Math.min(bytePercentage, 99.9);
+    }
+
+    return bytePercentage;
   }
 
   return progress.totalFiles > 0 ? (progress.completedFiles / progress.totalFiles) * 100 : 0;
