@@ -5,6 +5,7 @@ import { formatDistanceToNow } from "date-fns";
 import colors from "ansi-colors";
 import { ensureDownloadCacheDirectory } from "../../lib/cache.js";
 import { CONFIG } from "../../lib/types.js";
+import { PROGRESS_BAR_COMPLETE, PROGRESS_BAR_INCOMPLETE } from "./progress-style.js";
 import type { DownloadOptions, DownloadProgress } from "./types.js";
 import { formatSize } from "./utils.js";
 
@@ -312,6 +313,15 @@ interface PrintDownloadTasksOptions {
   all?: boolean;
 }
 
+interface WatchDownloadTasksOptions {
+  interval?: number | string;
+}
+
+interface DownloadWatchFrameResult {
+  found: boolean;
+  shouldContinue: boolean;
+}
+
 function isActionableTask(task: DownloadTaskRecord): boolean {
   return task.status === "running" || task.status === "interrupted";
 }
@@ -349,6 +359,107 @@ export async function printDownloadTaskStatus(idOrUrl: string): Promise<boolean>
   console.log(colors.gray("──────────────────────────────────────────────────"));
   printDownloadTaskProgress(task);
   return true;
+}
+
+export async function watchDownloadTasks(idOrUrl?: string, options: WatchDownloadTasksOptions = {}): Promise<boolean> {
+  const intervalMs = parseWatchIntervalMs(options.interval);
+  let stopped = false;
+  let wakeWatcher: (() => void) | undefined;
+  const stopWatching = (): void => {
+    stopped = true;
+    wakeWatcher?.();
+  };
+
+  process.once("SIGINT", stopWatching);
+
+  try {
+    while (!stopped) {
+      clearTerminal();
+      const frame = await printDownloadWatchFrame(idOrUrl);
+      printDownloadWatchFooter(intervalMs);
+
+      if (!frame.found) return false;
+      if (!frame.shouldContinue || stopped) return true;
+      await sleep(intervalMs, (wake) => {
+        wakeWatcher = wake;
+      });
+      wakeWatcher = undefined;
+    }
+
+    return true;
+  } finally {
+    process.removeListener("SIGINT", stopWatching);
+  }
+}
+
+async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<DownloadWatchFrameResult> {
+  printDownloadWatchHeading(idOrUrl);
+
+  if (idOrUrl) {
+    const task = await findDownloadTask(idOrUrl);
+    if (!task) {
+      console.error(colors.red(`No download task found for '${idOrUrl}'.`));
+      console.log(colors.gray("Run `visuales tasks` to see known tasks."));
+      return { found: false, shouldContinue: false };
+    }
+
+    printDownloadTaskProgress(task);
+    return { found: true, shouldContinue: task.status === "running" };
+  }
+
+  const tasks = await listDownloadTasks();
+  const displayedTasks = tasks.filter(isActionableTask);
+
+  if (tasks.length === 0) {
+    console.log(colors.yellow("No download tasks found."));
+    return { found: true, shouldContinue: false };
+  }
+
+  if (displayedTasks.length === 0) {
+    console.log(colors.yellow("No running or interrupted download tasks found."));
+    console.log(colors.gray("Run `visuales tasks --all` to see completed and failed task history."));
+    return { found: true, shouldContinue: false };
+  }
+
+  for (const task of [...displayedTasks].reverse()) {
+    printDownloadTaskProgress(task);
+    console.log();
+  }
+
+  return { found: true, shouldContinue: displayedTasks.some((task) => task.status === "running") };
+}
+
+function printDownloadWatchHeading(idOrUrl: string | undefined): void {
+  const scope = idOrUrl ? `Task: ${idOrUrl}` : "Scope: running and interrupted tasks";
+  console.log(colors.blue.bold("\nDownload Watch:"));
+  console.log(colors.gray("──────────────────────────────────────────────────"));
+  console.log(`${colors.gray(scope)} ${colors.gray(`refreshed ${new Date().toLocaleTimeString()}`)}`);
+  console.log();
+}
+
+function printDownloadWatchFooter(intervalMs: number): void {
+  console.log(colors.gray("──────────────────────────────────────────────────"));
+  console.log(colors.gray(`Refreshing every ${intervalMs / 1000}s. Press Ctrl-C to stop watching.`));
+}
+
+function parseWatchIntervalMs(interval: number | string | undefined): number {
+  const seconds = interval === undefined ? 2 : Number(interval);
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(1, seconds) : 2;
+  return safeSeconds * 1000;
+}
+
+function clearTerminal(): void {
+  process.stdout.write("\x1B[2J\x1B[H");
+}
+
+async function sleep(ms: number, registerWake?: (wake: () => void) => void): Promise<void> {
+  await new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    registerWake?.(() => {
+      clearTimeout(timeout);
+      resolve(undefined);
+    });
+  });
 }
 
 function printDownloadTaskProgress(task: DownloadTaskRecord): void {
@@ -419,7 +530,9 @@ function printActiveFileProgress(file: {
 
 function renderProgressBar(percent: number): string {
   const completed = Math.round((percent / 100) * STATUS_BAR_WIDTH);
-  const bar = `${"=".repeat(completed)}${"-".repeat(STATUS_BAR_WIDTH - completed)}`;
+  const bar = `${PROGRESS_BAR_COMPLETE.repeat(completed)}${PROGRESS_BAR_INCOMPLETE.repeat(
+    STATUS_BAR_WIDTH - completed
+  )}`;
   return colors.green(`[${bar}]`);
 }
 

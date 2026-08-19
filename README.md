@@ -94,6 +94,12 @@ List running or interrupted download tasks:
 visuales tasks
 ```
 
+Watch running download tasks until they finish or become interrupted:
+
+```bash
+visuales tasks watch
+```
+
 Clear saved download task history:
 
 ```bash
@@ -110,6 +116,12 @@ Show one task:
 
 ```bash
 visuales tasks status <task-id-or-url>
+```
+
+Watch one task by id or URL:
+
+```bash
+visuales tasks watch <task-id-or-url>
 ```
 
 Run a download in the background:

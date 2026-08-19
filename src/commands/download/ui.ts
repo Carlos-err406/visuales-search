@@ -1,5 +1,6 @@
 import cliProgress from "cli-progress";
 import colors from "ansi-colors";
+import { PROGRESS_BAR_COMPLETE, PROGRESS_BAR_INCOMPLETE } from "./progress-style.js";
 import { formatAverageSpeed, formatDuration, formatSize } from "./utils.js";
 
 export const progressBars = new cliProgress.MultiBar(
@@ -57,8 +58,8 @@ export function createDownloadBar(
       format: `[${colors.cyan("{slot}")}] [${colors.green("{bar}")}] ${colors.bold.white(
         "{percentagePadded}%"
       )}  ${colors.white("{filenamePadded}")} ${colors.gray("{downloadedPadded}")} ${colors.yellow("{statusPadded}")}`,
-      barCompleteChar: "=",
-      barIncompleteChar: "-",
+      barCompleteChar: PROGRESS_BAR_COMPLETE,
+      barIncompleteChar: PROGRESS_BAR_INCOMPLETE,
       barsize: BAR_SIZE,
     }
   );
@@ -91,8 +92,8 @@ export function createFileCountBar(totalFiles: number) {
       )}  ${colors.gray("{downloadedPadded}")} ${colors.bold.white("{filesPadded}")} files  ${colors.cyan(
         "{etaPadded}"
       )}`,
-      barCompleteChar: "=",
-      barIncompleteChar: "-",
+      barCompleteChar: PROGRESS_BAR_COMPLETE,
+      barIncompleteChar: PROGRESS_BAR_INCOMPLETE,
       barsize: BAR_SIZE,
     }
   );

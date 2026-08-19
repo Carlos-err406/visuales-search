@@ -1,7 +1,12 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
 import { cancelCommand, resumeCommand } from "../download/index.js";
-import { clearAndPrintDownloadTasks, printDownloadTasks, printDownloadTaskStatus } from "../download/tasks.js";
+import {
+  clearAndPrintDownloadTasks,
+  printDownloadTasks,
+  printDownloadTaskStatus,
+  watchDownloadTasks,
+} from "../download/tasks.js";
 
 async function listTasksCommand(options: { all?: boolean; clear?: boolean }): Promise<void> {
   if (options.clear) {
@@ -17,6 +22,13 @@ async function statusCommand(idOrUrl: string): Promise<void> {
   if (!found) {
     console.error(colors.red(`No download task found for '${idOrUrl}'.`));
     console.log(colors.gray("Run `visuales tasks` to see known tasks."));
+    process.exit(1);
+  }
+}
+
+async function watchCommand(idOrUrl: string | undefined, options: { interval?: string }): Promise<void> {
+  const found = await watchDownloadTasks(idOrUrl, { interval: options.interval });
+  if (!found) {
     process.exit(1);
   }
 }
@@ -44,6 +56,13 @@ export function setupTasksCommand(program: Command): void {
     .description("Cancel a running download task by task id or URL")
     .argument("<task>", "Task id or URL")
     .action(cancelCommand);
+
+  tasks
+    .command("watch")
+    .description("Watch running download task progress")
+    .argument("[task]", "Task id or URL")
+    .option("-i, --interval <seconds>", "Refresh interval in seconds", "2")
+    .action(watchCommand);
 
   tasks
     .command("status")
