@@ -143,7 +143,11 @@ async function loadTaskStore(): Promise<DownloadTaskStore> {
 
 async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
   await ensureDownloadCacheDirectory();
-  await fs.writeFile(tasksFilePath(), JSON.stringify(store, null, 2));
+  const filePath = tasksFilePath();
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+
+  await fs.writeFile(temporaryPath, JSON.stringify(store, null, 2));
+  await fs.rename(temporaryPath, filePath);
 }
 
 function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
