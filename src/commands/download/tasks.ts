@@ -326,6 +326,12 @@ function isActionableTask(task: DownloadTaskRecord): boolean {
   return task.status === "running" || task.status === "interrupted";
 }
 
+function compareWatchTaskOrder(a: DownloadTaskRecord, b: DownloadTaskRecord): number {
+  const aTime = a.createdAt || a.startedAt || 0;
+  const bTime = b.createdAt || b.startedAt || 0;
+  return bTime - aTime || a.id.localeCompare(b.id);
+}
+
 export async function printDownloadTasks(options: PrintDownloadTasksOptions = {}): Promise<void> {
   const tasks = await listDownloadTasks();
   const displayedTasks = options.all ? tasks : tasks.filter(isActionableTask);
@@ -408,7 +414,7 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
   }
 
   const tasks = await listDownloadTasks();
-  const displayedTasks = tasks.filter(isActionableTask);
+  const displayedTasks = tasks.filter(isActionableTask).sort(compareWatchTaskOrder);
 
   if (tasks.length === 0) {
     console.log(colors.yellow("No download tasks found."));
@@ -421,7 +427,7 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
     return { found: true, shouldContinue: false };
   }
 
-  for (const task of [...displayedTasks].reverse()) {
+  for (const task of displayedTasks) {
     printDownloadTaskProgress(task);
     console.log();
   }
