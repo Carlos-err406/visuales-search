@@ -819,6 +819,10 @@ function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownl
     console.log(`           ${colors.gray("Progress:")} ${colors.yellow(waitingMessage)}`);
     if (includeDetails) {
       printDownloadTaskDetails(task, false);
+    } else {
+      // The compact watch view hides the full details, so a task with no progress yet (queued,
+      // or just started) would be unidentifiable. Show what it will download.
+      printCompactTaskSource(task, options);
     }
     return;
   }
@@ -863,6 +867,22 @@ function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownl
   if (includeDetails) {
     printDownloadTaskDetails(task, false);
   }
+}
+
+function printCompactTaskSource(task: DownloadTaskRecord, options: PrintDownloadTaskProgressOptions): void {
+  if (task.urls && task.urls.length > 1) {
+    const first = formatDisplayFileName(task.urls[0], options.fileNameWidth);
+    console.log(
+      `           ${colors.gray("Source:")}   ${colors.white(`${task.urls.length} targets`)} ${colors.gray(first)}`
+    );
+  } else {
+    console.log(
+      `           ${colors.gray("Source:")}   ${colors.white(formatDisplayFileName(task.url, options.fileNameWidth))}`
+    );
+  }
+  console.log(
+    `           ${colors.gray("Target:")}   ${colors.gray(formatDisplayFileName(task.output, options.fileNameWidth))}`
+  );
 }
 
 function printActiveFileProgress(
