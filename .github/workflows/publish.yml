@@ -133,7 +133,10 @@ jobs:
       - name: Download npm tarball
         run: |
           version="${{ needs.npm.outputs.package_version }}"
-          curl --fail --location --retry 12 --retry-delay 10 \
+          # A freshly published version can take a few minutes to appear on the registry CDN
+          # (a 404 until then). --retry-all-errors retries that 404; the budget below covers
+          # ~5 min of propagation (observed ~4 min for 1.3.0).
+          curl --fail --location --retry 20 --retry-delay 15 --retry-all-errors \
             "https://registry.npmjs.org/visuales/-/visuales-${version}.tgz" \
             --output "/tmp/visuales-${version}.tgz"
 
