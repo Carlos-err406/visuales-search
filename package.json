@@ -14,7 +14,8 @@
     "format": "prettier --write .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "check": "npm run lint && npm run build",
+    "test": "npm run build && node --test test/download-verify.test.mjs",
+    "check": "npm run lint && npm test",
     "release:check": "npm run check && npm pack --dry-run --cache .cache/npm",
     "release:patch": "npm version patch",
     "release:minor": "npm version minor",
@@ -25,8 +26,8 @@
     "postbuild": "chmod +x dist/cli.js"
   },
   "lint-staged": {
-    "*.{ts,js,json,md,yml}": "prettier --write",
-    "*.{ts,js}": "eslint --fix"
+    "*.{ts,js,mjs,cjs,json,md,yml}": "prettier --write",
+    "*.{ts,js,mjs,cjs}": "eslint --fix"
   },
   "keywords": [
     "search",
