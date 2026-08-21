@@ -17,6 +17,11 @@ import {
   updateCachedFileSize,
   type DirectoryListing,
 } from "./discovery-cache.js";
+import { DOWNLOAD_USER_AGENT, type ExpectedFileSize, fetchExpectedFileSize } from "./http.js";
+import { getExistingFileState, getFileSize, isUnavailablePageFile } from "./file-state.js";
+import { downloadWithFetch, type FetchDownloadProgress } from "./fetch-download.js";
+import { probeRemoteCompletion, verifyDownloadedFile, type VerifyDownloadResult } from "./verify.js";
+import { reconcileExistingFile } from "./reconcile.js";
 import {
   progressBars,
   createDownloadBar,
@@ -33,8 +38,6 @@ import {
 const downloadedUrls = new Set<string>();
 const SMALL_FILE_SINGLE_CONNECTION_THRESHOLD = 10 * 1024 * 1024;
 const PARTS_DIRECTORY_NAME = ".visuales-parts";
-const DOWNLOAD_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const NODE_MAJOR_VERSION = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
 
 interface DownloadFailure {
@@ -53,16 +56,6 @@ export interface DownloadTarget {
   url: string;
   output: string;
   relativePath: string;
-}
-
-interface ExpectedFileSize {
-  size: number;
-  exact: boolean;
-}
-
-interface ExistingFileState {
-  size: number;
-  isUnavailablePage: boolean;
 }
 
 interface FileCountProgress {
@@ -138,190 +131,10 @@ function usesNativeFetchDownloader(): boolean {
   return NODE_MAJOR_VERSION >= 20;
 }
 
-function isUnavailableResponse(response: Response): boolean {
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-
-  return contentType.includes("text/html") && !response.url.toLowerCase().endsWith(".html");
-}
-
-function parseContentLength(response: Response): ExpectedFileSize {
-  const contentLength = response.headers.get("content-length");
-  const size = contentLength ? parseInt(contentLength, 10) : 0;
-  const exact = response.ok && Number.isFinite(size) && size > 0 && !isUnavailableResponse(response);
-
-  return {
-    size: exact ? size : 0,
-    exact,
-  };
-}
-
-function parseContentRangeSize(response: Response): ExpectedFileSize {
-  const contentRange = response.headers.get("content-range");
-  const sizeText = contentRange?.match(/\/(\d+)$/)?.[1];
-  const size = sizeText ? parseInt(sizeText, 10) : 0;
-  const exact = response.status === 206 && Number.isFinite(size) && size > 0 && !isUnavailableResponse(response);
-
-  return {
-    size: exact ? size : 0,
-    exact,
-  };
-}
-
-async function fetchExpectedFileSize(url: string, options: DownloadOptions): Promise<ExpectedFileSize> {
-  const timeoutMs = Number.isFinite(options.timeout) ? options.timeout * 1000 : undefined;
-  const headers = {
-    "User-Agent": DOWNLOAD_USER_AGENT,
-  };
-
-  try {
-    const response = await fetch(url, {
-      method: "HEAD",
-      headers,
-      signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
-    });
-    const size = parseContentLength(response);
-    if (size.exact) return size;
-  } catch {
-    // Fall through to a range request; some Apache mirrors omit useful HEAD metadata.
-  }
-
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        ...headers,
-        Range: "bytes=0-0",
-      },
-      signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
-    });
-    await response.body?.cancel();
-
-    return parseContentRangeSize(response);
-  } catch {
-    return { size: 0, exact: false };
-  }
-}
-
-async function getFileSize(filePath: string): Promise<number | null> {
-  try {
-    const stats = await fs.stat(filePath);
-    return stats.isFile() ? stats.size : null;
-  } catch {
-    return null;
-  }
-}
-
-async function downloadWithFetch(
-  url: string,
-  tempPath: string,
-  options: DownloadOptions,
-  expectedFileSize: ExpectedFileSize,
-  onProgress?: (progress: {
-    downloadedBytes: number;
-    speedBytes: number;
-    percentage: number;
-    totalBytes: number;
-  }) => void
-): Promise<void> {
-  const timeoutMs = Number.isFinite(options.timeout) ? options.timeout * 1000 : undefined;
-  const existingBytes = options.resume ? ((await getFileSize(tempPath)) ?? 0) : 0;
-  const headers: Record<string, string> = {
-    "User-Agent": DOWNLOAD_USER_AGENT,
-  };
-
-  if (existingBytes > 0) {
-    headers.Range = `bytes=${existingBytes}-`;
-  }
-
-  const response = await fetch(url, {
-    headers,
-    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
-  });
-
-  if (!response.ok && response.status !== 206) {
-    throw new Error(`Download failed: ${response.statusText} (${response.status})`);
-  }
-
-  const shouldAppend = existingBytes > 0 && response.status === 206;
-  const startingBytes = shouldAppend ? existingBytes : 0;
-  const contentLength = parseInt(response.headers.get("content-length") ?? "0", 10);
-  const totalBytes = expectedFileSize.size || (response.status === 206 ? startingBytes + contentLength : contentLength);
-
-  if (isUnavailableResponse(response)) {
-    throw new Error("Download returned the visuales unavailable-page response; retry later");
-  }
-
-  if (!response.body) {
-    throw new Error("Download response did not include a readable body");
-  }
-
-  await fs.mkdir(path.dirname(tempPath), { recursive: true });
-  const file = await fs.open(tempPath, shouldAppend ? "a" : "w");
-  const startedAt = Date.now();
-  let downloadedBytes = startingBytes;
-
-  try {
-    for await (const chunk of response.body) {
-      const buffer = Buffer.from(chunk);
-      await file.write(buffer);
-      downloadedBytes += buffer.length;
-      const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
-      const speedBytes = (downloadedBytes - startingBytes) / elapsedSeconds;
-      const percentage = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
-
-      onProgress?.({
-        downloadedBytes,
-        speedBytes,
-        percentage,
-        totalBytes,
-      });
-    }
-  } finally {
-    await file.close();
-  }
-}
-
-async function getExistingFileState(filePath: string): Promise<ExistingFileState | null> {
-  const size = await getFileSize(filePath);
-  if (size === null) return null;
-
-  return {
-    size,
-    isUnavailablePage: await isUnavailablePageFile(filePath),
-  };
-}
-
 function isExistingFileComplete(existingSize: number, expectedSize: ExpectedFileSize): boolean {
   if (!expectedSize.size || !expectedSize.exact) return false;
 
   return existingSize === expectedSize.size;
-}
-
-function isDownloadedFileComplete(actualSize: number, expectedSize: ExpectedFileSize): boolean {
-  return !expectedSize.exact || actualSize === expectedSize.size;
-}
-
-async function isUnavailablePageFile(filePath: string): Promise<boolean> {
-  try {
-    const file = await fs.open(filePath, "r");
-    try {
-      const buffer = Buffer.alloc(512);
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      const sample = buffer.subarray(0, bytesRead).toString("utf8").toLowerCase();
-
-      return (
-        sample.includes("<html") &&
-        (sample.includes("no est&aacute; disponible") ||
-          sample.includes("no está disponible") ||
-          sample.includes("upps") ||
-          sample.includes("ayuda.uclv.edu.cu"))
-      );
-    } finally {
-      await file.close();
-    }
-  } catch {
-    return false;
-  }
 }
 
 function getListingSizeExactness(sizeText: string): boolean {
@@ -353,6 +166,40 @@ async function cleanFileDownloadParts(filePath: string): Promise<void> {
   } catch {
     // Missing parts directories are fine; there may simply be no resumable sidecars to remove.
   }
+}
+
+/**
+ * A parts file left behind by an interrupted run is resumed without ever contacting the server
+ * first, so nothing would stop an append onto bytes of an older revision. Fetching the validator
+ * up front lets If-Range turn that into a clean full download instead of a corrupted file.
+ */
+async function getPartialResumeValidator(
+  url: string,
+  tempPath: string,
+  options: DownloadOptions
+): Promise<string | undefined> {
+  if (!options.resume) return undefined;
+
+  const partialSize = (await getFileSize(tempPath)) ?? 0;
+  if (partialSize <= 0) return undefined;
+
+  const probe = await probeRemoteCompletion(url, partialSize, options);
+
+  return probe.known ? probe.validator : undefined;
+}
+
+function logFileNotice(filename: string, message: string): void {
+  progressBars.log(`${colors.gray("·")} ${colors.bold.white(filename)} ${colors.yellow(`(${message})`)}\n`);
+}
+
+/**
+ * Moves a verified download out of the parts directory. The destination is removed first so the
+ * rename also succeeds on Windows, where renaming onto an existing file throws.
+ */
+async function promoteDownloadedFile(tempPath: string, finalPath: string): Promise<void> {
+  await fs.rm(finalPath, { force: true });
+  await fs.rename(tempPath, finalPath);
+  await cleanFileDownloadParts(tempPath);
 }
 
 function decodePathSegment(segment: string): string {
@@ -520,32 +367,6 @@ export async function downloadFile(
   const finalPath = path.join(options.output, filename);
   const partsDirectory = path.join(options.output, PARTS_DIRECTORY_NAME);
   const tempPath = path.join(partsDirectory, filename);
-  let shouldReplaceExistingFile = false;
-
-  const existingFile = await getExistingFileState(finalPath);
-  if (existingFile !== null) {
-    if (!existingFile.isUnavailablePage && isExistingFileComplete(existingFile.size, expectedFileSize)) {
-      await cleanFileDownloadParts(tempPath);
-      logDownloadSkipped(filename, "already exists");
-      return;
-    }
-
-    const expectedDescription = expectedFileSize.size ? formatSize(expectedFileSize.size) : "unknown size";
-    progressBars.log(
-      `${colors.gray("·")} ${colors.bold.white(filename)} ${colors.yellow(
-        `(${
-          existingFile.isUnavailablePage
-            ? "Existing file is an unavailable-page response"
-            : "Existing file is incomplete or unverified"
-        }: ${formatSize(existingFile.size)} / ${expectedDescription}; re-downloading)`
-      )}\n`
-    );
-    if (existingFile.isUnavailablePage) {
-      await fs.rm(finalPath, { force: true });
-    } else {
-      shouldReplaceExistingFile = true;
-    }
-  }
 
   await fs.mkdir(partsDirectory, { recursive: true });
   hidePartsDirectory(partsDirectory);
@@ -557,16 +378,61 @@ export async function downloadFile(
     await fs.rm(tempPath, { force: true });
   }
 
+  let resumeValidator: string | undefined;
+  const existingFile = await getExistingFileState(finalPath);
+  if (existingFile !== null) {
+    if (!existingFile.isUnavailablePage && isExistingFileComplete(existingFile.size, expectedFileSize)) {
+      await cleanFileDownloadParts(tempPath);
+      logDownloadSkipped(filename, "already exists");
+      return;
+    }
+
+    const decision = await reconcileExistingFile({ url, finalPath, tempPath, existing: existingFile, options });
+
+    if (decision.action === "skip") {
+      await cleanFileDownloadParts(tempPath);
+      if (decision.totalSize > 0) {
+        updateCachedFileSize(url, decision.totalSize);
+      }
+      logDownloadSkipped(filename, "already exists");
+      return;
+    }
+
+    if (decision.action === "resume") {
+      resumeValidator = decision.validator;
+      expectedFileSize = { size: decision.totalSize, exact: true };
+      logFileNotice(
+        filename,
+        `Existing file is incomplete: ${formatSize(decision.localSize)} / ${formatSize(
+          decision.totalSize
+        )}; downloading the remaining ${formatSize(decision.totalSize - decision.localSize)}`
+      );
+    } else {
+      const expectedDescription = expectedFileSize.size ? formatSize(expectedFileSize.size) : "unknown size";
+      logFileNotice(
+        filename,
+        `${decision.reason}: ${formatSize(existingFile.size)} / ${expectedDescription}; re-downloading`
+      );
+    }
+  } else {
+    resumeValidator = await getPartialResumeValidator(url, tempPath, options);
+  }
+
   const ownsBar = !slotBar;
   const maxFileAttempts = options.resume ? Math.max(1, options.maxRetries + 1) : 1;
 
   for (let attempt = 1; attempt <= maxFileAttempts; attempt++) {
     try {
       if (usesNativeFetchDownloader()) {
-        let downloadedTotal = 0;
         let bars: ReturnType<typeof createDownloadBar> | null = slotBar ?? null;
         let countedActive = false;
         let decremented = false;
+        let lastProgress: FetchDownloadProgress = {
+          downloadedBytes: 0,
+          speedBytes: 0,
+          percentage: 0,
+          totalBytes: expectedFileSize.size,
+        };
         const cleanup = () => {
           if (countedActive && !decremented) {
             decrementActiveDownloads();
@@ -583,71 +449,81 @@ export async function downloadFile(
           }
           bars = null;
         };
+        const renderProgress = (progress: FetchDownloadProgress, status?: string) => {
+          lastProgress = progress;
 
-        try {
-          await downloadWithFetch(url, tempPath, options, expectedFileSize, (progress) => {
-            downloadedTotal = progress.downloadedBytes;
+          if (!bars) {
+            incrementActiveDownloads();
+            countedActive = true;
+            bars = createDownloadBar(filename, 100, progress.percentage, "Starting", slot);
+          }
 
-            if (!bars) {
-              incrementActiveDownloads();
-              countedActive = true;
-              bars = createDownloadBar(filename, 100, progress.percentage, "Starting", slot);
-            }
+          const progressVal = Math.floor(progress.percentage);
+          const sizeStr = `${formatSize(progress.downloadedBytes)} / ${formatSize(progress.totalBytes)}`.padEnd(
+            21,
+            " "
+          );
+          const speedStr = status ?? `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`;
 
-            const progressVal = Math.floor(progress.percentage);
-            const paddedPercentage = progressVal.toString().padStart(3, " ");
-            const sizeStr = `${formatSize(progress.downloadedBytes)} / ${formatSize(progress.totalBytes)}`.padEnd(
-              21,
-              " "
-            );
-            const speedStr = `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`.padEnd(10, " ");
-
-            bars.progress.update(progressVal, {
-              ...createDownloadBarPayload(filename, slot),
-              downloadedPadded: sizeStr,
-              percentagePadded: paddedPercentage,
-              statusPadded: speedStr,
-            });
-
-            onProgress?.({
-              fileName: filename,
-              progress: progress.percentage,
-              speed: `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`,
-              speedBytes: progress.speedBytes,
-              totalSize: progress.totalBytes,
-              downloadedSize: progress.downloadedBytes,
-            });
+          bars.progress.update(progressVal, {
+            ...createDownloadBarPayload(filename, slot),
+            downloadedPadded: sizeStr,
+            percentagePadded: progressVal.toString().padStart(3, " "),
+            statusPadded: speedStr.padEnd(10, " "),
           });
 
-          const completedSize = await getFileSize(tempPath);
-          if (completedSize === null || !isDownloadedFileComplete(completedSize, expectedFileSize)) {
-            if (completedSize !== null && expectedFileSize.exact) {
-              await fs.rm(tempPath, { force: true });
-            }
-            throw new Error(
-              expectedFileSize.exact
-                ? `Download finished but file size is ${formatSize(completedSize ?? 0)}; expected ${formatSize(
-                    expectedFileSize.size
-                  )}`
-                : "Download finished but file is missing"
-            );
+          onProgress?.({
+            fileName: filename,
+            progress: progress.percentage,
+            speed: `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`,
+            speedBytes: progress.speedBytes,
+            totalSize: progress.totalBytes,
+            downloadedSize: progress.downloadedBytes,
+          });
+        };
+        const updateStatus = (status: string) => {
+          if (!bars) return;
+
+          const progressVal = Math.floor(lastProgress.percentage);
+          bars.progress.update(progressVal, {
+            ...createDownloadBarPayload(filename, slot),
+            downloadedPadded: `${formatSize(lastProgress.downloadedBytes)} / ${formatSize(
+              lastProgress.totalBytes
+            )}`.padEnd(21, " "),
+            percentagePadded: progressVal.toString().padStart(3, " "),
+            statusPadded: status.padEnd(10, " "),
+          });
+        };
+
+        try {
+          await downloadWithFetch({
+            url,
+            tempPath,
+            options,
+            expectedFileSize,
+            validator: resumeValidator,
+            onProgress: (progress) => renderProgress(progress),
+          });
+
+          const verification = await verifyDownloadedFile({
+            url,
+            filePath: tempPath,
+            options,
+            expectedFileSize,
+            onStatus: updateStatus,
+            onProgress: (progress) => renderProgress(progress, "Repairing"),
+            log: (message) => logFileNotice(filename, message),
+          });
+          if (verification.totalSize > 0) {
+            expectedFileSize = { size: verification.totalSize, exact: verification.verified };
           }
 
-          if (await isUnavailablePageFile(tempPath)) {
-            await fs.rm(tempPath, { force: true });
-            throw new Error("Download returned the visuales unavailable-page response; retry later");
-          }
-
-          if (shouldReplaceExistingFile) {
-            await fs.rm(finalPath, { force: true });
-          }
-          await fs.rename(tempPath, finalPath);
-          await cleanFileDownloadParts(tempPath);
+          await promoteDownloadedFile(tempPath, finalPath);
 
           if (bars) {
-            const sizeToLog = expectedFileSize.size || completedSize || downloadedTotal;
+            const sizeToLog = verification.size || expectedFileSize.size || lastProgress.downloadedBytes;
             const durationSeconds = (Date.now() - startedAt) / 1000;
-            if (expectedFileSize.exact) {
+            if (verification.verified) {
               updateCachedFileSize(url, sizeToLog);
             }
             logDownloadComplete(filename, sizeToLog, durationSeconds);
@@ -824,39 +700,38 @@ export async function downloadFile(
               return;
             }
 
-            const completedSize = await getFileSize(tempPath);
-            if (completedSize === null || !isDownloadedFileComplete(completedSize, expectedFileSize)) {
-              if (completedSize !== null) {
-                await fs.rm(tempPath, { force: true });
-              }
-              rejectDownload(
-                new Error(
-                  expectedFileSize.exact
-                    ? `Download finished but file size is ${formatSize(completedSize ?? 0)}; expected ${formatSize(
-                        expectedFileSize.size
-                      )}`
-                    : "Download finished but file is missing"
-                )
-              );
+            let verification: VerifyDownloadResult;
+            try {
+              verification = await verifyDownloadedFile({
+                url,
+                filePath: tempPath,
+                options,
+                expectedFileSize,
+                onProgress: (progress) =>
+                  onProgress?.({
+                    fileName: filename,
+                    progress: progress.percentage,
+                    speed: `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`,
+                    speedBytes: progress.speedBytes,
+                    totalSize: progress.totalBytes,
+                    downloadedSize: progress.downloadedBytes,
+                  }),
+                log: (message) => logFileNotice(filename, message),
+              });
+            } catch (error) {
+              rejectDownload(error instanceof Error ? error : new Error(String(error)));
               return;
             }
-
-            if (await isUnavailablePageFile(tempPath)) {
-              await fs.rm(tempPath, { force: true });
-              rejectDownload(new Error("Download returned the visuales unavailable-page response; retry later"));
-              return;
+            if (verification.totalSize > 0) {
+              expectedFileSize = { size: verification.totalSize, exact: verification.verified };
             }
 
-            if (shouldReplaceExistingFile) {
-              await fs.rm(finalPath, { force: true });
-            }
-            await fs.rename(tempPath, finalPath);
-            await cleanFileDownloadParts(tempPath);
+            await promoteDownloadedFile(tempPath, finalPath);
 
             if (bars) {
-              const sizeToLog = expectedFileSize.size || completedSize || downloadedTotal;
+              const sizeToLog = verification.size || expectedFileSize.size || downloadedTotal;
               const durationSeconds = (Date.now() - startedAt) / 1000;
-              if (expectedFileSize.exact) {
+              if (verification.verified) {
                 updateCachedFileSize(url, sizeToLog);
               }
               logDownloadComplete(filename, sizeToLog, durationSeconds);
