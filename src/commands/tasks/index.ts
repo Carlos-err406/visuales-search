@@ -67,8 +67,11 @@ export function setupTasksCommand(program: Command): void {
   tasks
     .command("cancel")
     .description("Cancel running download tasks by task id or URL")
-    .argument("<tasks...>", "Task ids or URLs")
-    .action(cancelCommand);
+    .argument("[tasks...]", "Task ids or URLs")
+    .option("-a, --all", "Cancel every running and queued task")
+    // optsWithGlobals: the parent `tasks` command also defines --all, and Commander routes the
+    // flag there, so the merged view is what actually carries `cancel --all`.
+    .action((idOrUrls, _options, cmd) => cancelCommand(idOrUrls, { all: cmd.optsWithGlobals().all }));
 
   tasks
     .command("delete")

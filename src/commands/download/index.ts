@@ -19,6 +19,7 @@ import {
   createDownloadTaskId,
   getDownloadTaskLogPath,
   interruptDownloadTask,
+  listDownloadTasks,
   printDownloadTasks,
   startDownloadTask,
   startDownloadTaskWithPid,
@@ -423,8 +424,29 @@ async function tasksCommand(options: { all?: boolean; clear?: boolean }): Promis
   await printDownloadTasks({ all: options.all });
 }
 
-export async function cancelCommand(idOrUrls: string | string[]): Promise<void> {
-  const inputs = Array.isArray(idOrUrls) ? idOrUrls : [idOrUrls];
+export async function cancelCommand(
+  idOrUrls: string | string[] | undefined,
+  options: { all?: boolean } = {}
+): Promise<void> {
+  let inputs: string[];
+
+  if (options.all) {
+    const cancelable = (await listDownloadTasks()).filter(
+      (task) => task.status === "running" || task.status === "queued"
+    );
+    if (cancelable.length === 0) {
+      console.log(colors.yellow("No running or queued download tasks to cancel."));
+      return;
+    }
+    inputs = cancelable.map((task) => task.id);
+  } else {
+    inputs = Array.isArray(idOrUrls) ? idOrUrls : idOrUrls ? [idOrUrls] : [];
+    if (inputs.length === 0) {
+      console.error(colors.red("Provide one or more task ids/URLs, or pass --all to cancel every active task."));
+      process.exit(1);
+    }
+  }
+
   const missingTasks: string[] = [];
 
   for (const idOrUrl of inputs) {
@@ -519,8 +541,9 @@ export function setupDownloadCommand(program: Command): void {
   download
     .command("cancel", { hidden: true })
     .description("Alias for visuales tasks cancel")
-    .argument("<task>", "Task id or URL")
-    .action(cancelCommand);
+    .argument("[tasks...]", "Task ids or URLs")
+    .option("-a, --all", "Cancel every running and queued task")
+    .action((idOrUrls, _options, cmd) => cancelCommand(idOrUrls, { all: cmd.optsWithGlobals().all }));
 
   download
     .command("delete", { hidden: true })
