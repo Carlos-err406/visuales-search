@@ -28,6 +28,12 @@ npm run format
 npm run lint
 npm run lint:fix
 
+# run the test suite (builds first; the tests import from dist/)
+npm test
+
+# lint + build + test, the way CI runs it
+npm run check
+
 # Run the built CLI
 node dist/cli.js search <term1> <term2> <term3>...
 ```
@@ -61,6 +67,8 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 - **Concurrency (`--concurrent, -c`)**: Defaults to **5 parallel downloads**.
 - **Resumability (`--resume, -r`)**: Defaults to `true`. Uses HTTP Range headers and smart file-size comparison (`skipSmaller`) to resume partial downloads.
 - **Directory Discovery Cache**: Persistently caches directory listings in `.cache/discovery.json` to make repeated scans instant.
+- **Integrity Verification**: Every finished file is checked _before_ it leaves the `.visuales-parts/` sidecar directory. When the exact size is already known and matches, the file passes with no extra request. Otherwise the server is asked for a single byte at the current end of the file (`Range: bytes=<local-size>-<local-size>`): a `416` proves the file is whole, while a `206` reveals the real total in `Content-Range` and the missing bytes are appended right away. Because it does not depend on `HEAD` or `Content-Length`, a transfer cut short by a flaky connection can no longer be reported as complete. If the server discloses no usable total at all, the file is kept but left unverified rather than wrongly declared complete.
+- **Incomplete File Reconciliation**: A partial file already sitting in the output directory is moved back into `.visuales-parts/` and resumed from its current size instead of being downloaded again. Every resumed request carries `If-Range` (ETag/Last-Modified), including the resume of a parts file left behind by an interrupted run, so a file that changed upstream is re-fetched in full rather than appended to. A `206` whose range does not start exactly where the local file ends is refused instead of appended.
 - **Robust Error Handling**: Explicitly detects server-side blocks, 503 errors, and redirects to "URL not available" pages.
 - **Professional UI**: Multi-bar progress tracking with real-time speed and status ("Resuming...", "Already exists").
 
@@ -108,6 +116,7 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 ├── src/              # Source TypeScript
 │   ├── commands/     # Command implementations
 │   └── lib/          # Shared logic and utilities
+├── test/             # node:test suites (run against dist/, not published)
 ├── .prettierrc       # Formatting rules (LF, 120 width)
 ├── eslint.config.js  # Linting rules (Flat config)
 ├── package.json      # Scripts, dependencies, and lint-staged config
