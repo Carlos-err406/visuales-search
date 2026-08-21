@@ -200,6 +200,44 @@ export async function clearDownloadTasks(): Promise<number> {
   return tasks.length;
 }
 
+/**
+ * Removes a single task record by id or URL. A still-live process is stopped first so a detached
+ * download is not left running with no record to track or cancel it. Returns the removed record,
+ * or `null` when no task matches. Downloaded files and partial data are left untouched — only the
+ * task record and its log are discarded.
+ */
+export async function deleteDownloadTask(idOrUrl: string): Promise<DownloadTaskRecord | null> {
+  const store = await loadTaskStore();
+  const index = store.tasks.findIndex(
+    (task) => task.id === idOrUrl || task.url === idOrUrl || task.urls?.includes(idOrUrl)
+  );
+  if (index === -1) return null;
+
+  const [task] = store.tasks.splice(index, 1);
+  if (isProcessAlive(task.pid)) {
+    try {
+      process.kill(task.pid as number, "SIGTERM");
+    } catch {
+      // The process may exit between the liveness check and the signal; removing the record is enough.
+    }
+  }
+
+  await saveTaskStore(store);
+  lastProgressWrite.delete(task.id);
+  await removeTaskLogFile(task);
+
+  return task;
+}
+
+async function removeTaskLogFile(task: DownloadTaskRecord): Promise<void> {
+  const logFile = task.logFile ?? getDownloadTaskLogPath(task.id);
+  try {
+    await fs.rm(logFile, { force: true });
+  } catch {
+    // A missing or unremovable log should not fail the delete.
+  }
+}
+
 export async function startDownloadTask(
   urls: string | string[],
   options: DownloadOptions

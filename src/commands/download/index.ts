@@ -12,6 +12,7 @@ import {
   cancelDownloadTask,
   clearAndPrintDownloadTasks,
   completeDownloadTask,
+  deleteDownloadTask,
   enqueueDownloadTask,
   failDownloadTask,
   findDownloadTask,
@@ -453,6 +454,28 @@ export async function cancelCommand(idOrUrls: string | string[]): Promise<void> 
   }
 }
 
+export async function deleteCommand(idOrUrls: string | string[]): Promise<void> {
+  const inputs = Array.isArray(idOrUrls) ? idOrUrls : [idOrUrls];
+  const missingTasks: string[] = [];
+
+  for (const idOrUrl of inputs) {
+    const task = await deleteDownloadTask(idOrUrl);
+    if (!task) {
+      missingTasks.push(idOrUrl);
+      console.error(colors.red(`No download task found for '${idOrUrl}'.`));
+      console.log(colors.gray("Run `visuales tasks --all` to see known tasks."));
+      continue;
+    }
+
+    const wasLive = task.status === "running" || task.status === "queued";
+    console.log(colors.green(`Deleted task ${task.id}${wasLive ? " (stopped it first)" : ""}.`));
+  }
+
+  if (missingTasks.length > 0) {
+    process.exit(1);
+  }
+}
+
 export function setupDownloadCommand(program: Command): void {
   const download = program
     .command("download")
@@ -498,4 +521,10 @@ export function setupDownloadCommand(program: Command): void {
     .description("Alias for visuales tasks cancel")
     .argument("<task>", "Task id or URL")
     .action(cancelCommand);
+
+  download
+    .command("delete", { hidden: true })
+    .description("Alias for visuales tasks delete")
+    .argument("<tasks...>", "Task ids or URLs")
+    .action(deleteCommand);
 }

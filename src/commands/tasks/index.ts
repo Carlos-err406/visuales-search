@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
-import { cancelCommand, resumeCommand } from "../download/index.js";
+import { cancelCommand, deleteCommand, resumeCommand } from "../download/index.js";
 import {
   clearAndPrintDownloadTasks,
   printDownloadTasks,
@@ -69,6 +69,13 @@ export function setupTasksCommand(program: Command): void {
     .description("Cancel running download tasks by task id or URL")
     .argument("<tasks...>", "Task ids or URLs")
     .action(cancelCommand);
+
+  tasks
+    .command("delete")
+    .alias("rm")
+    .description("Delete download tasks by task id or URL (does not remove downloaded files)")
+    .argument("<tasks...>", "Task ids or URLs")
+    .action(deleteCommand);
 
   tasks
     .command("watch")
