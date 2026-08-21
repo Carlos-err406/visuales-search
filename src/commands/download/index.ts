@@ -12,6 +12,7 @@ import {
   cancelDownloadTask,
   clearAndPrintDownloadTasks,
   completeDownloadTask,
+  enqueueDownloadTask,
   failDownloadTask,
   findDownloadTask,
   createDownloadTaskId,
@@ -21,6 +22,7 @@ import {
   startDownloadTask,
   startDownloadTaskWithPid,
   updateDownloadTaskProgress,
+  waitForQueueSlot,
   type DownloadTaskRecord,
 } from "./tasks.js";
 
@@ -33,6 +35,7 @@ interface DownloadCommandOptions {
   connections?: number | string;
   compact?: boolean;
   detach?: boolean;
+  queue?: boolean;
   exclude?: string[];
   ignore?: string[];
   verbose?: boolean;
@@ -53,6 +56,7 @@ export function printDownloadUsage(): void {
     )
   );
   console.log(colors.gray("  visuales download 7zM4aQ 8B2vcc 9CgNxD --output ./downloads"));
+  console.log(colors.gray("  visuales download 7zM4aQ -qd   # queue in the background behind running downloads"));
   console.log(colors.gray('  visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"'));
 }
 
@@ -125,8 +129,10 @@ export async function downloadCommand(urls: string | string[], options: Download
     verbose: options.verbose,
   };
 
+  const queue = options.queue ?? false;
+
   if (options.detach) {
-    await startDetachedDownload(resolvedUrls, downloadOptions);
+    await startDetachedDownload(resolvedUrls, downloadOptions, queue);
     return;
   }
 
@@ -135,10 +141,27 @@ export async function downloadCommand(urls: string | string[], options: Download
     downloadOptions.output,
     CONFIG.CACHE_DIR
   );
-  const task = await startDownloadTask(resolvedUrls, downloadOptions);
+
+  let task = queue
+    ? await enqueueDownloadTask(resolvedUrls, downloadOptions)
+    : await startDownloadTask(resolvedUrls, downloadOptions);
   const removeInterruptHandler = registerInterruptHandler(task.id);
 
   try {
+    if (queue) {
+      console.log(colors.magenta(`Task ${task.id} queued — waiting for running downloads to finish...`));
+      const acquired = await waitForQueueSlot(task.id, ({ runningCount, aheadCount }) => {
+        const ahead = aheadCount > 0 ? `, ${aheadCount} queued ahead` : "";
+        console.log(colors.gray(`Task ${task.id} waiting (${runningCount} running${ahead})...`));
+      });
+      if (!acquired) {
+        console.log(colors.yellow(`Task ${task.id} was canceled before it started.`));
+        return;
+      }
+      task = await startDownloadTask(resolvedUrls, downloadOptions);
+      console.log(colors.gray(`Task ${task.id} starting.`));
+    }
+
     if (isBatch) {
       await downloadUrls(createDownloadTargets(resolvedUrls, downloadOptions.output), downloadOptions, (progress) => {
         void updateDownloadTaskProgress(task.id, progress);
@@ -170,7 +193,7 @@ function validateResolvedUrl(input: string, resolvedUrl: string): void {
   }
 }
 
-async function startDetachedDownload(urls: string | string[], options: DownloadOptions): Promise<void> {
+async function startDetachedDownload(urls: string | string[], options: DownloadOptions, queue: boolean): Promise<void> {
   const normalizedUrls = Array.isArray(urls) ? urls : [urls];
   const id = createDownloadTaskId(normalizedUrls, options.output);
   const logFile = getDownloadTaskLogPath(id);
@@ -182,6 +205,7 @@ async function startDetachedDownload(urls: string | string[], options: DownloadO
     "download",
     ...normalizedUrls,
     ...buildDownloadArgs(options),
+    ...(queue ? ["--queue"] : []),
   ];
   const child = spawn(process.execPath, childArgs, {
     detached: true,
@@ -197,9 +221,14 @@ async function startDetachedDownload(urls: string | string[], options: DownloadO
     throw new Error("Could not start detached download process.");
   }
 
-  await startDownloadTaskWithPid(normalizedUrls, options, child.pid, logFile);
+  await startDownloadTaskWithPid(normalizedUrls, options, child.pid, logFile, queue ? "queued" : "running");
 
-  console.log(colors.green(`Detached download started as task ${id}.`));
+  if (queue) {
+    console.log(colors.green(`Detached download queued as task ${id}.`));
+    console.log(colors.gray(`It will start once running downloads finish.`));
+  } else {
+    console.log(colors.green(`Detached download started as task ${id}.`));
+  }
   if (normalizedUrls.length > 1) {
     console.log(colors.gray(`Targets: ${normalizedUrls.length}`));
   }
@@ -344,6 +373,7 @@ export async function resumeCommand(
   idOrUrls: string | string[],
   options: {
     detach?: boolean;
+    queue?: boolean;
     verbose?: boolean;
   }
 ): Promise<void> {
@@ -377,6 +407,7 @@ export async function resumeCommand(
       ...task.options,
       resume: true,
       detach: options.detach,
+      queue: options.queue,
       verbose: options.verbose ?? task.options.verbose,
     });
   }
@@ -435,6 +466,7 @@ export function setupDownloadCommand(program: Command): void {
     .option("--connections <number>", "Parallel connections per file", "3")
     .option("--compact", "Hide individual thread details (default: false)")
     .option("-d, --detach", "Run the download in the background")
+    .option("-q, --queue", "Wait for running downloads to finish before starting")
     .option("--exclude <patterns...>", 'Exclude files by glob, e.g. --exclude "*.{jpg,nfo}"')
     .option("--ignore <patterns...>", "Alias for --exclude")
     .action((urls, options, cmd) => {
@@ -455,9 +487,10 @@ export function setupDownloadCommand(program: Command): void {
     .description("Alias for visuales tasks resume")
     .argument("<task>", "Task id or URL")
     .option("-d, --detach", "Run the resumed download in the background")
+    .option("-q, --queue", "Wait for running downloads to finish before starting")
     .action((idOrUrl, options, cmd) => {
       const globalOpts = cmd.parent.parent.opts();
-      return resumeCommand(idOrUrl, { detach: options.detach, verbose: globalOpts.verbose });
+      return resumeCommand(idOrUrl, { detach: options.detach, queue: options.queue, verbose: globalOpts.verbose });
     });
 
   download

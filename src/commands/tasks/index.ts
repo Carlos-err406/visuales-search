@@ -58,9 +58,10 @@ export function setupTasksCommand(program: Command): void {
     .description("Resume previous download tasks by task id or URL")
     .argument("<tasks...>", "Task ids or URLs")
     .option("-d, --detach", "Run the resumed download in the background")
+    .option("-q, --queue", "Wait for running downloads to finish before starting")
     .action((idOrUrls, options, cmd) => {
       const globalOpts = cmd.parent.parent.opts();
-      return resumeCommand(idOrUrls, { detach: options.detach, verbose: globalOpts.verbose });
+      return resumeCommand(idOrUrls, { detach: options.detach, queue: options.queue, verbose: globalOpts.verbose });
     });
 
   tasks

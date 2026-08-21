@@ -9,7 +9,7 @@ import { PROGRESS_BAR_COMPLETE, PROGRESS_BAR_INCOMPLETE } from "./progress-style
 import type { DownloadOptions, DownloadProgress } from "./types.js";
 import { formatSize } from "./utils.js";
 
-export type DownloadTaskStatus = "running" | "completed" | "failed" | "interrupted";
+export type DownloadTaskStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
 export type DownloadTaskInterruptedCause = "canceled" | "process-exited" | "signal" | "unknown";
 export type StoredDownloadOptions = Omit<DownloadOptions, "timeout"> & { timeout: number | "Infinity" };
 
@@ -24,6 +24,7 @@ export interface DownloadTaskRecord {
   logFile?: string;
   createdAt: number;
   updatedAt: number;
+  queuedAt?: number;
   startedAt?: number;
   completedAt?: number;
   interruptedAt?: number;
@@ -61,6 +62,7 @@ interface DownloadTaskStore {
 
 const TASKS_FILE_NAME = "tasks.json";
 const TASK_PROGRESS_WRITE_INTERVAL_MS = 2000;
+const QUEUE_POLL_INTERVAL_MS = 3000;
 const STATUS_BAR_WIDTH = 28;
 const lastProgressWrite = new Map<string, number>();
 
@@ -161,7 +163,8 @@ async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
 }
 
 function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
-  if (task.status !== "running" || isProcessAlive(task.pid)) return task;
+  const isActive = task.status === "running" || task.status === "queued";
+  if (!isActive || isProcessAlive(task.pid)) return task;
 
   return {
     ...task,
@@ -204,29 +207,48 @@ export async function startDownloadTask(
   return startDownloadTaskWithPid(urls, options, process.pid);
 }
 
+/**
+ * Registers a task as `queued` so it shows up in `visuales tasks` while it parks. The worker
+ * later calls {@link waitForQueueSlot} and, once its turn comes, {@link startDownloadTask} to
+ * flip it to `running`.
+ */
+export async function enqueueDownloadTask(
+  urls: string | string[],
+  options: DownloadOptions,
+  pid: number = process.pid,
+  logFile?: string
+): Promise<DownloadTaskRecord> {
+  return startDownloadTaskWithPid(urls, options, pid, logFile, "queued");
+}
+
 export async function startDownloadTaskWithPid(
   urls: string | string[],
   options: DownloadOptions,
   pid: number,
-  logFile?: string
+  logFile?: string,
+  initialStatus: Extract<DownloadTaskStatus, "queued" | "running"> = "running"
 ): Promise<DownloadTaskRecord> {
   const store = await loadTaskStore();
   const normalizedUrls = normalizeTaskUrls(urls);
   const id = createDownloadTaskId(normalizedUrls, options.output);
   const now = Date.now();
   const existing = store.tasks.find((task) => task.id === id);
+  const isQueued = initialStatus === "queued";
   const record: DownloadTaskRecord = {
     id,
     url: normalizedUrls[0],
     urls: normalizedUrls.length > 1 ? normalizedUrls : undefined,
     output: path.resolve(options.output),
     options: storeDownloadOptions(options),
-    status: "running",
+    status: initialStatus,
     pid,
     logFile: logFile ?? existing?.logFile,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-    startedAt: now,
+    // Keep the position from when it first joined the queue; only stamp a fresh time when it
+    // was not already waiting (a re-download of the same target, or the worker re-registering).
+    queuedAt: isQueued ? (existing?.status === "queued" ? (existing.queuedAt ?? now) : now) : undefined,
+    startedAt: isQueued ? existing?.startedAt : now,
     interruptedAt: undefined,
     interruptedCause: undefined,
     completedAt: undefined,
@@ -242,6 +264,69 @@ export async function startDownloadTaskWithPid(
 
   await saveTaskStore(store);
   return record;
+}
+
+type QueueRank = [number, string];
+
+function queueRank(task: DownloadTaskRecord): QueueRank {
+  return [task.queuedAt ?? task.createdAt ?? 0, task.id];
+}
+
+function compareQueueRank(a: QueueRank, b: QueueRank): number {
+  return a[0] - b[0] || a[1].localeCompare(b[1]);
+}
+
+export interface QueuePosition {
+  runningCount: number;
+  aheadCount: number;
+}
+
+/**
+ * A queued task may start once nothing is `running` and it is the frontmost waiter (earliest
+ * `queuedAt`, ties broken by id). Ordering by rank means at most one queued task clears the gate
+ * at a time, which serializes the queue without a lock. Pure so it can be unit-tested directly.
+ */
+export function isQueuedTaskReady(tasks: DownloadTaskRecord[], taskId: string): boolean {
+  const me = tasks.find((task) => task.id === taskId);
+  if (!me || me.status !== "queued") return false;
+  if (tasks.some((task) => task.status === "running")) return false;
+
+  const myRank = queueRank(me);
+  return !tasks.some(
+    (task) => task.status === "queued" && task.id !== taskId && compareQueueRank(queueRank(task), myRank) < 0
+  );
+}
+
+export function getQueuePosition(tasks: DownloadTaskRecord[], taskId: string): QueuePosition {
+  const me = tasks.find((task) => task.id === taskId);
+  const myRank = me ? queueRank(me) : ([0, taskId] as QueueRank);
+
+  return {
+    runningCount: tasks.filter((task) => task.status === "running").length,
+    aheadCount: tasks.filter(
+      (task) => task.status === "queued" && task.id !== taskId && compareQueueRank(queueRank(task), myRank) < 0
+    ).length,
+  };
+}
+
+/**
+ * Parks a queued task until it is cleared to start. Returns `true` when the slot is acquired, or
+ * `false` when the task is no longer queued (it was canceled while waiting), so the caller can
+ * bail out instead of downloading. The gate re-evaluates every {@link QUEUE_POLL_INTERVAL_MS};
+ * a running task that finishes or whose process dies (marked interrupted by liveness checks)
+ * both free the slot.
+ */
+export async function waitForQueueSlot(taskId: string, onWait?: (position: QueuePosition) => void): Promise<boolean> {
+  for (;;) {
+    const tasks = await listDownloadTasks();
+    const me = tasks.find((task) => task.id === taskId);
+    if (!me || me.status !== "queued") return false;
+    if (isQueuedTaskReady(tasks, taskId)) return true;
+
+    onWait?.(getQueuePosition(tasks, taskId));
+    await updateTask(taskId, {});
+    await sleep(QUEUE_POLL_INTERVAL_MS);
+  }
 }
 
 export async function completeDownloadTask(id: string): Promise<void> {
@@ -282,7 +367,7 @@ export async function cancelDownloadTask(idOrUrl: string): Promise<DownloadTaskR
   const task = await findDownloadTask(idOrUrl);
   if (!task) return null;
 
-  if (task.status !== "running") {
+  if (task.status !== "running" && task.status !== "queued") {
     return task;
   }
 
@@ -339,6 +424,7 @@ async function updateTask(id: string, updates: Partial<DownloadTaskRecord>): Pro
 function formatStatus(task: DownloadTaskRecord): string {
   if (task.status === "completed") return colors.green("completed");
   if (task.status === "running") return colors.cyan("running");
+  if (task.status === "queued") return colors.magenta("queued");
   if (task.status === "failed") return colors.red("failed");
   return colors.yellow("interrupted");
 }
@@ -389,7 +475,11 @@ const WATCH_MAX_FILE_NAME_WIDTH = 72;
 const WATCH_MIN_FILE_NAME_WIDTH = 12;
 
 function isActionableTask(task: DownloadTaskRecord): boolean {
-  return task.status === "running" || task.status === "interrupted";
+  return task.status === "running" || task.status === "queued" || task.status === "interrupted";
+}
+
+function isLiveTask(task: DownloadTaskRecord): boolean {
+  return task.status === "running" || task.status === "queued";
 }
 
 function compareWatchTaskOrder(a: DownloadTaskRecord, b: DownloadTaskRecord): number {
@@ -555,7 +645,7 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
     }
 
     printDownloadTaskProgress(task);
-    return { found: true, shouldContinue: task.status === "running", taskIds: [task.id] };
+    return { found: true, shouldContinue: isLiveTask(task), taskIds: [task.id] };
   }
 
   const tasks = await listDownloadTasks();
@@ -579,7 +669,7 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
 
   return {
     found: true,
-    shouldContinue: displayedTasks.some((task) => task.status === "running"),
+    shouldContinue: displayedTasks.some(isLiveTask),
     taskIds: displayedTasks.map((task) => task.id),
   };
 }
@@ -606,6 +696,7 @@ function buildDownloadWatchSummaryLines(tasks: DownloadTaskRecord[]): string[] {
   const completed = tasks.filter((task) => task.status === "completed").length;
   const failed = tasks.filter((task) => task.status === "failed").length;
   const running = tasks.filter((task) => task.status === "running").length;
+  const queued = tasks.filter((task) => task.status === "queued").length;
   const canceled = tasks.filter((task) => task.status === "interrupted" && task.interruptedCause === "canceled").length;
   const processExited = tasks.filter(
     (task) => task.status === "interrupted" && task.interruptedCause === "process-exited"
@@ -625,6 +716,7 @@ function buildDownloadWatchSummaryLines(tasks: DownloadTaskRecord[]): string[] {
     formatWatchSummaryLine(signalInterrupted, total, "interrupted by signal", colors.yellow),
     formatWatchSummaryLine(unknownInterrupted, total, "interrupted for unknown cause", colors.yellow),
     formatWatchSummaryLine(running, total, "still running", colors.cyan),
+    formatWatchSummaryLine(queued, total, "queued", colors.magenta),
   ].filter((line) => line.length > 0);
 }
 
@@ -681,7 +773,11 @@ function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownl
 
   if (!task.lastProgress) {
     const waitingMessage =
-      task.status === "running" ? "Waiting for the first progress update..." : "No progress saved.";
+      task.status === "running"
+        ? "Waiting for the first progress update..."
+        : task.status === "queued"
+          ? "Queued — will start when running downloads finish."
+          : "No progress saved.";
     console.log(`           ${colors.gray("Progress:")} ${colors.yellow(waitingMessage)}`);
     if (includeDetails) {
       printDownloadTaskDetails(task, false);
@@ -901,10 +997,10 @@ function printDownloadTaskDetails(task: DownloadTaskRecord, includeProgressSumma
     printInterruptedCauseLine(task);
   }
 
-  if (task.status !== "completed") {
+  if (task.status !== "completed" && task.status !== "queued") {
     console.log(`           ${colors.gray("Resume:")} ${colors.white(`visuales tasks resume ${task.id}`)}`);
   }
-  if (task.status === "running") {
+  if (isLiveTask(task)) {
     console.log(`           ${colors.gray("Cancel:")} ${colors.white(`visuales tasks cancel ${task.id}`)}`);
   }
 }
