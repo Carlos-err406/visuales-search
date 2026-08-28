@@ -529,6 +529,7 @@ interface CapturedOutput<T> {
 interface PrintDownloadTaskProgressOptions {
   includeDetails?: boolean;
   fileNameWidth?: number;
+  includeTarget?: boolean;
 }
 
 interface WatchInputMode {
@@ -631,7 +632,7 @@ export function selectDownloadWatchTasks(
 }
 
 function estimateCompactWatchTaskLineCount(task: DownloadTaskRecord): number {
-  if (task.status === "queued") return task.overallProgress ? 4 : 5;
+  if (task.status === "queued") return 5;
   if (!task.lastProgress) return 5;
 
   let lineCount = 3;
@@ -876,6 +877,7 @@ function printQueuedWatchTaskProgress(task: DownloadTaskRecord, options: PrintDo
 
   if (task.overallProgress) {
     printOverallTaskProgress(task);
+    printCompactTaskSource(task, { ...options, includeTarget: false });
     const progressUpdatedAt = task.overallProgress.updatedAt || task.lastProgress?.updatedAt;
     if (progressUpdatedAt) {
       const progressAge = formatDistanceToNow(new Date(progressUpdatedAt), { addSuffix: true });
@@ -1052,6 +1054,8 @@ function printOverallTaskProgress(task: DownloadTaskRecord): void {
 }
 
 function printCompactTaskSource(task: DownloadTaskRecord, options: PrintDownloadTaskProgressOptions): void {
+  const includeTarget = options.includeTarget ?? true;
+
   if (task.urls && task.urls.length > 1) {
     const first = formatDisplayFileName(task.urls[0], options.fileNameWidth);
     console.log(
@@ -1062,6 +1066,8 @@ function printCompactTaskSource(task: DownloadTaskRecord, options: PrintDownload
       `           ${colors.gray("Source:")}   ${colors.white(formatDisplayFileName(task.url, options.fileNameWidth))}`
     );
   }
+  if (!includeTarget) return;
+
   console.log(
     `           ${colors.gray("Target:")}   ${colors.gray(formatDisplayFileName(task.output, options.fileNameWidth))}`
   );
