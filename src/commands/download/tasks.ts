@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { formatDistanceToNow } from "date-fns";
 import colors from "ansi-colors";
@@ -165,18 +166,27 @@ async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
 
 function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
   const isActive = task.status === "running" || task.status === "queued";
-  const processAlive = isProcessAlive(task.pid);
+  const recoveringInterrupted = task.status === "interrupted" && hasProgressSinceInterrupted(task);
+  if (!isActive && !recoveringInterrupted) return task;
+
+  const livePid = getLiveTaskPid(task);
+  const processAlive = Boolean(livePid);
   const recentlyProgressed = hasRecentProgress(task);
 
-  if (task.status === "interrupted" && hasProgressSinceInterrupted(task)) {
+  if (recoveringInterrupted) {
     return {
       ...task,
       status: "running",
+      pid: livePid,
       startedAt: task.startedAt ?? latestProgressUpdatedAt(task),
       interruptedAt: undefined,
       interruptedCause: undefined,
       updatedAt: Date.now(),
     };
+  }
+
+  if (task.status === "running" && processAlive && task.pid !== livePid) {
+    return { ...task, pid: livePid, updatedAt: Date.now() };
   }
 
   if (task.status === "running" && recentlyProgressed) return task;
@@ -185,10 +195,15 @@ function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
     return {
       ...task,
       status: "running",
+      pid: livePid,
       startedAt: task.startedAt ?? latestProgressUpdatedAt(task),
       queuedAt: undefined,
       updatedAt: Date.now(),
     };
+  }
+
+  if (task.status === "queued" && processAlive && task.pid !== livePid) {
+    return { ...task, pid: livePid, updatedAt: Date.now() };
   }
 
   if (!isActive || processAlive) return task;
@@ -226,6 +241,42 @@ function hasRecentProgress(task: DownloadTaskRecord): boolean {
   if (!progressUpdatedAt) return false;
 
   return Date.now() - progressUpdatedAt <= TASK_PROGRESS_ACTIVE_GRACE_MS;
+}
+
+function getLiveTaskPid(task: DownloadTaskRecord): number | undefined {
+  if (isProcessAlive(task.pid)) return task.pid;
+  return getLiveTaskPids(task)[0];
+}
+
+function getLiveTaskPids(task: DownloadTaskRecord): number[] {
+  const urls = normalizeTaskUrls(task.urls ?? task.url);
+  const rows = getProcessRows();
+
+  return rows
+    .filter(({ command }) => isTaskProcessCommand(command, urls))
+    .map(({ pid }) => pid)
+    .filter((pid) => isProcessAlive(pid));
+}
+
+function getProcessRows(): { pid: number; command: string }[] {
+  try {
+    return execFileSync("ps", ["-ww", "-axo", "pid=,command="], { encoding: "utf-8" })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const match = line.match(/^(\d+)\s+(.+)$/);
+        if (!match) return null;
+        return { pid: Number(match[1]), command: match[2] };
+      })
+      .filter((row): row is { pid: number; command: string } => Boolean(row));
+  } catch {
+    return [];
+  }
+}
+
+function isTaskProcessCommand(command: string, urls: string[]): boolean {
+  return command.includes(" download ") && urls.every((url) => command.includes(url));
 }
 
 export async function listDownloadTasks(): Promise<DownloadTaskRecord[]> {
@@ -462,21 +513,27 @@ export async function interruptDownloadTask(id: string, cause: DownloadTaskInter
 export async function cancelDownloadTask(idOrUrl: string): Promise<DownloadTaskRecord | null> {
   const task = await findDownloadTask(idOrUrl);
   if (!task) return null;
+  const livePids = getLiveTaskPids(task);
+  const pids = [
+    ...new Set([task.pid, ...livePids].filter((pid): pid is number => Boolean(pid) && isProcessAlive(pid))),
+  ];
 
-  if (task.status !== "running" && task.status !== "queued") {
+  if (task.status !== "running" && task.status !== "queued" && pids.length === 0) {
     return task;
   }
 
-  if (!task.pid || !isProcessAlive(task.pid)) {
+  if (pids.length === 0) {
     const interruptedAt = Date.now();
     await interruptDownloadTask(task.id, "process-exited");
     return { ...task, status: "interrupted", pid: undefined, interruptedAt, interruptedCause: "process-exited" };
   }
 
-  try {
-    process.kill(task.pid, "SIGTERM");
-  } catch {
-    // If the process exits between the liveness check and signal, still mark the task resumable.
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // If the process exits between the liveness check and signal, still mark the task resumable.
+    }
   }
 
   const interruptedAt = Date.now();

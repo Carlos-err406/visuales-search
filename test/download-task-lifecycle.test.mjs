@@ -1,5 +1,6 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -45,6 +46,30 @@ function progress(fileName = "movie.mp4") {
       ],
     },
   };
+}
+
+function spawnFakeDownloadProcess(url) {
+  return spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", "download", url], {
+    stdio: "ignore",
+  });
+}
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForExit(child) {
+  if (!child.pid || !isAlive(child.pid)) return;
+
+  await Promise.race([
+    new Promise((resolve) => child.once("exit", resolve)),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ]);
 }
 
 before(async () => {
@@ -209,5 +234,43 @@ describe("download task lifecycle", () => {
     );
 
     assert.equal(await tasks.waitForQueueSlot(queued.id, undefined, process.pid + 1), false);
+  });
+
+  it("recovers a missing pid from a matching live worker process", async () => {
+    const url = `http://example/recover-pid-${Date.now()}.mp4`;
+    const child = spawnFakeDownloadProcess(url);
+    assert.ok(child.pid, "expected fake worker pid");
+
+    try {
+      const running = await tasks.startDownloadTaskWithPid(url, options(), undefined);
+      await tasks.updateDownloadTaskProgress(running.id, progress("recover-pid.mp4"));
+
+      const stored = await tasks.findDownloadTask(running.id);
+      assert.equal(stored.status, "running");
+      assert.equal(stored.pid, child.pid);
+    } finally {
+      if (child.pid && isAlive(child.pid)) process.kill(child.pid, "SIGTERM");
+      await waitForExit(child);
+    }
+  });
+
+  it("cancels a matching live worker even when the task pid was lost", async () => {
+    const url = `http://example/cancel-lost-pid-${Date.now()}.mp4`;
+    const child = spawnFakeDownloadProcess(url);
+    assert.ok(child.pid, "expected fake worker pid");
+
+    const running = await tasks.startDownloadTaskWithPid(url, options(), undefined);
+
+    try {
+      const canceled = await tasks.cancelDownloadTask(running.id);
+      await waitForExit(child);
+
+      assert.equal(canceled.status, "interrupted");
+      assert.equal(canceled.interruptedCause, "canceled");
+      assert.equal(isAlive(child.pid), false);
+    } finally {
+      if (child.pid && isAlive(child.pid)) process.kill(child.pid, "SIGTERM");
+      await waitForExit(child);
+    }
   });
 });
