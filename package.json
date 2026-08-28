@@ -1,6 +1,6 @@
 {
   "name": "visuales",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "description": "Search and download visuales.uclv.cu content from the terminal",
   "main": "dist/cli.js",
   "types": "dist/cli.d.ts",
