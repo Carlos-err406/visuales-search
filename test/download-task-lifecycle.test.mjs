@@ -86,4 +86,43 @@ describe("download task lifecycle", () => {
     assert.equal(stored.queuedAt, undefined);
     assert.ok(stored.startedAt, "progress should stamp a start time");
   });
+
+  it("normalizes a live queued task with post-queue progress as running", async () => {
+    const queued = await tasks.startDownloadTaskWithPid(
+      "http://example/live-progress.mp4",
+      options(),
+      process.pid,
+      undefined,
+      "queued"
+    );
+
+    await tasks.updateDownloadTaskProgress(queued.id, progress("live-progress.mp4"));
+
+    const stored = await tasks.findDownloadTask(queued.id);
+    assert.equal(stored.status, "running");
+  });
+
+  it("leaves queued tasks with stale progress queued", async () => {
+    const stale = await tasks.startDownloadTaskWithPid(
+      "http://example/stale-progress.mp4",
+      options(),
+      process.pid,
+      undefined,
+      "queued"
+    );
+
+    await tasks.interruptDownloadTask(stale.id, "canceled");
+    await tasks.updateDownloadTaskProgress(stale.id, progress("stale-progress.mp4"));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await tasks.startDownloadTaskWithPid(
+      "http://example/stale-progress.mp4",
+      options(),
+      process.pid,
+      undefined,
+      "queued"
+    );
+
+    const stored = await tasks.findDownloadTask(stale.id);
+    assert.equal(stored.status, "queued");
+  });
 });

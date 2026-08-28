@@ -164,7 +164,19 @@ async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
 
 function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
   const isActive = task.status === "running" || task.status === "queued";
-  if (!isActive || isProcessAlive(task.pid)) return task;
+  const processAlive = isProcessAlive(task.pid);
+
+  if (task.status === "queued" && processAlive && hasProgressSinceQueued(task)) {
+    return {
+      ...task,
+      status: "running",
+      startedAt: task.startedAt ?? latestProgressUpdatedAt(task),
+      queuedAt: undefined,
+      updatedAt: Date.now(),
+    };
+  }
+
+  if (!isActive || processAlive) return task;
 
   return {
     ...task,
@@ -174,6 +186,17 @@ function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
     updatedAt: Date.now(),
     pid: undefined,
   };
+}
+
+function hasProgressSinceQueued(task: DownloadTaskRecord): boolean {
+  const progressUpdatedAt = latestProgressUpdatedAt(task);
+  if (!progressUpdatedAt) return false;
+
+  return progressUpdatedAt >= (task.queuedAt ?? task.startedAt ?? task.createdAt ?? 0);
+}
+
+function latestProgressUpdatedAt(task: DownloadTaskRecord): number | undefined {
+  return Math.max(task.lastProgress?.updatedAt ?? 0, task.overallProgress?.updatedAt ?? 0) || undefined;
 }
 
 export async function listDownloadTasks(): Promise<DownloadTaskRecord[]> {
@@ -1214,7 +1237,7 @@ function printDownloadTaskDetails(task: DownloadTaskRecord, includeProgressSumma
     printInterruptedCauseLine(task);
   }
 
-  if (task.status !== "completed" && task.status !== "queued") {
+  if (task.status === "failed" || task.status === "interrupted") {
     console.log(`           ${colors.gray("Resume:")} ${colors.white(`visuales tasks resume ${task.id}`)}`);
   }
   if (isLiveTask(task)) {
