@@ -198,6 +198,14 @@ function validateResolvedUrl(input: string, resolvedUrl: string): void {
 async function startDetachedDownload(urls: string | string[], options: DownloadOptions, queue: boolean): Promise<void> {
   const normalizedUrls = Array.isArray(urls) ? urls : [urls];
   const id = createDownloadTaskId(normalizedUrls, options.output);
+  const existingTask = await findDownloadTask(id);
+  if (existingTask?.status === "running" || existingTask?.status === "queued") {
+    console.log(colors.yellow(`Task ${id} is already ${existingTask.status}.`));
+    console.log(colors.gray(`Progress: visuales tasks`));
+    console.log(colors.gray(`Cancel:   visuales tasks cancel ${id}`));
+    return;
+  }
+
   const logFile = getDownloadTaskLogPath(id);
   await ensureDownloadCacheDirectory();
   const out = openSync(logFile, "a");

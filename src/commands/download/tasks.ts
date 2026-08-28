@@ -62,6 +62,7 @@ interface DownloadTaskStore {
 
 const TASKS_FILE_NAME = "tasks.json";
 const TASK_PROGRESS_WRITE_INTERVAL_MS = 2000;
+const TASK_PROGRESS_ACTIVE_GRACE_MS = 10_000;
 const QUEUE_POLL_INTERVAL_MS = 3000;
 const STATUS_BAR_WIDTH = 28;
 const lastProgressWrite = new Map<string, number>();
@@ -165,6 +166,20 @@ async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
 function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
   const isActive = task.status === "running" || task.status === "queued";
   const processAlive = isProcessAlive(task.pid);
+  const recentlyProgressed = hasRecentProgress(task);
+
+  if (task.status === "interrupted" && hasProgressSinceInterrupted(task)) {
+    return {
+      ...task,
+      status: "running",
+      startedAt: task.startedAt ?? latestProgressUpdatedAt(task),
+      interruptedAt: undefined,
+      interruptedCause: undefined,
+      updatedAt: Date.now(),
+    };
+  }
+
+  if (task.status === "running" && recentlyProgressed) return task;
 
   if (task.status === "queued" && processAlive && hasProgressSinceQueued(task)) {
     return {
@@ -195,8 +210,22 @@ function hasProgressSinceQueued(task: DownloadTaskRecord): boolean {
   return progressUpdatedAt >= (task.queuedAt ?? task.startedAt ?? task.createdAt ?? 0);
 }
 
+function hasProgressSinceInterrupted(task: DownloadTaskRecord): boolean {
+  const progressUpdatedAt = latestProgressUpdatedAt(task);
+  if (!progressUpdatedAt || !task.interruptedAt) return false;
+
+  return progressUpdatedAt > task.interruptedAt;
+}
+
 function latestProgressUpdatedAt(task: DownloadTaskRecord): number | undefined {
   return Math.max(task.lastProgress?.updatedAt ?? 0, task.overallProgress?.updatedAt ?? 0) || undefined;
+}
+
+function hasRecentProgress(task: DownloadTaskRecord): boolean {
+  const progressUpdatedAt = latestProgressUpdatedAt(task);
+  if (!progressUpdatedAt) return false;
+
+  return Date.now() - progressUpdatedAt <= TASK_PROGRESS_ACTIVE_GRACE_MS;
 }
 
 export async function listDownloadTasks(): Promise<DownloadTaskRecord[]> {
@@ -378,11 +407,16 @@ export function getQueuePosition(tasks: DownloadTaskRecord[], taskId: string): Q
  * a running task that finishes or whose process dies (marked interrupted by liveness checks)
  * both free the slot.
  */
-export async function waitForQueueSlot(taskId: string, onWait?: (position: QueuePosition) => void): Promise<boolean> {
+export async function waitForQueueSlot(
+  taskId: string,
+  onWait?: (position: QueuePosition) => void,
+  ownerPid: number = process.pid
+): Promise<boolean> {
   for (;;) {
     const tasks = await listDownloadTasks();
     const me = tasks.find((task) => task.id === taskId);
     if (!me || me.status !== "queued") return false;
+    if (me.pid && me.pid !== ownerPid) return false;
     if (isQueuedTaskReady(tasks, taskId)) return true;
 
     onWait?.(getQueuePosition(tasks, taskId));
@@ -474,10 +508,13 @@ export async function updateDownloadTaskProgress(id: string, progress: DownloadP
       : undefined,
   };
 
-  if (task?.status === "queued") {
+  if (task?.status === "queued" || task?.status === "interrupted") {
     updates.status = "running";
     updates.startedAt = task.startedAt ?? now;
     updates.queuedAt = undefined;
+    updates.pid = process.pid;
+    updates.interruptedAt = undefined;
+    updates.interruptedCause = undefined;
   }
 
   await updateTask(id, updates);
