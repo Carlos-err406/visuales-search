@@ -502,6 +502,11 @@ interface WatchInputMode {
   restore: () => void;
 }
 
+interface SelectedDownloadWatchTasks {
+  visibleTasks: DownloadTaskRecord[];
+  hiddenTasks: DownloadTaskRecord[];
+}
+
 const ANSI_CLEAR_SCREEN = "\x1B[2J";
 const ANSI_CLEAR_TO_END = "\x1B[J";
 const ANSI_CURSOR_HOME = "\x1B[H";
@@ -511,6 +516,9 @@ const ANSI_ENTER_ALTERNATE_SCREEN = "\x1B[?1049h";
 const ANSI_EXIT_ALTERNATE_SCREEN = "\x1B[?1049l";
 const WATCH_MAX_FILE_NAME_WIDTH = 72;
 const WATCH_MIN_FILE_NAME_WIDTH = 12;
+const WATCH_HEADING_LINE_COUNT = 4;
+const WATCH_FOOTER_LINE_COUNT = 2;
+const WATCH_HIDDEN_SUMMARY_LINE_COUNT = 2;
 
 function isActionableTask(task: DownloadTaskRecord): boolean {
   return task.status === "running" || task.status === "queued" || task.status === "interrupted";
@@ -521,9 +529,90 @@ function isLiveTask(task: DownloadTaskRecord): boolean {
 }
 
 function compareWatchTaskOrder(a: DownloadTaskRecord, b: DownloadTaskRecord): number {
+  const statusOrder = watchStatusRank(a) - watchStatusRank(b);
+  if (statusOrder !== 0) return statusOrder;
+
+  if (a.status === "queued" && b.status === "queued") {
+    return compareQueueRank(queueRank(a), queueRank(b));
+  }
+
   const aTime = a.createdAt || a.startedAt || 0;
   const bTime = b.createdAt || b.startedAt || 0;
   return bTime - aTime || a.id.localeCompare(b.id);
+}
+
+function watchStatusRank(task: DownloadTaskRecord): number {
+  if (task.status === "queued") return 0;
+  if (task.status === "interrupted") return 1;
+  return 2;
+}
+
+export function selectDownloadWatchTasks(
+  tasks: DownloadTaskRecord[],
+  rows: number | undefined = process.stdout.rows
+): SelectedDownloadWatchTasks {
+  const sortedTasks = tasks.filter(isActionableTask).sort(compareWatchTaskOrder);
+  const leadingTasks = sortedTasks.filter((task) => task.status !== "running");
+  const runningTasks = sortedTasks.filter((task) => task.status === "running");
+  if (!rows || rows <= 0) return { visibleTasks: [...leadingTasks, ...runningTasks], hiddenTasks: [] };
+
+  const visibleLeadingTasks: DownloadTaskRecord[] = [];
+  const visibleRunningTasks: DownloadTaskRecord[] = [];
+  let remainingRows = Math.max(1, rows - WATCH_HEADING_LINE_COUNT - WATCH_FOOTER_LINE_COUNT);
+
+  for (const [index, task] of runningTasks.entries()) {
+    const hiddenRunningTasks = runningTasks.length - index - 1;
+    const hiddenLeadingTasks = leadingTasks.length;
+    const reservedRows = hiddenRunningTasks + hiddenLeadingTasks > 0 ? WATCH_HIDDEN_SUMMARY_LINE_COUNT : 0;
+    const taskRows = estimateCompactWatchTaskLineCount(task);
+
+    if (visibleRunningTasks.length > 0 && taskRows + reservedRows > remainingRows) {
+      break;
+    }
+
+    visibleRunningTasks.push(task);
+    remainingRows -= taskRows;
+  }
+
+  for (const [index, task] of leadingTasks.entries()) {
+    const hiddenLeadingTasks = leadingTasks.length - index - 1;
+    const hiddenRunningTasks = runningTasks.length - visibleRunningTasks.length;
+    const reservedRows = hiddenLeadingTasks + hiddenRunningTasks > 0 ? WATCH_HIDDEN_SUMMARY_LINE_COUNT : 0;
+    const taskRows = estimateCompactWatchTaskLineCount(task);
+
+    if (visibleLeadingTasks.length + visibleRunningTasks.length > 0 && taskRows + reservedRows > remainingRows) {
+      break;
+    }
+
+    visibleLeadingTasks.push(task);
+    remainingRows -= taskRows;
+  }
+
+  const visibleTasks = [...visibleLeadingTasks, ...visibleRunningTasks];
+  const visibleTaskIds = new Set(visibleTasks.map((task) => task.id));
+
+  return {
+    visibleTasks,
+    hiddenTasks: sortedTasks.filter((task) => !visibleTaskIds.has(task.id)),
+  };
+}
+
+function estimateCompactWatchTaskLineCount(task: DownloadTaskRecord): number {
+  if (task.status === "queued") return task.overallProgress ? 4 : 5;
+  if (!task.lastProgress) return 5;
+
+  let lineCount = 3;
+  if (task.overallProgress) lineCount += 1;
+
+  const activeFiles = task.status === "completed" ? [] : task.overallProgress?.activeFiles;
+  if (activeFiles && activeFiles.length > 0) {
+    lineCount += 1 + activeFiles.length;
+  } else if (task.status !== "completed") {
+    lineCount += 2;
+  }
+
+  if (task.status === "interrupted") lineCount += 1;
+  return lineCount;
 }
 
 export async function printDownloadTasks(options: PrintDownloadTasksOptions = {}): Promise<void> {
@@ -687,7 +776,7 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
   }
 
   const tasks = await listDownloadTasks();
-  const displayedTasks = tasks.filter(isActionableTask).sort(compareWatchTaskOrder);
+  const displayedTasks = tasks.filter(isActionableTask);
 
   if (tasks.length === 0) {
     console.log(colors.yellow("No download tasks found."));
@@ -700,16 +789,72 @@ async function printDownloadWatchFrame(idOrUrl: string | undefined): Promise<Dow
     return { found: true, shouldContinue: false, taskIds: [] };
   }
 
-  for (const task of displayedTasks) {
-    printDownloadTaskProgress(task, { includeDetails: false, fileNameWidth: WATCH_MAX_FILE_NAME_WIDTH });
+  const { visibleTasks, hiddenTasks } = selectDownloadWatchTasks(tasks);
+
+  for (const task of visibleTasks) {
+    printDownloadWatchTaskProgress(task, { includeDetails: false, fileNameWidth: WATCH_MAX_FILE_NAME_WIDTH });
     console.log();
   }
+
+  printHiddenWatchTasksSummary(hiddenTasks);
 
   return {
     found: true,
     shouldContinue: displayedTasks.some(isLiveTask),
     taskIds: displayedTasks.map((task) => task.id),
   };
+}
+
+function printHiddenWatchTasksSummary(tasks: DownloadTaskRecord[]): void {
+  if (tasks.length === 0) return;
+
+  const running = tasks.filter((task) => task.status === "running").length;
+  const interrupted = tasks.filter((task) => task.status === "interrupted").length;
+  const queued = tasks.filter((task) => task.status === "queued").length;
+  const parts = [
+    formatHiddenWatchTaskCount(running, "running"),
+    formatHiddenWatchTaskCount(interrupted, "interrupted"),
+    formatHiddenWatchTaskCount(queued, "queued"),
+  ].filter((part) => part.length > 0);
+
+  console.log(
+    colors.gray(`... ${tasks.length} more task${tasks.length === 1 ? "" : "s"} hidden (${parts.join(", ")}).`)
+  );
+  console.log(colors.gray("Use `visuales tasks watch <id>` for a single task view."));
+}
+
+function formatHiddenWatchTaskCount(count: number, label: string): string {
+  if (count === 0) return "";
+  return `${count} ${label}`;
+}
+
+function printDownloadWatchTaskProgress(task: DownloadTaskRecord, options: PrintDownloadTaskProgressOptions): void {
+  if (task.status === "queued") {
+    printQueuedWatchTaskProgress(task, options);
+    return;
+  }
+
+  printDownloadTaskProgress(task, options);
+}
+
+function printQueuedWatchTaskProgress(task: DownloadTaskRecord, options: PrintDownloadTaskProgressOptions): void {
+  const updatedAge = formatDistanceToNow(new Date(task.updatedAt), { addSuffix: true });
+  console.log(`${colors.cyan.bold(task.id)} ${formatStatus(task)} ${colors.gray(`updated ${updatedAge}`)}`);
+
+  if (task.overallProgress) {
+    printOverallTaskProgress(task);
+    const progressUpdatedAt = task.overallProgress.updatedAt || task.lastProgress?.updatedAt;
+    if (progressUpdatedAt) {
+      const progressAge = formatDistanceToNow(new Date(progressUpdatedAt), { addSuffix: true });
+      console.log(`           ${colors.gray("Sample:")}   ${colors.gray(progressAge)}`);
+    }
+    return;
+  }
+
+  console.log(
+    `           ${colors.gray("Progress:")} ${colors.yellow("Queued — will start when running downloads finish.")}`
+  );
+  printCompactTaskSource(task, options);
 }
 
 async function printDownloadWatchSummary(taskIds: string[]): Promise<void> {
@@ -829,21 +974,7 @@ function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownl
 
   const progressAge = formatDistanceToNow(new Date(task.lastProgress.updatedAt), { addSuffix: true });
 
-  if (task.overallProgress) {
-    const displayProgress = getDisplayOverallProgress(task.overallProgress, task.status);
-    const overallPercent = clampPercentage(
-      task.status === "completed" ? 100 : calculateOverallPercentage(displayProgress)
-    );
-    const overallBar = renderProgressBar(overallPercent);
-    const overallDownloadedSize = formatSize(displayProgress.downloadedBytes);
-    const overallTotalSize = displayProgress.totalBytes > 0 ? formatSize(displayProgress.totalBytes) : "unknown";
-
-    console.log(
-      `           ${colors.gray("Overall:")} ${overallBar} ${colors.bold.white(`${Math.floor(overallPercent)}%`)} ${colors.gray(
-        `${overallDownloadedSize} / ${overallTotalSize}`
-      )} ${colors.gray(`(${displayProgress.completedFiles}/${displayProgress.totalFiles} files)`)}`
-    );
-  }
+  printOverallTaskProgress(task);
 
   const activeFiles = task.status === "completed" ? [] : task.overallProgress?.activeFiles;
   if (activeFiles && activeFiles.length > 0) {
@@ -867,6 +998,24 @@ function printDownloadTaskProgress(task: DownloadTaskRecord, options: PrintDownl
   if (includeDetails) {
     printDownloadTaskDetails(task, false);
   }
+}
+
+function printOverallTaskProgress(task: DownloadTaskRecord): void {
+  if (!task.overallProgress) return;
+
+  const displayProgress = getDisplayOverallProgress(task.overallProgress, task.status);
+  const overallPercent = clampPercentage(
+    task.status === "completed" ? 100 : calculateOverallPercentage(displayProgress)
+  );
+  const overallBar = renderProgressBar(overallPercent);
+  const overallDownloadedSize = formatSize(displayProgress.downloadedBytes);
+  const overallTotalSize = displayProgress.totalBytes > 0 ? formatSize(displayProgress.totalBytes) : "unknown";
+
+  console.log(
+    `           ${colors.gray("Overall:")} ${overallBar} ${colors.bold.white(`${Math.floor(overallPercent)}%`)} ${colors.gray(
+      `${overallDownloadedSize} / ${overallTotalSize}`
+    )} ${colors.gray(`(${displayProgress.completedFiles}/${displayProgress.totalFiles} files)`)}`
+  );
 }
 
 function printCompactTaskSource(task: DownloadTaskRecord, options: PrintDownloadTaskProgressOptions): void {
