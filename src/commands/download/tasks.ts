@@ -271,14 +271,15 @@ export async function startDownloadTaskWithPid(
   const id = createDownloadTaskId(normalizedUrls, options.output);
   const now = Date.now();
   const existing = store.tasks.find((task) => task.id === id);
-  const isQueued = initialStatus === "queued";
+  const status = initialStatus === "queued" && existing?.status === "running" ? "running" : initialStatus;
+  const isQueued = status === "queued";
   const record: DownloadTaskRecord = {
     id,
     url: normalizedUrls[0],
     urls: normalizedUrls.length > 1 ? normalizedUrls : undefined,
     output: path.resolve(options.output),
     options: storeDownloadOptions(options),
-    status: initialStatus,
+    status,
     pid,
     logFile: logFile ?? existing?.logFile,
     createdAt: existing?.createdAt ?? now,
@@ -432,7 +433,8 @@ export async function updateDownloadTaskProgress(id: string, progress: DownloadP
   if (now - lastWrite < TASK_PROGRESS_WRITE_INTERVAL_MS) return;
 
   lastProgressWrite.set(id, now);
-  await updateTask(id, {
+  const task = await findDownloadTask(id);
+  const updates: Partial<DownloadTaskRecord> = {
     lastProgress: {
       fileName: progress.fileName,
       progress: progress.progress,
@@ -447,7 +449,15 @@ export async function updateDownloadTaskProgress(id: string, progress: DownloadP
           updatedAt: now,
         }
       : undefined,
-  });
+  };
+
+  if (task?.status === "queued") {
+    updates.status = "running";
+    updates.startedAt = task.startedAt ?? now;
+    updates.queuedAt = undefined;
+  }
+
+  await updateTask(id, updates);
 }
 
 async function updateTask(id: string, updates: Partial<DownloadTaskRecord>): Promise<void> {
