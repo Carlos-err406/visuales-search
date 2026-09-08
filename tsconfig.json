@@ -7,7 +7,7 @@
     "target": "ESNext",
     "sourceMap": true,
     "outDir": "./dist",
-    "incremental": true,
+    "incremental": false,
     "strictNullChecks": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitAny": false,
@@ -17,9 +17,12 @@
     "sourceRoot": "/",
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
-    "baseUrl": "./src",
+    "rootDir": "./apps/cli/src",
+    "baseUrl": "./apps/cli/src",
     "paths": {
       "@/*": ["./*"]
     }
-  }
+  },
+  "include": ["apps/cli/src/**/*.ts"],
+  "exclude": ["target", "node_modules", "dist"]
 }

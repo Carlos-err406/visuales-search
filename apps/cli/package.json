@@ -1,0 +1,14 @@
+{
+  "name": "@visuales/cli",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@visuales/core": "*",
+    "ansi-colors": "^4.1.3",
+    "cli-progress": "^3.12.0",
+    "commander": "^14.0.2",
+    "date-fns": "^4.1.0",
+    "inquirer": "^13.1.0"
+  }
+}

@@ -95,8 +95,10 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 
 ### Modular Architecture
 
-- **src/commands/**: Dedicated subdirectories for each CLI command (`search`, `download`, `cache`, `tasks`).
-- **src/lib/**: Isolated core logic (download management, cache handling, HTML parsing).
+- **apps/cli/src/commands/**: Terminal commands and rendering (`search`, `download`, `cache`, `tasks`).
+- **packages/core/src/**: Shared Node/TypeScript engine. Both CLI and desktop must use this implementation.
+- **apps/sidecar/src/**: JSON-RPC transport and isolated desktop download workers.
+- **apps/desktop/**: React UI and thin Rust/Tauri host. Do not reimplement engine behavior in Rust.
 
 ### Caching System
 
@@ -114,9 +116,11 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 ├── .husky/            # Git hooks (pre-commit automation)
 ├── .cache/            # Centralized cache (gitignored)
 ├── dist/             # Compiled JavaScript (npm distribution)
-├── src/              # Source TypeScript
-│   ├── commands/     # Command implementations
-│   └── lib/          # Shared logic and utilities
+├── apps/
+│   ├── cli/          # Terminal commands and rendering
+│   ├── sidecar/      # Node JSON-RPC adapter and workers
+│   └── desktop/      # React UI and Tauri host
+├── packages/core/    # Shared TypeScript search/download/task engine
 ├── test/             # node:test suites (run against dist/, not published)
 ├── .prettierrc       # Formatting rules (LF, 120 width)
 ├── eslint.config.js  # Linting rules (Flat config)
@@ -129,6 +133,7 @@ visuales download "https://visuales.uclv.cu/Series/Ingles/Killing%20Eve/libros/"
 
 - This project recommends **npm**.
 - Always run `npm run build` after modifying CLI commands to test the distributed version.
+- `npm test` also builds and tests the isolated desktop sidecar. Run `npm run sidecar:prepare` before direct Cargo builds.
 - Maintain the unified cache system when adding new persistent data.
 - Ensure all new code passes `npm run lint` before committing.
 - **CLI Operations Timeout**: When testing CLI commands that interact with `visuales.uclv.cu` (slow Apache server), always use very large timeouts (minimum 60-120 seconds) as the server is extremely slow and may take considerable time to respond.

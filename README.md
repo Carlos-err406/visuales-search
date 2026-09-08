@@ -163,10 +163,47 @@ npm install
 npm run check
 ```
 
+The CLI and desktop use the same Node/TypeScript engine:
+
+- `packages/core`: search, cache, directory discovery, downloads, verification, and task persistence.
+- `apps/cli`: terminal commands and progress rendering. The published entry remains `dist/cli.js`.
+- `apps/sidecar`: JSON-RPC over stdin/stdout, with an isolated Node worker for each desktop download task.
+- `apps/desktop`: React UI and a thin Tauri shell for windows, native dialogs, and sidecar lifecycle.
+
+The desktop bundles Node and the sidecar script; end users do not need Node installed. Rust does not implement search or downloads.
+
+Run the desktop app during development:
+
+```bash
+npm run desktop:dev
+```
+
+Development requires Node 20.19+ (or 22.12+), Rust, and the platform's Tauri build prerequisites. Use an official Node binary for release builds. Build on each target OS/architecture; cross builds require `VISUALES_NODE_BINARY` pointing to the target's Node executable. A universal macOS build needs a universal Node executable as well.
+
+```bash
+npm run desktop:build
+```
+
+Desktop builds prepare the runtime and script automatically. `npm run sidecar:prepare` prepares them for direct Cargo builds. The existing `~/.visuales-cli-cache/` layout is shared with the CLI, and task updates use an interprocess lock. Closing the desktop stops its workers and leaves partial files resumable. Detached CLI tasks continue independently.
+
+Android is deferred: Tauri's desktop sidecar mechanism does not provide an Android Node runtime. Mobile requires a separate runtime/storage/background-transfer design.
+
+The desktop opens in Search, with a contextual selection bar and expandable transfer activity. Downloads lists the shared task history. UI priorities and deferred requests are tracked in [Desktop Roadmap](docs/desktop-roadmap.md).
+
+Desktop controls use shadcn/ui's Base UI components in `apps/desktop/src/components/ui`. Add components with `npx shadcn@latest add <component> --cwd apps/desktop`; `components.json` selects the Base Nova style. Tailwind tokens in `src/theme.css` map to the app's teal palette, local JetBrains Mono fonts, and 1px radii. `src/styles.css` owns the workspace layout and compact app-specific styling. Icon buttons share one Base UI tooltip handle and popup, with no custom hover ownership or entrance animations between buttons. Native folder dialogs and all Node-side task behavior remain unchanged.
+
+The desktop destination is a parent folder: selecting `Season/` saves into `<destination>/Season/`, even when it is the only selection. Individual files save directly into the destination. Existing tasks retain their recorded output paths when resumed; the CLI's explicit `--output` behavior is unchanged.
+
+To run the isolated browser smoke checks, start Vite with `npm run dev -w visuales-desktop`, then run `node test/desktop-ui.smoke.mjs` with Playwright and its Chromium browser available. Set `PLAYWRIGHT_MODULE` to an external Playwright module path if it is not installed in this workspace; `BROWSER_CHANNEL=chrome` uses installed Chrome instead. `DESKTOP_URL` overrides the default `http://127.0.0.1:1420/`. These checks use an in-memory Tauri bridge, never real downloads or your task store, and save screenshots under `.cache/desktop-ui/`.
+
 Useful scripts:
 
 - `npm run lint`: run ESLint.
-- `npm run build`: compile TypeScript into `dist/`.
+- `npm run build`: build the shared core and distributable CLI into `dist/`.
+- `npm run sidecar:build`: typecheck and bundle the Node engine for desktop.
+- `npm run rust:build`: prepare the sidecar and build the Tauri backend.
+- `npm run rust:test`: prepare the sidecar and run Rust bridge tests.
+- `npm run desktop:dev`: launch the Tauri desktop app in development.
 - `npm run release:check`: run checks and verify package contents with `npm pack --dry-run`.
 
 Install the local checkout globally while developing:
@@ -179,12 +216,20 @@ npm install -g .
 
 ## Publishing
 
-The npm package is published from GitHub Actions when `package.json` changes on `main`.
+Starting with 2.0.0, macOS desktop releases are also available through the existing Homebrew tap:
+
+```sh
+brew install --cask Carlos-err406/visuales/visuales-desktop
+```
+
+This installs `Visuales.app` for Apple Silicon or Intel (macOS 13.5+). The `visuales` formula remains the CLI; both can be installed together. Desktop releases automatically update the cask after installers are published.
+
+The CLI and desktop share one release version. GitHub Actions publishes when `package.json` changes on `main`; desktop installers and signed in-app updates join the same release. See [Desktop Releases and Updates](docs/desktop-releases.md) for signing setup, build rehearsals, and recovery.
 
 One-time setup:
 
-1. Create an npm automation token with publish access.
-2. Add it to the GitHub repository secrets as `NPM_TOKEN`.
+1. Configure npm trusted publishing for this repository's `publish.yml` workflow (already used by the existing CLI pipeline).
+2. Configure the dedicated Visuales updater key and GitHub secrets described in the desktop release guide.
 3. Create a GitHub token with write access to `Carlos-err406/homebrew-visuales`.
 4. Add it to the GitHub repository secrets as `HOMEBREW_TAP_TOKEN`.
 
@@ -196,7 +241,7 @@ npm run release:patch
 git push origin main
 ```
 
-Use `release:minor` or `release:major` instead of `release:patch` when appropriate. The publish workflow detects the package version, creates the matching `vX.Y.Z` tag and GitHub Release when needed, validates the package, builds `dist`, verifies package contents, publishes to npm, and updates the Homebrew tap formula.
+Use `release:minor` or `release:major` instead of `release:patch` when appropriate. The version hook synchronizes workspace, Tauri, and Rust versions. The publish workflow creates the matching `vX.Y.Z` tag and a draft GitHub Release, publishes npm, and updates Homebrew. Desktop CI builds and verifies signed artifacts for both macOS architectures, Windows, and Linux; only then does one final job publish the complete release and updater manifest.
 
 Manual npm publishing is still possible when needed:
 

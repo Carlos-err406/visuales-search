@@ -8,7 +8,14 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   eslintConfigPrettier,
   {
-    ignores: ["dist/", "node_modules/", ".cache/"],
+    ignores: [
+      "**/dist/",
+      "**/node_modules/",
+      ".cache/",
+      "target/",
+      "apps/desktop/src-tauri/resources/",
+      "apps/desktop/src-tauri/gen/",
+    ],
   },
   {
     // Plain JS/ESM files (config, .mjs test suites) run on Node — typescript-eslint already

@@ -1,0 +1,178 @@
+name: Desktop Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      publish:
+        type: boolean
+        default: false
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: true
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+      HOMEBREW_TAP_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to build (leave empty for a build-only rehearsal of the selected ref)
+        type: string
+        default: ""
+      publish:
+        description: Attach all artifacts and publish the existing draft release for this tag
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - name: Validate version and signing configuration
+        id: version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          PUBLISH: ${{ inputs.publish }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          import { releaseVersion } from './scripts/release-version.mjs';
+          const version = await releaseVersion({ tag: process.env.RELEASE_TAG || undefined });
+          if (process.env.PUBLISH === 'true' && !process.env.RELEASE_TAG) throw new Error('Publishing requires an existing release tag');
+          const config = JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8'));
+          if (!config.plugins.updater.pubkey || !process.env.TAURI_SIGNING_PRIVATE_KEY) throw new Error('Configure the Visuales updater public key and TAURI_SIGNING_PRIVATE_KEY secret first');
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          JS
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin-aarch64
+            bundles: app,dmg
+          - os: macos-15-intel
+            platform: darwin-x86_64
+            bundles: app,dmg
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            bundles: appimage,deb
+          - os: windows-latest
+            platform: windows-x86_64
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: npm ci
+      - run: npm run check
+      - run: npm run version:check
+      - run: npm run sidecar:prepare
+      - run: cargo test --workspace --locked
+      - name: Build signed installers and updater artifacts
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          args: --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+          uploadUpdaterJson: false
+      - name: Stage platform artifacts
+        run: node scripts/desktop-artifacts.mjs stage ${{ matrix.platform }}
+      - name: Verify artifacts against the app's public key
+        run: node scripts/desktop-artifacts.mjs verify ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: .cache/desktop-release/${{ matrix.platform }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  finalize:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          path: .cache/downloaded-artifacts
+      - name: Collect platform directories
+        run: |
+          mkdir -p .cache/release-artifacts
+          for platform in darwin-aarch64 darwin-x86_64 linux-x86_64 windows-x86_64; do
+            mv ".cache/downloaded-artifacts/desktop-$platform" ".cache/release-artifacts/$platform"
+          done
+      - name: Validate the complete updater manifest
+        run: node scripts/desktop-artifacts.mjs assemble .cache/release-artifacts
+      - name: Publish only after every platform is ready
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node scripts/publish-desktop.mjs
+      - uses: actions/upload-artifact@v7
+        if: ${{ !inputs.publish }}
+        with:
+          name: desktop-release-manifest
+          path: |
+            .cache/release-artifacts/latest.json
+            .cache/release-artifacts/SHA256SUMS.txt
+
+  homebrew:
+    needs: finalize
+    if: inputs.publish
+    uses: ./.github/workflows/homebrew-desktop.yml
+    with:
+      tag: ${{ inputs.tag }}
+    secrets: inherit

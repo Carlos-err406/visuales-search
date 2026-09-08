@@ -4,6 +4,10 @@ node_modules/
 # Build outputs
 dist/
 bin/
+target/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/resources/
 *.tgz
 
 # Development cache

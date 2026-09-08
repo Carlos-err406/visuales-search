@@ -1,0 +1,68 @@
+name: Desktop
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            bundle: app
+          - os: macos-15-intel
+            bundle: app
+          - os: windows-latest
+            bundle: nsis
+          - os: ubuntu-22.04
+            bundle: deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Install Rust
+        run: rustup update stable
+      - run: npm ci
+      - run: npm run build
+      - run: npm run sidecar:prepare
+      - name: Sidecar integration tests
+        run: node --test test/sidecar.test.mjs
+      - name: Rust bridge tests
+        run: cargo test --workspace
+      - name: Updater signature verification tests
+        run: npm run test:signatures
+      - name: Build application
+        run: npm --prefix apps/desktop run tauri build -- --bundles ${{ matrix.bundle }}
+
+  ui:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run version:check
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:desktop
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: desktop-ui-failure
+          path: .cache/desktop-ui

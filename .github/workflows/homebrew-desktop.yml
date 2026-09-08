@@ -1,0 +1,74 @@
+name: Publish Desktop Homebrew Cask
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Latest public desktop release tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-desktop
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - name: Generate cask from published release checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node scripts/homebrew-desktop.mjs
+      - name: Verify tap credentials
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: test -n "$HOMEBREW_TAP_TOKEN"
+      - uses: actions/checkout@v6
+        with:
+          repository: Carlos-err406/homebrew-visuales
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+      - name: Add desktop cask without changing the CLI formula
+        run: |
+          mkdir -p homebrew-tap/Casks
+          cp .cache/visuales-desktop.rb homebrew-tap/Casks/visuales-desktop.rb
+          ruby -c homebrew-tap/Casks/visuales-desktop.rb
+      - name: Commit and push cask
+        working-directory: homebrew-tap
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          git add Casks/visuales-desktop.rb
+          if git diff --cached --quiet; then
+            echo "Desktop cask is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update Visuales desktop to $RELEASE_TAG"
+          for attempt in 1 2 3; do
+            echo "Pushing cask update (attempt $attempt)."
+            git pull --rebase
+            if git push; then exit 0; fi
+            sleep 5
+          done
+          exit 1

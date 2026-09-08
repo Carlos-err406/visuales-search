@@ -1,6 +1,6 @@
 {
   "name": "visuales",
-  "version": "1.3.10",
+  "version": "2.0.0",
   "description": "Search and download visuales.uclv.cu content from the terminal",
   "main": "dist/cli.js",
   "types": "dist/cli.d.ts",
@@ -8,22 +8,39 @@
     "visuales": "dist/cli.js"
   },
   "type": "module",
+  "workspaces": [
+    "apps/cli",
+    "apps/desktop",
+    "apps/sidecar",
+    "packages/core"
+  ],
   "scripts": {
-    "build": "npm run clean && tsc",
-    "clean": "rm -rf dist",
+    "build": "npm run clean && npm run build -w @visuales/core && tsc && node scripts/build-cli.mjs",
+    "sidecar:build": "npm run build -w @visuales/core && tsc -p apps/sidecar/tsconfig.json && node scripts/build-sidecar.mjs",
+    "sidecar:prepare": "npm run sidecar:build && node scripts/prepare-sidecar.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\"",
+    "rust:build": "npm run sidecar:prepare && cargo build --workspace",
+    "rust:test": "npm run sidecar:prepare && cargo test --workspace",
+    "desktop:dev": "npm --prefix apps/desktop run tauri dev",
+    "desktop:build": "npm --prefix apps/desktop run tauri build",
     "format": "prettier --write .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "npm run build && node --test 'test/**/*.test.mjs'",
+    "test": "npm run build && npm run sidecar:build && node --test \"test/**/*.test.mjs\"",
     "check": "npm run lint && npm test",
     "release:check": "npm run check && npm pack --dry-run --cache .cache/npm",
+    "version:check": "node scripts/release-version.mjs",
+    "version:sync": "node scripts/release-version.mjs --write",
+    "test:desktop": "node scripts/test-desktop.mjs",
+    "test:signatures": "node scripts/test-update-signatures.mjs",
+    "version": "node scripts/release-version.mjs --write --stage",
     "release:patch": "npm version patch",
     "release:minor": "npm version minor",
     "release:major": "npm version major",
     "prepare": "node scripts/prepare.js",
     "prepack": "npm run build",
     "prepublishOnly": "npm run check",
-    "postbuild": "chmod +x dist/cli.js"
+    "postbuild": "node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\""
   },
   "lint-staged": {
     "*.{ts,js,mjs,cjs,json,md,yml}": "prettier --write",
@@ -56,11 +73,15 @@
   ],
   "devDependencies": {
     "@types/cli-progress": "^3.11.6",
+    "@types/proper-lockfile": "^4.1.4",
+    "esbuild": "^0.28.2",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "playwright": "1.62.1",
     "prettier": "^3.7.4",
+    "smol-toml": "^1.8.0",
     "typescript-eslint": "^8.50.1"
   },
   "peerDependencies": {
@@ -74,6 +95,7 @@
     "date-fns": "^4.1.0",
     "easydl": "^1.2.0",
     "inquirer": "^13.1.0",
-    "p-limit": "^7.2.0"
+    "p-limit": "^7.2.0",
+    "proper-lockfile": "^4.1.2"
   }
 }

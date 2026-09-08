@@ -27,5 +27,8 @@ jobs:
       - name: Lint and build
         run: npm run check
 
+      - name: Verify shared release version
+        run: npm run version:check
+
       - name: Verify package contents
         run: npm pack --dry-run
