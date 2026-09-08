@@ -1,10 +1,10 @@
 import * as fs from "node:fs/promises";
 import lockfile from "proper-lockfile";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { ensureDownloadCacheDirectory } from "../lib/cache.js";
 import { CONFIG } from "../lib/types.js";
+import { getProcessRows, type ProcessRow } from "../lib/process-list.js";
 import type { DownloadOptions, DownloadProgress } from "./types.js";
 
 export type DownloadTaskStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
@@ -160,12 +160,12 @@ async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
   await fs.rename(temporaryPath, filePath);
 }
 
-function normalizeTaskStatus(task: DownloadTaskRecord): DownloadTaskRecord {
+function normalizeTaskStatus(task: DownloadTaskRecord, processes: () => ProcessRow[]): DownloadTaskRecord {
   const isActive = task.status === "running" || task.status === "queued";
   const recoveringInterrupted = task.status === "interrupted" && hasProgressSinceInterrupted(task);
   if (!isActive && !recoveringInterrupted) return task;
 
-  const livePid = getLiveTaskPid(task);
+  const livePid = getLiveTaskPid(task, processes);
   const processAlive = Boolean(livePid);
   const recentlyProgressed = hasRecentProgress(task);
 
@@ -239,36 +239,18 @@ function hasRecentProgress(task: DownloadTaskRecord): boolean {
   return Date.now() - progressUpdatedAt <= TASK_PROGRESS_ACTIVE_GRACE_MS;
 }
 
-function getLiveTaskPid(task: DownloadTaskRecord): number | undefined {
+function getLiveTaskPid(task: DownloadTaskRecord, processes: () => ProcessRow[]): number | undefined {
   if (isProcessAlive(task.pid)) return task.pid;
-  return getLiveTaskPids(task)[0];
+  return getLiveTaskPids(task, processes())[0];
 }
 
-function getLiveTaskPids(task: DownloadTaskRecord): number[] {
+function getLiveTaskPids(task: DownloadTaskRecord, rows = getProcessRows()): number[] {
   const urls = normalizeTaskUrls(task.urls ?? task.url);
-  const rows = getProcessRows();
 
   return rows
     .filter(({ command }) => isTaskProcessCommand(command, urls))
     .map(({ pid }) => pid)
     .filter((pid) => isProcessAlive(pid));
-}
-
-function getProcessRows(): { pid: number; command: string }[] {
-  try {
-    return execFileSync("ps", ["-ww", "-axo", "pid=,command="], { encoding: "utf-8" })
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) => {
-        const match = line.match(/^(\d+)\s+(.+)$/);
-        if (!match) return null;
-        return { pid: Number(match[1]), command: match[2] };
-      })
-      .filter((row): row is { pid: number; command: string } => Boolean(row));
-  } catch {
-    return [];
-  }
 }
 
 function isTaskProcessCommand(command: string, urls: string[]): boolean {
@@ -281,7 +263,10 @@ export async function listDownloadTasks(): Promise<DownloadTaskRecord[]> {
 
 async function listDownloadTasksUnlocked(): Promise<DownloadTaskRecord[]> {
   const store = await loadTaskStore();
-  const normalizedTasks = store.tasks.map(normalizeTaskStatus);
+  let rows: ProcessRow[] | undefined;
+  // Query once per snapshot, and only when a recorded PID is missing or dead.
+  const processes = () => (rows ??= getProcessRows());
+  const normalizedTasks = store.tasks.map((task) => normalizeTaskStatus(task, processes));
 
   if (JSON.stringify(normalizedTasks) !== JSON.stringify(store.tasks)) {
     await saveTaskStore({ ...store, tasks: normalizedTasks });
