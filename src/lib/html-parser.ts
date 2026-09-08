@@ -2,6 +2,8 @@ import * as cheerio from "cheerio";
 import colors from "ansi-colors";
 import { type SearchResult } from "./types.js";
 
+const VISUALES_HOSTNAME = "visuales.uclv.cu";
+
 interface FetchHtmlOptions {
   noCache?: boolean;
 }
@@ -92,6 +94,12 @@ function matchesSearchTerms(text: string, url: string, searchTerms: string[]): b
   return searchTerms.every((term) => combinedContent.includes(term.toLowerCase()));
 }
 
+function normalizeUrlProtocol(url: URL): void {
+  if (url.hostname === VISUALES_HOSTNAME) {
+    url.protocol = "https:";
+  }
+}
+
 export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
   const $ = cheerio.load(html);
   const results: SearchResult[] = [];
@@ -106,6 +114,8 @@ export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
     if (!href) return;
 
     const urlObj = new URL(href);
+    normalizeUrlProtocol(urlObj);
+
     const decodedPathname = decodePathname(urlObj.pathname);
     const displayText = getDisplayText(text, decodedPathname);
 
