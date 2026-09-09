@@ -72,7 +72,8 @@ No workflow in this setup commits a release bump automatically. The version-bump
 ## In-App Behavior
 
 - Release builds check on launch and every six hours. Debug builds offer manual checks only. Browser previews never invoke a native updater.
-- An available update opens a compact notice. The header's App updates button reopens it or exposes manual checking. Dismissing the notice does not discard an available or downloaded update.
+- An available update opens a compact notice across Search, Downloads, and Settings. Installed version, last successful check, routine status, and manual checks live in Settings; there is no header up-arrow.
+- Later hides an available-update notice until the next scheduled check or app launch. The checked release remains downloadable in Settings. Download progress, errors from a download attempt, and restart readiness remain visible across views.
 - Checking never downloads, installs, or restarts automatically. Download progress is separate from content transfers; unknown sizes stay indeterminate.
 - The native Tauri updater verifies the signature before storing the downloaded bytes. Verification/network failures are errors, not "up to date" or "ready to install".
 - After Download update, the only remaining action is Restart to update. That click installs the verified update and restarts the app without a separate installation confirmation. Running and queued transfers block it; the backend rechecks shared task state while holding a gate against desktop starts/resumes. The idle sidecar must exit before replacement, and cannot respawn until restart or an installation failure.

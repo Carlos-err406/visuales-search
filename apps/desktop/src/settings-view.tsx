@@ -12,6 +12,8 @@ import { isDesktop } from "./use-transfers";
 import type { useDesktopSettings } from "./use-desktop-settings";
 import { desktopSettingsLimits, type DesktopSettings } from "@visuales/core/desktop-settings-types";
 import { downloadDefaults } from "@visuales/core/download/defaults";
+import { AppUpdatesSettings } from "./app-updates";
+import type { AppUpdates } from "./use-app-updates";
 
 type Draft = { output: string; concurrent: string; connections: string; maxRetries: string };
 const toDraft = (settings: DesktopSettings): Draft => ({
@@ -21,7 +23,13 @@ const toDraft = (settings: DesktopSettings): Draft => ({
   maxRetries: String(settings.maxRetries),
 });
 
-export function SettingsView({ controller }: { controller: ReturnType<typeof useDesktopSettings> }) {
+export function SettingsView({
+  controller,
+  updates,
+}: {
+  controller: ReturnType<typeof useDesktopSettings>;
+  updates: AppUpdates;
+}) {
   const { snapshot, loading, error, saving, save, reload } = controller;
   const [draft, setDraft] = useState<Draft>(() => toDraft({ output: "", ...downloadDefaults }));
   const [saveError, setSaveError] = useState("");
@@ -95,8 +103,11 @@ export function SettingsView({ controller }: { controller: ReturnType<typeof use
 
   if (loading)
     return (
-      <div className="settings-loading" role="status">
-        <Spinner /> Loading settings
+      <div className="settings-loading">
+        <span role="status">
+          <Spinner /> Loading settings
+        </span>
+        <AppUpdatesSettings updates={updates} />
       </div>
     );
   if (error || !snapshot)
@@ -109,6 +120,7 @@ export function SettingsView({ controller }: { controller: ReturnType<typeof use
         <Button variant="outline" onClick={reload}>
           <RefreshCw /> Retry
         </Button>
+        <AppUpdatesSettings updates={updates} />
       </div>
     );
 
@@ -231,6 +243,7 @@ export function SettingsView({ controller }: { controller: ReturnType<typeof use
             </div>
           </section>
         </fieldset>
+        <AppUpdatesSettings updates={updates} />
         {saveError && (
           <Alert variant="destructive" className="settings-save-error">
             <AlertCircle />

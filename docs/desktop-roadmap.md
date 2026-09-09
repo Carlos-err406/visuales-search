@@ -33,14 +33,19 @@ On the Downloads tab, the task table replaces the tray so the same transfers are
 
 Completed [006: Faster desktop CI builds](../.context/compound-engineering/todos/006-complete-p3-desktop-ci-build-performance.md): shared Rust/npm dependency caching, fewer repeated sidecar builds, and cancellation of superseded validation runs. See [measured cold/warm results](ci-performance.md); no app release was made for this change.
 
+## Completed: Automatic Update UX
+
+Implemented [007: Automatic update UX](../.context/compound-engineering/todos/007-complete-p3-automatic-update-ux.md). Release builds check on launch and every six hours. Available updates, download progress, and restart readiness appear above Search, Downloads, and Settings without a header up-arrow. Installed version, last successful check, routine status, and manual diagnostics live in Settings.
+
+Later hides only an available-update notice until the next scheduled check or app launch; the checked release remains downloadable in Settings. Download and Restart to update still require explicit consent. Signature verification and shared running/queued transfer safeguards remain intact. Included in the v2.0.5 release.
+
 ## Later
 
-| Feature                                                                                                                   | Status              | Notes                                                                                                                                          |
-| ------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md)                           | Requested; deferred | Monitor the same shared transfers outside the main window. Platform coverage and behavior after closing the window need separate triage.       |
-| [Browse directory contents in Search](../.context/compound-engineering/todos/003-pending-p3-search-directory-browsing.md) | Requested; deferred | Inspect and select individual files while preserving search state.                                                                             |
-| [Click-to-preview images](../.context/compound-engineering/todos/004-pending-p3-search-image-previews.md)                 | Requested; deferred | Open an in-app preview from Search or browsed directories.                                                                                     |
-| [Automatic update UX](../.context/compound-engineering/todos/007-pending-p3-automatic-update-ux.md)                       | After Settings      | Automatically surface updates across views; preserve Download and Restart sections; remove the header check arrow and separate Install action. |
+| Feature                                                                                                                   | Status              | Notes                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md)                           | Requested; deferred | Monitor the same shared transfers outside the main window. Platform coverage and behavior after closing the window need separate triage. |
+| [Browse directory contents in Search](../.context/compound-engineering/todos/003-pending-p3-search-directory-browsing.md) | Requested; deferred | Inspect and select individual files while preserving search state.                                                                       |
+| [Click-to-preview images](../.context/compound-engineering/todos/004-pending-p3-search-image-previews.md)                 | Requested; deferred | Open an in-app preview from Search or browsed directories.                                                                               |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 
@@ -61,3 +66,4 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 - 2026-09-09: Implement Settings with desktop-only defaults, as requested. Leave CLI behavior unchanged; updater UX remains the related follow-up.
 - 2026-09-09: User requested working parallel connections in the engine first. Added shared Node range downloading, resumable segments, range/version validation, and a per-process connection budget; unlocked the Settings control. CLI and desktop consume the same implementation.
 - 2026-09-09: Centralize transfer defaults in core for CLI and desktop (five files, three connections, three retries). Desktop persists overrides independently and retains Downloads/Visuales as its destination; existing preferences and task options stay unchanged.
+- 2026-09-09: Finish updater UX after Settings. Move routine checks into Settings, keep actionable update states global, and remind after Later on the next six-hour check or launch. Retain Download then Restart with native verification and idle-transfer safeguards.

@@ -41,13 +41,18 @@ try {
       fail:
         updateScenario === "offline"
           ? "check_app_update"
-          : updateScenario === "settings-error"
-            ? "get_desktop_settings"
-            : "",
+          : updateScenario === "info-error"
+            ? "app_update_info"
+            : updateScenario === "settings-error"
+              ? "get_desktop_settings"
+              : "",
       listDelay: 60,
       activeLists: 0,
       updateVersion: updateScenario === "available" ? "1.4.0" : null,
       holdInstall: false,
+      holdDownload: false,
+      unknownUpdateSize: false,
+      verificationError: false,
       tasks: statuses.map((status, index) => ({
         id: `task-${index}`,
         url: `https://visuales.uclv.cu/Documentales/${encodeURIComponent(names[index])}/`,
@@ -103,9 +108,14 @@ try {
           };
         if (command === "check_app_update") return state.updateVersion;
         if (command === "download_app_update") {
-          args.onProgress.onmessage({ received: 500000, total: 1000000 });
+          args.onProgress.onmessage({ received: 500000, total: state.unknownUpdateSize ? null : 1000000 });
+          if (state.holdDownload)
+            await new Promise((resolve) => {
+              state.releaseDownload = resolve;
+            });
           await new Promise((resolve) => setTimeout(resolve, 300));
           args.onProgress.onmessage({ received: 1000000, total: 1000000 });
+          if (state.verificationError) throw new Error("Update signature verification failed");
           return null;
         }
         if (command === "install_app_update") {
@@ -390,6 +400,7 @@ try {
         ".activity-tray",
         ".downloads-toolbar",
         ".downloads-footer",
+        ".settings-footer",
       ]) {
         const element = panel.querySelector(selector);
         if (!element) continue;
@@ -397,8 +408,8 @@ try {
         if (rect.left < 0 || rect.right > window.innerWidth + 1 || rect.bottom > window.innerHeight + 1)
           issues.push(selector);
       }
-      const list = panel.querySelector(".list-scroll");
-      if (list.clientHeight < 70 || list.scrollWidth > list.clientWidth + 1) {
+      const list = panel.querySelector(".list-scroll, .settings-scroll");
+      if (list && (list.clientHeight < 70 || list.scrollWidth > list.clientWidth + 1)) {
         issues.push(
           `list overflow or collapsed: ${list.clientWidth}x${list.clientHeight}, content width ${list.scrollWidth}`
         );
@@ -689,9 +700,14 @@ try {
   await page.getByRole("tab", { name: "Search", exact: true }).click();
   await page.getByRole("tab", { name: /Downloads/ }).click();
   assert.equal(await page.locator(".downloads-list").evaluate((el) => el.scrollTop), 450);
-  await page.getByLabel("App updates", { exact: true }).click();
+  assert.equal(await page.locator(".app-header .app-updates-button").count(), 0);
+  assert.equal(await page.locator("#app-updates").count(), 0, "routine update status stays out of the workspace");
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByText("Installed version: 1.3.10").waitFor();
   await page.getByRole("button", { name: "Check for updates", exact: true }).click();
   await page.getByText("You're up to date.").waitFor();
+  assert.equal(await page.locator("#app-updates").count(), 0);
+  await page.screenshot({ path: `${screenshots}/settings-app-updates.png` });
   await page.evaluate(() => {
     window.testBridge.fail = "check_app_update";
   });
@@ -703,22 +719,74 @@ try {
   });
   await page.getByRole("button", { name: "Check for updates", exact: true }).click();
   await page.getByText("Visuales 1.4.0 is available.").waitFor();
-  await page.getByLabel("Dismiss app updates", { exact: true }).click();
+  for (const name of ["Search", "Downloads", "Settings"]) {
+    await page
+      .getByRole("tab", { name: name === "Downloads" ? /Downloads/ : name, exact: name !== "Downloads" })
+      .click();
+    await page.locator("#app-updates").getByRole("button", { name: "Download update", exact: true }).waitFor();
+  }
+  for (const viewport of [
+    { width: 1240, height: 820 },
+    { width: 760, height: 620 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await checkLayout(`settings-update-${viewport.width}`);
+    await page.locator(".settings-updates").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${screenshots}/settings-update-${viewport.width}.png` });
+    const button = await page.locator("#app-updates").getByRole("button", { name: "Download update" }).boundingBox();
+    assert.ok(button && button.y >= 0 && button.y + button.height <= viewport.height);
+  }
+  await page.setViewportSize({ width: 1240, height: 820 });
+  await page.getByRole("button", { name: "Later", exact: true }).click();
   assert.equal(await page.locator("#app-updates").count(), 0);
-  await page.getByLabel("App updates", { exact: true }).click();
+  await page.locator(".settings-updates").getByRole("button", { name: "Download update", exact: true }).waitFor();
+  await page.getByRole("tab", { name: "Search", exact: true }).click();
+  assert.equal(await page.locator("#app-updates").count(), 0, "view changes preserve Later");
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.evaluate(() => {
     window.testBridge.fail = "download_app_update";
   });
   await page.getByRole("button", { name: "Download update", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Test failure: download_app_update" }).waitFor();
+  await page.locator("#app-updates").waitFor();
   assert.equal(await page.getByRole("button", { name: "Install update", exact: true }).count(), 0);
   await page.evaluate(() => {
     window.testBridge.fail = "";
+    window.testBridge.verificationError = true;
+  });
+  await page.getByRole("button", { name: "Download update", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Update signature verification failed" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Restart to update", exact: true }).count(), 0);
+  await page.evaluate(() => {
+    window.testBridge.verificationError = false;
+    window.testBridge.holdDownload = true;
+    window.testBridge.unknownUpdateSize = true;
   });
   await page.getByRole("button", { name: "Download update", exact: true }).click();
   await page.getByRole("progressbar", { name: "App update download" }).waitFor();
+  assert.equal(
+    await page.getByRole("progressbar", { name: "App update download" }).getAttribute("aria-valuenow"),
+    null
+  );
+  for (const name of ["Search", "Downloads", "Settings"]) {
+    await page
+      .getByRole("tab", { name: name === "Downloads" ? /Downloads/ : name, exact: name !== "Downloads" })
+      .click();
+    await page.getByRole("progressbar", { name: "App update download" }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Later", exact: true }).count(), 0);
+  }
+  await page.screenshot({ path: `${screenshots}/app-update-progress.png` });
+  await page.evaluate(() => window.testBridge.releaseDownload());
   const restartUpdate = page.getByRole("button", { name: "Restart to update", exact: true });
   await restartUpdate.waitFor();
+  for (const name of ["Search", "Settings", "Downloads"]) {
+    await page
+      .getByRole("tab", { name: name === "Downloads" ? /Downloads/ : name, exact: name !== "Downloads" })
+      .click();
+    await restartUpdate.waitFor();
+    assert.equal(await page.getByRole("button", { name: "Later", exact: true }).count(), 0);
+  }
   assert.equal(await page.getByRole("button", { name: "Install update", exact: true }).count(), 0);
   assert.equal(
     await page.evaluate(() => window.testBridge.calls.filter((call) => call.command === "install_app_update").length),
@@ -835,18 +903,77 @@ try {
   automaticUrl.searchParams.set("updates", "offline");
   await page.goto(automaticUrl.href);
   await page.waitForFunction(() => window.testBridge.calls.some((call) => call.command === "check_app_update"));
-  await page.getByLabel("App updates", { exact: true }).click();
+  assert.equal(await page.locator("#app-updates").count(), 0, "automatic network failures stay in Settings");
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Test failure: check_app_update" }).waitFor();
   assert.equal(await page.getByText("You're up to date.").count(), 0, "offline is not reported as up to date");
+  await page.evaluate(() => {
+    window.testBridge.fail = "";
+    window.testBridge.updateVersion = "1.4.0";
+  });
+  await page.getByRole("button", { name: "Check for updates", exact: true }).click();
+  await page.locator("#app-updates").getByText("Visuales 1.4.0 is available.").waitFor();
+  automaticUrl.searchParams.set("updates", "info-error");
+  await page.goto(automaticUrl.href);
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Test failure: app_update_info" }).waitFor();
+  await page.evaluate(() => {
+    window.testBridge.fail = "";
+  });
+  await page.getByRole("button", { name: "Check for updates", exact: true }).click();
+  await page.getByText("Installed version: 1.3.10").waitFor();
+  await page.getByText("You're up to date.").waitFor();
   automaticUrl.searchParams.set("updates", "unsupported");
   await page.goto(automaticUrl.href);
-  await page.getByLabel("App updates", { exact: true }).click();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.getByText("Use the AppImage for in-app updates.").waitFor();
   assert.equal(await page.getByRole("button", { name: "Check for updates", exact: true }).isDisabled(), true);
+  assert.equal(
+    await page.evaluate(() => window.testBridge.calls.some((call) => call.command === "check_app_update")),
+    false
+  );
+  await page.clock.install();
+  automaticUrl.searchParams.set("updates", "current");
+  await page.goto(automaticUrl.href);
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByText("You're up to date.").waitFor();
+  await page.evaluate(() => {
+    window.testBridge.updateVersion = "1.4.0";
+  });
+  await page.getByRole("tab", { name: "Search", exact: true }).click();
+  await page.clock.fastForward(6 * 60 * 60 * 1000);
+  await page.locator("#app-updates").getByText("Visuales 1.4.0 is available.").waitFor();
+  assert.equal(
+    await page.evaluate(() => window.testBridge.calls.filter((call) => call.command === "check_app_update").length),
+    2
+  );
+  await page.getByRole("button", { name: "Later", exact: true }).click();
+  await page.clock.fastForward(6 * 60 * 60 * 1000);
+  await page.locator("#app-updates").getByRole("button", { name: "Download update", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Later", exact: true }).click();
+  automaticUrl.searchParams.set("updates", "available");
+  await page.goto(automaticUrl.href);
+  await page.locator("#app-updates").getByRole("button", { name: "Download update", exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() =>
+      window.testBridge.calls.some((call) =>
+        ["download_app_update", "install_app_update", "restart_after_update"].includes(call.command)
+      )
+    ),
+    false
+  );
   automaticUrl.searchParams.set("updates", "settings-error");
   await page.goto(automaticUrl.href);
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Test failure: get_desktop_settings" }).waitFor();
+  await page.getByRole("button", { name: "Check for updates", exact: true }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await checkLayout("settings-unavailable-updates");
+  const unavailableLayout = await page.evaluate(() => ({
+    updateTop: document.querySelector(".settings-updates").getBoundingClientRect().top,
+    errorBottom: document.querySelector('.settings-loading [role="alert"]').getBoundingClientRect().bottom,
+  }));
+  assert.ok(unavailableLayout.updateTop >= unavailableLayout.errorBottom);
   await page.evaluate(() => {
     window.testBridge.fail = "";
   });
