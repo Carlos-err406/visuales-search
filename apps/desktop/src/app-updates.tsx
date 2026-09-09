@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Check, Download, RefreshCw, X } from "lucide-react";
+import { ArrowUpCircle, Download, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { IconButton } from "./icon-button";
@@ -33,10 +33,10 @@ export function AppUpdatesPanel({ updates, activeTransfers }: { updates: AppUpda
     available: `Visuales ${version} is available.`,
     downloading: `Downloading update${percent === null ? "" : `: ${percent}%`}${progress.received ? ` (${formatBytes(progress.received)})` : ""}`,
     downloaded: activeTransfers
-      ? "Update verified. Finish or cancel running and queued transfers before installing."
-      : `Visuales ${version} is ready to install. The app will need to restart.`,
-    installing: "Installing update. The app may close and restart...",
-    ready: `Visuales ${version} installed. Restart to finish.`,
+      ? "Update ready. Finish or cancel running and queued transfers before restarting."
+      : `Visuales ${version} is ready. Restart to update.`,
+    restarting: "Updating and restarting Visuales...",
+    ready: `Visuales ${version} is installed. Restart to finish updating.`,
   }[phase];
   return (
     <section id="app-updates" className="app-updates" aria-label="App updates">
@@ -65,14 +65,13 @@ export function AppUpdatesPanel({ updates, activeTransfers }: { updates: AppUpda
             <Download size={15} /> Download update
           </Button>
         )}
-        {phase === "downloaded" && (
-          <Button disabled={activeTransfers} onClick={() => void updates.install()}>
-            <Check size={15} /> Install update
-          </Button>
-        )}
-        {phase === "ready" && (
-          <Button onClick={() => void updates.restart()}>
-            <RefreshCw size={15} /> Restart app
+        {["downloaded", "ready", "restarting"].includes(phase) && (
+          <Button
+            disabled={phase === "restarting" || (phase === "downloaded" && activeTransfers)}
+            onClick={() => void updates.restart()}
+          >
+            <RefreshCw size={15} className={phase === "restarting" ? "spin" : ""} />
+            {phase === "restarting" ? "Restarting..." : "Restart to update"}
           </Button>
         )}
         <IconButton

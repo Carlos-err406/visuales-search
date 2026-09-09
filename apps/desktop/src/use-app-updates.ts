@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { isDesktop } from "./use-transfers";
 
-type Phase = "idle" | "checking" | "current" | "available" | "downloading" | "downloaded" | "installing" | "ready";
+type Phase = "idle" | "checking" | "current" | "available" | "downloading" | "downloaded" | "restarting" | "ready";
 type Info = { currentVersion: string; supported: boolean; reason: string | null; automatic: boolean };
 type Progress = { received: number; total: number | null };
 
@@ -23,7 +23,8 @@ export function useAppUpdates() {
 
   const check = useCallback(
     async (manual = true) => {
-      if (!isDesktop() || busy.current || ["downloaded", "ready", "available"].includes(phaseRef.current)) return;
+      if (!isDesktop() || busy.current || ["downloaded", "ready", "available", "restarting"].includes(phaseRef.current))
+        return;
       busy.current = true;
       setError("");
       setPhase("checking");
@@ -92,30 +93,22 @@ export function useAppUpdates() {
     }
   };
 
-  const install = async () => {
-    if (busy.current || phaseRef.current !== "downloaded") return;
-    busy.current = true;
-    setError("");
-    setPhase("installing");
-    try {
-      await invoke("install_app_update");
-      setPhase("ready");
-    } catch (error) {
-      if (mounted.current) setError(String(error));
-      setPhase("downloaded");
-    } finally {
-      busy.current = false;
-    }
-  };
-
   const restart = async () => {
-    if (busy.current || phaseRef.current !== "ready") return;
+    if (busy.current || !["downloaded", "ready"].includes(phaseRef.current)) return;
+    let installed = phaseRef.current === "ready";
     busy.current = true;
     setError("");
+    setPhase("restarting");
     try {
+      if (!installed) {
+        await invoke("install_app_update");
+        installed = true;
+      }
       await invoke("restart_after_update");
     } catch (error) {
       if (mounted.current) setError(String(error));
+      // A failed relaunch can retry without replacing the app a second time.
+      setPhase(installed ? "ready" : "downloaded");
     } finally {
       busy.current = false;
     }
@@ -131,9 +124,8 @@ export function useAppUpdates() {
     setExpanded,
     check,
     download,
-    install,
     restart,
-    blocksTransfers: phase === "installing" || phase === "ready",
+    blocksTransfers: phase === "restarting" || phase === "ready",
   };
 }
 
