@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -29,25 +33,30 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: package-lock.json
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-      - name: Install Rust
-        run: rustup update stable
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: desktop-${{ matrix.os }}
+          cache-bin: false
       - run: npm ci
-      - run: npm run build
-      - run: npm run sidecar:prepare
       - name: Core and sidecar integration tests
         run: npm run check
+      - name: Prepare tested sidecar
+        run: node scripts/prepare-sidecar.mjs
       - name: Rust bridge tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
       - name: Updater signature verification tests
         run: npm run test:signatures
       - name: Build application
-        run: npm --prefix apps/desktop run tauri build -- --bundles ${{ matrix.bundle }}
+        run: npm --prefix apps/desktop run tauri build -- --bundles ${{ matrix.bundle }} --config src-tauri/tauri.ci.conf.json
       - name: Verify macOS bundle signature and Node runtime
         if: runner.os == 'macOS'
         run: node scripts/verify-macos-bundle.mjs
@@ -59,7 +68,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run version:check
       - run: npx playwright install --with-deps chromium

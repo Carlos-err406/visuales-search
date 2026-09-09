@@ -37,7 +37,7 @@ On the Downloads tab, the task table replaces the tray so the same transfers are
 | [Browse directory contents in Search](../.context/compound-engineering/todos/003-pending-p3-search-directory-browsing.md) | Requested; deferred | Inspect and select individual files while preserving search state.                                                                             |
 | [Click-to-preview images](../.context/compound-engineering/todos/004-pending-p3-search-image-previews.md)                 | Requested; deferred | Open an in-app preview from Search or browsed directories.                                                                                     |
 | [Automatic update UX](../.context/compound-engineering/todos/007-pending-p3-automatic-update-ux.md)                       | After Settings      | Automatically surface updates across views; preserve Download and Restart sections; remove the header check arrow and separate Install action. |
-| [Faster desktop CI builds](../.context/compound-engineering/todos/006-pending-p3-desktop-ci-build-performance.md)         | Requested; deferred | Measure cold/warm builds, improve Rust/npm caching, and evaluate duplicate validation/release work.                                            |
+| [Faster desktop CI builds](../.context/compound-engineering/todos/006-ready-p3-desktop-ci-build-performance.md)           | In progress         | Shared dependency caches and less repeated preparation; measuring cross-platform cold/warm builds.                                             |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 

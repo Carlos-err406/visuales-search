@@ -1,5 +1,5 @@
 ---
-status: pending
+status: ready
 priority: p3
 issue_id: "006"
 tags: [desktop, ci, performance, caching, later]
@@ -29,7 +29,7 @@ Reduce desktop CI and release build times. During the first 2.0.0 run, the user 
 
 ## Recommended Action
 
-Deferred. Triage using actual CI timing and cache-hit evidence, then select the smallest changes with measurable benefits.
+Approved on 2026-09-09. Add shared dependency caching and remove redundant preparation, then measure build-only cold/warm runs. Keep release gates intact. See [CI performance](../../../docs/ci-performance.md) for baseline and cache boundaries.
 
 ## Acceptance Criteria
 
@@ -41,6 +41,10 @@ Deferred. Triage using actual CI timing and cache-hit evidence, then select the 
 - [ ] Document remaining bottlenecks and any deliberately retained duplicate work.
 
 ## Work Log
+
+### 2026-09-09 - Implementation and Measurement
+
+Confirmed exact release cache hits on all four platforms; regular desktop validation had no Rust cache. Added shared Rust/npm caching, eliminated redundant sidecar builds, and limited cancellation to superseded validation runs. Cross-platform build-only measurement is in progress; no application release requested.
 
 ### 2026-09-08 - Requested for Later
 
