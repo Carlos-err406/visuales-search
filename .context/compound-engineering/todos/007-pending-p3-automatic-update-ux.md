@@ -36,12 +36,12 @@ Keep deferred until 005 (Settings) is complete, then implement this as its relat
 
 ## Acceptance Criteria
 
-- [ ] Work starts after Settings (005).
+- [x] Work starts after Settings (005).
 - [ ] Production launch and periodic checks detect an outdated app without requiring the header up-arrow or a manual check.
 - [ ] An available update automatically exposes Download update across Search, Downloads, and Settings.
 - [ ] Download progress and Restart app to update remain generally visible in the shared layout.
 - [ ] Remove the manual-check up-arrow from the main header and the separate Install update action.
-- [ ] The user-facing flow is Download update, then Restart to update; implementation safely handles platform-specific installation internally.
+- [x] The user-facing flow is Download update, then Restart to update; implementation safely handles platform-specific installation internally.
 - [ ] Running/queued shared transfers block destructive install/restart steps with clear feedback; no automatic restart or download without user consent.
 - [ ] Network errors, failed verification, retry, view switching, and restart readiness are covered by tests.
 
@@ -50,3 +50,7 @@ Keep deferred until 005 (Settings) is complete, then implement this as its relat
 ### 2026-09-09 - Requested for Later, After Settings
 
 Recorded the user's preferred automatic detection and two-action update flow. No updater UI or runtime behavior changed.
+
+### 2026-09-09 - Fold Installation Into Restart
+
+Removed the separate Install update action. Restart to update now invokes the existing guarded installer and then restarts automatically. Installation failures keep downloaded bytes retryable; restart failures retry only restart. Duplicate clicks and transfer actions remain blocked while updating. Automatic prompt placement and removing the header arrow remain deferred in this item.

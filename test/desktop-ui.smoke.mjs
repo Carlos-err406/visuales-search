@@ -47,6 +47,7 @@ try {
       listDelay: 60,
       activeLists: 0,
       updateVersion: updateScenario === "available" ? "1.4.0" : null,
+      holdInstall: false,
       tasks: statuses.map((status, index) => ({
         id: `task-${index}`,
         url: `https://visuales.uclv.cu/Documentales/${encodeURIComponent(names[index])}/`,
@@ -110,6 +111,10 @@ try {
         if (command === "install_app_update") {
           if (state.tasks.some((task) => ["running", "queued"].includes(task.status)))
             throw new Error("Transfers are active");
+          if (state.holdInstall)
+            await new Promise((resolve) => {
+              state.releaseInstall = resolve;
+            });
           return null;
         }
         if (command === "restart_after_update") return null;
@@ -712,13 +717,23 @@ try {
   });
   await page.getByRole("button", { name: "Download update", exact: true }).click();
   await page.getByRole("progressbar", { name: "App update download" }).waitFor();
-  await page.getByRole("button", { name: "Install update", exact: true }).waitFor();
-  await page.evaluate(() => {
-    window.testBridge.tasks[0].status = "running";
-  });
-  await page.getByLabel("Refresh downloads", { exact: true }).click();
-  await page.getByText("Update verified. Finish or cancel running and queued transfers before installing.").waitFor();
-  assert.equal(await page.getByRole("button", { name: "Install update", exact: true }).isDisabled(), true);
+  const restartUpdate = page.getByRole("button", { name: "Restart to update", exact: true });
+  await restartUpdate.waitFor();
+  assert.equal(await page.getByRole("button", { name: "Install update", exact: true }).count(), 0);
+  assert.equal(
+    await page.evaluate(() => window.testBridge.calls.filter((call) => call.command === "install_app_update").length),
+    0,
+    "downloading never installs without restart consent"
+  );
+  await page.screenshot({ path: `${screenshots}/app-update-ready.png` });
+  for (const status of ["running", "queued"]) {
+    await page.evaluate((status) => {
+      window.testBridge.tasks[0].status = status;
+    }, status);
+    await page.getByLabel("Refresh downloads", { exact: true }).click();
+    await page.getByText("Update ready. Finish or cancel running and queued transfers before restarting.").waitFor();
+    assert.equal(await restartUpdate.isDisabled(), true);
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   await checkLayout("mobile-app-update");
   await page.screenshot({ path: `${screenshots}/mobile-app-update.png` });
@@ -733,13 +748,36 @@ try {
   await page.evaluate(() => {
     window.testBridge.fail = "install_app_update";
   });
-  await page.getByRole("button", { name: "Install update", exact: true }).click();
+  await restartUpdate.click();
   await page.getByRole("alert").filter({ hasText: "Test failure: install_app_update" }).waitFor();
+  assert.equal(await restartUpdate.isEnabled(), true, "failed installation can retry");
+  assert.equal(
+    await page.evaluate(() => window.testBridge.calls.filter((call) => call.command === "restart_after_update").length),
+    0,
+    "failed installation must not restart the app"
+  );
   await page.evaluate(() => {
-    window.testBridge.fail = "";
+    window.testBridge.fail = "restart_after_update";
+    window.testBridge.holdInstall = true;
   });
-  await page.getByRole("button", { name: "Install update", exact: true }).click();
-  await page.getByRole("button", { name: "Restart app", exact: true }).waitFor();
+  await restartUpdate.click();
+  await page.waitForFunction(() => Boolean(window.testBridge.releaseInstall));
+  const restartingUpdate = page.getByRole("button", { name: "Restarting...", exact: true });
+  assert.equal(await restartingUpdate.isDisabled(), true);
+  await restartingUpdate.evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  assert.equal(
+    await page.evaluate(() => window.testBridge.calls.filter((call) => call.command === "install_app_update").length),
+    2,
+    "repeat clicks do not start another installation"
+  );
+  assert.equal(
+    await page.evaluate(() => window.testBridge.calls.filter((call) => call.command === "restart_after_update").length),
+    0,
+    "restart waits for installation to finish"
+  );
   assert.equal(await page.locator(".action-spinner").count(), 0, "App updates must not show task-action spinners");
   assert.equal(
     await page
@@ -755,16 +793,36 @@ try {
       .isEnabled(),
     true
   );
-  await page.screenshot({ path: `${screenshots}/app-update-ready.png` });
+  await page.screenshot({ path: `${screenshots}/app-update-restarting.png` });
   await page.evaluate(() => {
-    window.testBridge.fail = "restart_after_update";
+    window.testBridge.releaseInstall();
   });
-  await page.getByRole("button", { name: "Restart app", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Test failure: restart_after_update" }).waitFor();
+  assert.equal(await restartUpdate.isEnabled(), true, "failed restart can retry");
+  assert.equal(await page.getByRole("button", { name: "Install update", exact: true }).count(), 0);
+  assert.equal(
+    await page
+      .getByRole("button", { name: /^Remove task / })
+      .first()
+      .isDisabled(),
+    true
+  );
   await page.evaluate(() => {
     window.testBridge.fail = "";
   });
-  await page.getByRole("button", { name: "Restart app", exact: true }).click();
+  await restartUpdate.click();
+  await page.waitForFunction(
+    () => window.testBridge.calls.filter((call) => call.command === "restart_after_update").length === 2
+  );
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.testBridge.calls
+        .filter((call) => ["install_app_update", "restart_after_update"].includes(call.command))
+        .map((call) => call.command)
+    ),
+    ["install_app_update", "install_app_update", "restart_after_update", "restart_after_update"],
+    "one click installs then restarts; retrying a restart does not reinstall"
+  );
   const automaticUrl = new URL(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
   automaticUrl.searchParams.set("updates", "available");
   await page.goto(automaticUrl.href);
