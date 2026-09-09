@@ -52,9 +52,8 @@ import { useAppUpdates } from "./use-app-updates";
 import { AppUpdatesPanel } from "./app-updates";
 import { useDesktopSettings } from "./use-desktop-settings";
 import { SettingsView } from "./settings-view";
+import { useAppearance } from "./use-appearance";
 import appIcon from "../app-icon.svg?no-inline";
-import "./theme.css";
-import "./styles.css";
 
 type View = "search" | "downloads" | "settings";
 type Filter = "all" | "active" | "attention" | "completed";
@@ -234,6 +233,7 @@ function TransferTableHead() {
 }
 
 function App() {
+  const appearance = useAppearance();
   const [view, setView] = useState<View>("search");
   const [query, setQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState<string | null>(null);
@@ -871,7 +871,7 @@ function App() {
         id="panel-settings"
         className="workspace-panel settings-panel"
       >
-        <SettingsView controller={settings} updates={updates} />
+        <SettingsView controller={settings} updates={updates} appearance={appearance} />
       </TabsContent>
     </Tabs>
   );

@@ -3,6 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Resolve appearance before styles and the app load to avoid a light flash.
+      let appearance = "system";
+      try {
+        const saved = localStorage.getItem("visuales.appearance");
+        if (["light", "dark"].includes(saved)) appearance = saved;
+      } catch {}
+      document.documentElement.dataset.appearance = appearance;
+      document.documentElement.classList.toggle(
+        "dark",
+        appearance === "dark" || (appearance === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+      );
+    </script>
+    <link rel="stylesheet" href="/src/theme.css" />
+    <link rel="stylesheet" href="/src/styles.css" />
     <link rel="icon" type="image/svg+xml" href="/app-icon.svg" />
     <title>Visuales</title>
   </head>
