@@ -14,6 +14,8 @@ import { desktopSettingsLimits, type DesktopSettings } from "@visuales/core/desk
 import { downloadDefaults } from "@visuales/core/download/defaults";
 import { AppUpdatesSettings } from "./app-updates";
 import type { AppUpdates } from "./use-app-updates";
+import { AppearanceSettings } from "./appearance-settings";
+import type { AppearanceController } from "./use-appearance";
 
 type Draft = { output: string; concurrent: string; connections: string; maxRetries: string };
 const toDraft = (settings: DesktopSettings): Draft => ({
@@ -26,9 +28,11 @@ const toDraft = (settings: DesktopSettings): Draft => ({
 export function SettingsView({
   controller,
   updates,
+  appearance,
 }: {
   controller: ReturnType<typeof useDesktopSettings>;
   updates: AppUpdates;
+  appearance: AppearanceController;
 }) {
   const { snapshot, loading, error, saving, save, reload } = controller;
   const [draft, setDraft] = useState<Draft>(() => toDraft({ output: "", ...downloadDefaults }));
@@ -107,6 +111,7 @@ export function SettingsView({
         <span role="status">
           <Spinner /> Loading settings
         </span>
+        <AppearanceSettings controller={appearance} />
         <AppUpdatesSettings updates={updates} />
       </div>
     );
@@ -120,6 +125,7 @@ export function SettingsView({
         <Button variant="outline" onClick={reload}>
           <RefreshCw /> Retry
         </Button>
+        <AppearanceSettings controller={appearance} />
         <AppUpdatesSettings updates={updates} />
       </div>
     );
@@ -128,9 +134,9 @@ export function SettingsView({
     <form className="settings-form" onSubmit={(event) => void submit(event)} noValidate>
       <div className="settings-heading">
         <h2>Settings</h2>
-        <span className="secondary">Desktop download defaults</span>
       </div>
       <div className="settings-scroll">
+        <AppearanceSettings controller={appearance} />
         <fieldset disabled={saving || picking} className="settings-fields">
           <section className="settings-section" aria-labelledby="destination-heading">
             <h3 id="destination-heading">Destination</h3>

@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --radius: 1px;
   --foreground: var(--text);
@@ -13,7 +15,7 @@
   --color-background: var(--background);
   --color-foreground: var(--text);
   --color-primary: var(--primary);
-  --color-primary-foreground: #fff;
+  --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--surface-alt);
   --color-secondary-foreground: var(--text);
   --color-muted: var(--surface-alt);
@@ -22,7 +24,7 @@
   --color-accent-foreground: var(--primary-strong);
   --color-destructive: var(--danger);
   --color-border: var(--border);
-  --color-input: var(--border);
+  --color-input: var(--input-border);
   --color-ring: var(--primary);
   --color-popover: var(--surface);
   --color-popover-foreground: var(--text);

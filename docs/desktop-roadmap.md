@@ -39,6 +39,10 @@ Implemented [007: Automatic update UX](../.context/compound-engineering/todos/00
 
 Later hides only an available-update notice until the next scheduled check or app launch; the checked release remains downloadable in Settings. Download and Restart to update still require explicit consent. Signature verification and shared running/queued transfer safeguards remain intact. Included in the v2.0.5 release.
 
+## Completed: Dark Mode
+
+Implemented [008: Dark mode](../.context/compound-engineering/todos/008-complete-p3-desktop-dark-mode.md) for v2.0.6. Settings > Appearance offers System, Light, and Dark with immediate desktop-only persistence. System follows live OS changes; explicit choices override them. Theme bootstrap avoids a light flash, and native window appearance follows the choice. Search, Downloads, Settings, update notices, menus, and tooltips share the charcoal/teal palette while preserving 1px corners and JetBrains Mono.
+
 ## Later
 
 | Feature                                                                                                                   | Status              | Notes                                                                                                                                    |
@@ -67,3 +71,5 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 - 2026-09-09: User requested working parallel connections in the engine first. Added shared Node range downloading, resumable segments, range/version validation, and a per-process connection budget; unlocked the Settings control. CLI and desktop consume the same implementation.
 - 2026-09-09: Centralize transfer defaults in core for CLI and desktop (five files, three connections, three retries). Desktop persists overrides independently and retains Downloads/Visuales as its destination; existing preferences and task options stay unchanged.
 - 2026-09-09: Finish updater UX after Settings. Move routine checks into Settings, keep actionable update states global, and remind after Later on the next six-hour check or launch. Retain Download then Restart with native verification and idle-transfer safeguards.
+- 2026-09-09: Add desktop dark mode to the Later bucket. Theme preferences and native window appearance remain open for triage.
+- 2026-09-09: User requested shipping dark mode. Implement System (default), Light, and Dark with desktop-only persistence and native window synchronization; leave CLI and transfer settings unchanged.

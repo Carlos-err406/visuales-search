@@ -3,5 +3,5 @@
   "identifier": "main-window",
   "description": "Permissions for the main Visuales desktop window.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "permissions": ["core:default", "core:app:allow-set-app-theme", "dialog:default"]
 }

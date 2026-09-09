@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { testAppearance } from "./desktop-appearance.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -11,7 +12,12 @@ const browser = await playwright[process.env.BROWSER || "chromium"].launch({
 });
 const screenshots = resolve(".cache/desktop-ui");
 await mkdir(screenshots, { recursive: true });
-const page = await browser.newPage({ viewport: { width: 1240, height: 820 }, reducedMotion: "reduce" });
+const context = await browser.newContext({
+  viewport: { width: 1240, height: 820 },
+  reducedMotion: "reduce",
+  colorScheme: "light",
+});
+const page = await context.newPage();
 page.setDefaultTimeout(10000);
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
@@ -99,6 +105,11 @@ try {
         await new Promise((resolve) => setTimeout(resolve, command === "search_content" ? 300 : 60));
         if (state.fail === command) throw new Error(`Test failure: ${command}`);
         if (command.startsWith("plugin:event|")) return 1;
+        if (command === "plugin:app|set_app_theme") {
+          if (state.slowTheme) await new Promise((resolve) => setTimeout(resolve, args.theme === "light" ? 400 : 20));
+          state.nativeTheme = args.theme;
+          return null;
+        }
         if (command === "app_update_info")
           return {
             currentVersion: "1.3.10",
@@ -979,6 +990,7 @@ try {
   });
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.getByLabel("Concurrent files", { exact: true }).waitFor();
+  await testAppearance({ page, screenshots, checkLayout });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {
