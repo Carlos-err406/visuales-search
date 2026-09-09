@@ -33,7 +33,9 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo Carlos-err406/visuales-s
 
 Set `plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json` to the contents of `visuales.key.pub`, not its file path. The password secret must match the generated key; an unencrypted key uses an empty password. Do not print the private key or password in logs. Release workflows fail before publishing if the public key or private-key secret is missing, and signature verification catches mismatched keys.
 
-Updater signatures are **not** Apple Developer ID signing/notarization or Windows Authenticode. As with the referenced croc-gui setup, no platform certificates are configured here. First-install Gatekeeper/SmartScreen warnings can remain. Add platform signing credentials and the corresponding Tauri CI environment when those credentials are available; do not describe these packages as notarized or SmartScreen-trusted.
+Updater signatures are **not** Apple Developer ID signing/notarization or Windows Authenticode. No platform certificates are configured here. The chosen macOS distribution policy is ad-hoc signing with explicit user approval in Privacy & Security, without a paid Apple Developer account. First-install Gatekeeper/SmartScreen warnings can remain; do not describe these packages as notarized or SmartScreen-trusted.
+
+macOS bundles use explicit ad-hoc signing (`signingIdentity: "-"`) so the complete app and its resources are sealed, rather than retaining only the linker's executable signature. The bundled Node runtime needs the `allow-jit` entitlement when Tauri re-signs it. Both desktop workflows run `codesign --verify --deep --strict` and execute a bundled Node/V8 smoke test before accepting the build. These checks catch malformed signatures, but do not establish Apple trust: ad-hoc builds still require user approval through macOS Privacy & Security. A warning-free distribution requires Developer ID signing and Apple notarization. See [Tauri's macOS signing guide](https://v2.tauri.app/distribute/sign/macos/).
 
 Normal development builds do not generate signed update artifacts. Release builds opt in through `apps/desktop/src-tauri/tauri.release.conf.json` and require the signing key. Clearing the public-key field disables update checks and prevents release publication.
 
@@ -50,6 +52,8 @@ The existing `visuales` formula remains the CLI. The desktop cask installs `Visu
 After publishing all desktop artifacts, Desktop Release invokes **Publish Desktop Homebrew Cask**. It verifies that the tag is the latest public stable release, generates architecture-specific SHA-256 values from its published `SHA256SUMS.txt`, and commits only `Casks/visuales-desktop.rb` in `Carlos-err406/homebrew-visuales`, using the existing `HOMEBREW_TAP_TOKEN`. Build-only rehearsals never modify the tap.
 
 The cask declares `auto_updates true`. Prefer the in-app updater; to explicitly update through Homebrew, use `brew upgrade --cask --greedy visuales-desktop`. Homebrew installation does not bypass Gatekeeper or replace platform code signing. See the [Homebrew Cask Cookbook](https://docs.brew.sh/Cask-Cookbook) and [Node 24 platform requirements](https://github.com/nodejs/node/blob/v24.18.0/BUILDING.md#platform-list).
+
+For first launch, try opening Visuales, then use **System Settings > Privacy & Security > Open Anyway** for Visuales and confirm **Open** if you trust the installed release. The cask and README surface this requirement. Do not disable Gatekeeper globally or automatically strip quarantine flags. Organization-managed Macs may prohibit per-app approval. See [Apple's approval instructions](https://support.apple.com/en-us/102445).
 
 If the cask job fails after app publication, rerun that failed job or dispatch **Publish Desktop Homebrew Cask** with the latest tag. This does not rebuild or republish installers. Repeating the same cask update is a no-op; older releases are refused.
 

@@ -48,6 +48,9 @@ jobs:
         run: npm run test:signatures
       - name: Build application
         run: npm --prefix apps/desktop run tauri build -- --bundles ${{ matrix.bundle }}
+      - name: Verify macOS bundle signature and Node runtime
+        if: runner.os == 'macOS'
+        run: node scripts/verify-macos-bundle.mjs
 
   ui:
     runs-on: ubuntu-22.04

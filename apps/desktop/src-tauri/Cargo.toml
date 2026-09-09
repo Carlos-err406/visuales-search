@@ -1,6 +1,6 @@
 [package]
 name = "visuales-desktop"
-version = "2.0.1"
+version = "2.0.2"
 description = "Desktop app for searching and downloading visuales content"
 
 [package.edition]
