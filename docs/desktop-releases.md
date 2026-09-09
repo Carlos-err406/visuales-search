@@ -60,7 +60,7 @@ If the cask job fails after app publication, rerun that failed job or dispatch *
 1. Run `npm run release:check`, `npm run version:check`, `npm run rust:test`, and `npm run test:signatures`.
 2. Install Playwright's Chromium (`npx playwright install chromium`), then run `npm run test:desktop`. The runner starts an isolated Vite server on a free port and uses mocked IPC; it never touches real transfers.
 3. Push the reviewed code, then dispatch **Desktop Release** with `publish=false` and an empty tag to rehearse all four native builds on the chosen ref. This creates workflow artifacts only. Inspect installers, launch the bundled runtime, and test an update on disposable installations on each OS.
-4. The initial desktop release uses the shared version `2.0.0`. Push the reviewed release commit to `main`. Publish invokes Desktop Release explicitly: tags created by `GITHUB_TOKEN` do not reliably trigger another tag-push workflow.
+4. The corrected desktop release uses the shared version `2.0.1`. The `2.0.0` npm package was published, but Windows core tests blocked desktop publication; its tag must not move. Push the reviewed release commit to `main`. Publish invokes Desktop Release explicitly: tags created by `GITHUB_TOKEN` do not reliably trigger another tag-push workflow.
 5. Confirm npm, Homebrew, all platform builds, signature checks, and final release publication succeeded. Verify the public manifest and upgrade a previously installed signed build.
 
 No workflow in this setup commits a release bump automatically. The version-bump commit remains the publishing trigger. npm continues to use the repository's existing trusted-publishing configuration; Homebrew still uses `HOMEBREW_TAP_TOKEN`.

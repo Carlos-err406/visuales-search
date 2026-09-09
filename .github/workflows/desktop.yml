@@ -40,8 +40,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run sidecar:prepare
-      - name: Sidecar integration tests
-        run: node --test test/sidecar.test.mjs
+      - name: Core and sidecar integration tests
+        run: npm run check
       - name: Rust bridge tests
         run: cargo test --workspace
       - name: Updater signature verification tests
