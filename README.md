@@ -74,7 +74,7 @@ Useful download options:
 
 - `--output, -o`: output directory. Optional; defaults to the current directory for file URLs and a target-named folder for directory URLs. With multiple targets, this is the parent directory.
 - `--concurrent, -c`: maximum number of files to download at once. Default: `5`.
-- `--connections`: parallel connections per large file. Default: `3`.
+- `--connections`: maximum parallel connections per large file, capped at `8`. Default: `3`.
 - `--exclude`: skip files by glob. Can be repeated or comma-separated.
 - `--ignore`: alias for `--exclude`.
 - `--resume, -r`: resume interrupted downloads. Default: `true`.
@@ -193,6 +193,14 @@ The desktop opens in Search, with a contextual selection bar and expandable tran
 Desktop controls use shadcn/ui's Base UI components in `apps/desktop/src/components/ui`. Add components with `npx shadcn@latest add <component> --cwd apps/desktop`; `components.json` selects the Base Nova style. Tailwind tokens in `src/theme.css` map to the app's teal palette, local JetBrains Mono fonts, and 1px radii. `src/styles.css` owns the workspace layout and compact app-specific styling. Icon buttons share one Base UI tooltip handle and popup, with no custom hover ownership or entrance animations between buttons. Native folder dialogs and all Node-side task behavior remain unchanged.
 
 The desktop destination is a parent folder: selecting `Season/` saves into `<destination>/Season/`, even when it is the only selection. Individual files save directly into the destination. Existing tasks retain their recorded output paths when resumed; the CLI's explicit `--output` behavior is unchanged.
+
+Settings saves desktop-only defaults for the output folder, concurrent files (1-32), connections per file (1-8), and retries per file (0-20). Transfer defaults come from the same core definition as the CLI: five concurrent files, three connections per file, and three retries, with resume enabled and no request timeout. Desktop keeps the OS Downloads folder's `Visuales` subfolder as its default destination. Saved preferences override these defaults without changing the CLI. Save changes commits the form; Discard restores saved values, and Restore defaults stages the shared baseline for review before saving.
+
+Preferences live in `~/.visuales-cli-cache/desktop-settings.json` and survive cache clearing. Each new desktop task captures its defaults at creation; existing, queued, and resumed tasks keep their stored options. An explicitly chosen download destination overrides the saved folder. CLI defaults and flags are unchanged.
+
+The shared Node engine now honors connection counts with parallel HTTP range downloads for files larger than 10 MiB. It probes actual range support and a strong file validator, validates each response's offsets and length, and stores resumable segments inside `.visuales-parts/`. Segments are assembled before the existing verifier promotes the final file. Interrupted segments can resume with a different connection limit; changed remote content invalidates old segments. Files without reliable range metadata fall back to one connection. Legacy contiguous partial files retain single-stream resume.
+
+Up to 16 download requests can run across files in one CLI process or desktop transfer worker; independent processes have separate limits. Retries use the existing per-file budget, including HTTP 429/5xx responses. This restores the previously bypassed CLI `--connections` behavior on Node 20+, without changing its default of three or making desktop preferences apply to the CLI.
 
 To run the isolated browser smoke checks, start Vite with `npm run dev -w visuales-desktop`, then run `node test/desktop-ui.smoke.mjs` with Playwright and its Chromium browser available. Set `PLAYWRIGHT_MODULE` to an external Playwright module path if it is not installed in this workspace; `BROWSER_CHANNEL=chrome` uses installed Chrome instead. `DESKTOP_URL` overrides the default `http://127.0.0.1:1420/`. These checks use an in-memory Tauri bridge, never real downloads or your task store, and save screenshots under `.cache/desktop-ui/`.
 

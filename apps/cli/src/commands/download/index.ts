@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
 import { createDownloadTargets, decodePathSegment } from "@visuales/core/download/targets";
+import { downloadDefaults } from "@visuales/core/download/defaults";
 import { downloadUrl, downloadUrls, stopProgress } from "./downloader.js";
 import { DownloadOptions } from "./types.js";
 import { CONFIG } from "../../lib/types.js";
@@ -121,12 +122,12 @@ export async function downloadCommand(urls: string | string[], options: Download
   const output = options.output ?? (isBatch ? process.cwd() : getDefaultOutputPath(resolvedUrls[0]));
   const downloadOptions: DownloadOptions = {
     output,
-    resume: parseBooleanOption(options.resume, true),
-    maxRetries: parseNumberOption(options.maxRetries, 3),
-    timeout: parseNumberOption(options.timeout, Infinity),
-    concurrent: parseNumberOption(options.concurrent, 5),
-    connections: parseNumberOption(options.connections, 3),
-    compact: options.compact ?? false,
+    resume: parseBooleanOption(options.resume, downloadDefaults.resume),
+    maxRetries: parseNumberOption(options.maxRetries, downloadDefaults.maxRetries),
+    timeout: parseNumberOption(options.timeout, downloadDefaults.timeout),
+    concurrent: parseNumberOption(options.concurrent, downloadDefaults.concurrent),
+    connections: parseNumberOption(options.connections, downloadDefaults.connections),
+    compact: options.compact ?? downloadDefaults.compact,
     exclude: [...(options.exclude ?? []), ...(options.ignore ?? [])],
     verbose: options.verbose,
   };
@@ -457,11 +458,19 @@ export function setupDownloadCommand(program: Command): void {
     .description("Download files or directories from visuales.uclv.cu")
     .argument("<urls...>", "URLs or search result ids to download")
     .option("-o, --output <path>", "Output directory. For multiple targets, this is the parent directory")
-    .option("-r, --resume <boolean>", "Resume interrupted downloads", true)
-    .option("--max-retries <number>", "Maximum retry attempts", "3")
-    .option("--timeout <number>", "Request timeout in seconds (Infinity for no timeout)", "Infinity")
-    .option("-c, --concurrent <number>", "Maximum concurrent downloads", "5")
-    .option("--connections <number>", "Parallel connections per file", "3")
+    .option("-r, --resume <boolean>", "Resume interrupted downloads", downloadDefaults.resume)
+    .option("--max-retries <number>", "Maximum retry attempts", String(downloadDefaults.maxRetries))
+    .option(
+      "--timeout <number>",
+      "Request timeout in seconds (Infinity for no timeout)",
+      String(downloadDefaults.timeout)
+    )
+    .option("-c, --concurrent <number>", "Maximum concurrent downloads", String(downloadDefaults.concurrent))
+    .option(
+      "--connections <number>",
+      "Maximum parallel connections per file (capped at 8)",
+      String(downloadDefaults.connections)
+    )
     .option("--compact", "Hide individual thread details (default: false)")
     .option("-d, --detach", "Run the download in the background")
     .option("-q, --queue", "Wait for running downloads to finish before starting")

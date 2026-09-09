@@ -22,6 +22,7 @@ import {
 import { DOWNLOAD_USER_AGENT, type ExpectedFileSize, fetchExpectedFileSize } from "./http.js";
 import { getExistingFileState, getFileSize, isUnavailablePageFile } from "./file-state.js";
 import { downloadWithFetch, type FetchDownloadProgress } from "./fetch-download.js";
+import { clearParallelParts } from "./parallel-download.js";
 import { probeRemoteCompletion, verifyDownloadedFile, type VerifyDownloadResult } from "./verify.js";
 import { reconcileExistingFile } from "./reconcile.js";
 import {
@@ -117,11 +118,7 @@ function getSystemicFailureMessage(failures: DownloadFailure[]): string | null {
   return `${failures.length} downloads failed with the same error:\n${commonError}`;
 }
 
-function getConnectionCount(options: DownloadOptions, expectedSize?: number): number {
-  if (usesNativeFetchDownloader()) {
-    return 1;
-  }
-
+function getLegacyConnectionCount(options: DownloadOptions, expectedSize?: number): number {
   if (expectedSize && expectedSize <= SMALL_FILE_SINGLE_CONNECTION_THRESHOLD) {
     return 1;
   }
@@ -163,6 +160,7 @@ async function removePartsDirectoryIfEmpty(directory: string): Promise<void> {
 }
 
 async function cleanFileDownloadParts(filePath: string): Promise<void> {
+  await clearParallelParts(filePath);
   try {
     await cleanDownloadParts(filePath);
   } catch {
@@ -255,6 +253,7 @@ function isTransientDownloadError(error: Error): boolean {
       "EAI_AGAIN",
       "ENOTFOUND",
       "UND_ERR_SOCKET",
+      "ERR_DOWNLOAD_RETRYABLE",
     ].includes(code)
   ) {
     return true;
@@ -365,7 +364,7 @@ export async function downloadFile(
   if (!expectedFileSize.size && expectedSize) {
     expectedFileSize = { size: expectedSize, exact: false };
   }
-  const connections = getConnectionCount(options, expectedFileSize.size || expectedSize);
+  const connections = getLegacyConnectionCount(options, expectedFileSize.size || expectedSize);
   const startedAt = Date.now();
   const finalPath = path.join(options.output, filename);
   const partsDirectory = path.join(options.output, PARTS_DIRECTORY_NAME);
@@ -422,7 +421,7 @@ export async function downloadFile(
   }
 
   const ownsBar = !slotBar;
-  const maxFileAttempts = options.resume ? Math.max(1, options.maxRetries + 1) : 1;
+  const maxFileAttempts = Math.max(1, options.maxRetries + 1);
 
   for (let attempt = 1; attempt <= maxFileAttempts; attempt++) {
     try {
@@ -499,7 +498,7 @@ export async function downloadFile(
         };
 
         try {
-          await downloadWithFetch({
+          const downloaded = await downloadWithFetch({
             url,
             tempPath,
             options,
@@ -507,6 +506,7 @@ export async function downloadFile(
             validator: resumeValidator,
             onProgress: (progress) => renderProgress(progress),
           });
+          if (downloaded.exactSize !== undefined) expectedFileSize = { size: downloaded.exactSize, exact: true };
 
           const verification = await verifyDownloadedFile({
             url,

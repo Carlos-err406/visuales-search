@@ -161,6 +161,132 @@ after(async () => {
 });
 
 describe("packaged Node sidecar", () => {
+  it("uses saved connection counts for real parallel downloads in a packaged worker", async () => {
+    const initial = await rpc.request("settings.get");
+    const body = Buffer.concat(Array.from({ length: 16 }, () => FILE_BODY));
+    let active = 0,
+      peak = 0;
+    const fixture = http.createServer((req, res) => {
+      const match = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+      const start = match ? Number(match[1]) : 0;
+      const end = match?.[2] ? Number(match[2]) : body.length - 1;
+      res.writeHead(match ? 206 : 200, {
+        "content-length": end - start + 1,
+        etag: '"parallel-sidecar"',
+        ...(match ? { "content-range": `bytes ${start}-${end}/${body.length}` } : {}),
+      });
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
+      if (start === end) {
+        res.end(body.subarray(start, end + 1));
+        return;
+      }
+      active++;
+      peak = Math.max(peak, active);
+      let offset = start;
+      const timer = setInterval(() => {
+        const next = Math.min(offset + 65536, end + 1);
+        res.write(body.subarray(offset, next));
+        offset = next;
+        if (offset > end) {
+          clearInterval(timer);
+          res.end();
+        }
+      }, 3);
+      res.once("close", () => {
+        active--;
+        clearInterval(timer);
+      });
+    });
+    await new Promise((resolve) => fixture.listen(0, "127.0.0.1", resolve));
+    let task;
+    try {
+      await rpc.request("settings.save", { settings: { ...initial.settings, connections: 4 } });
+      const output = path.join(home, "parallel worker");
+      task = await rpc.request("download.start", {
+        urls: [`http://127.0.0.1:${fixture.address().port}/large.bin`],
+        output,
+      });
+      await waitForTask(task.id, "completed");
+      assert.equal(peak, 4);
+      assert.deepEqual(await fs.readFile(path.join(output, "large.bin")), body);
+    } finally {
+      if (task) await rpc.request("tasks.cancel", { id: task.id });
+      await rpc.request("settings.save", { settings: initial.settings });
+      fixture.closeAllConnections();
+      await new Promise((resolve) => fixture.close(resolve));
+    }
+  });
+  it("persists desktop defaults and snapshots new tasks without changing queued or resumed tasks", async () => {
+    const initial = await rpc.request("settings.get");
+    const changed = {
+      ...initial.settings,
+      output: path.join(home, "Saved destination"),
+      concurrent: 2,
+      connections: 4,
+      maxRetries: 4,
+    };
+    const ids = [];
+    let other;
+    try {
+      await rpc.request("settings.save", { settings: changed });
+      other = await startRpc();
+      assert.deepEqual(
+        (await other.request("settings.get")).settings,
+        changed,
+        "another sidecar reads persisted defaults"
+      );
+      const running = await rpc.request("download.start", { urls: [`${slowUrl}/settings-running.bin`] });
+      ids.push(running.id);
+      const queued = await rpc.request("download.start", { urls: [`${slowUrl}/Settings%20Folder/`], queue: true });
+      ids.push(queued.id);
+      assert.equal(running.output, changed.output);
+      assert.equal(queued.output, path.join(changed.output, "Settings Folder"));
+      assert.equal(queued.status, "queued");
+      for (const task of [running, queued]) {
+        assert.equal(task.options.concurrent, 2);
+        assert.equal(task.options.maxRetries, 4);
+        assert.equal(task.options.connections, 4);
+      }
+      const later = {
+        ...changed,
+        output: path.join(home, "Later default"),
+        concurrent: 7,
+        connections: 8,
+        maxRetries: 0,
+      };
+      await rpc.request("settings.save", { settings: later });
+      for (const id of ids) {
+        const task = (await rpc.request("tasks.list")).find((entry) => entry.id === id);
+        assert.equal(task.options.concurrent, 2);
+        assert.equal(task.options.maxRetries, 4);
+        assert.equal(task.options.connections, 4);
+      }
+      await rpc.request("tasks.cancel", { id: queued.id });
+      const resumed = await rpc.request("tasks.resume", { id: queued.id, queue: true });
+      assert.equal(resumed.output, queued.output);
+      assert.equal(resumed.options.concurrent, 2);
+      assert.equal(resumed.options.maxRetries, 4);
+      assert.equal(resumed.options.connections, 4);
+      const explicit = await rpc.request("download.start", {
+        urls: [server.url("normal", "settings-explicit.bin")],
+        output: path.join(home, "Explicit"),
+      });
+      ids.push(explicit.id);
+      assert.equal(explicit.output, path.join(home, "Explicit"));
+      assert.equal(explicit.options.concurrent, 7);
+      assert.equal(explicit.options.maxRetries, 0);
+      assert.equal(explicit.options.connections, 8);
+      await assert.rejects(rpc.request("settings.save", { settings: { ...later, concurrent: 0 } }), /concurrent/);
+      assert.deepEqual((await rpc.request("settings.get")).settings, later);
+    } finally {
+      for (const id of ids) await rpc.request("tasks.cancel", { id });
+      await other?.close();
+      await rpc.request("settings.save", { settings: initial.settings });
+    }
+  });
   it("waits for pending starts before taking the updater's idle snapshot", async () => {
     const starting = rpc.request("download.start", {
       urls: [`${slowUrl}/update-barrier.bin`],

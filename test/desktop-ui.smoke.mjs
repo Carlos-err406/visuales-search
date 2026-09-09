@@ -30,8 +30,20 @@ try {
       "Discovery",
     ];
     const state = {
+      settings: JSON.parse(window.localStorage.getItem("test-settings") || "null") || {
+        output: "/Users/carlos/Downloads/Visuales",
+        concurrent: 5,
+        connections: 3,
+        maxRetries: 3,
+      },
+      settingsDefaults: { output: "/Users/carlos/Downloads/Visuales", concurrent: 5, connections: 3, maxRetries: 3 },
       calls: [],
-      fail: updateScenario === "offline" ? "check_app_update" : "",
+      fail:
+        updateScenario === "offline"
+          ? "check_app_update"
+          : updateScenario === "settings-error"
+            ? "get_desktop_settings"
+            : "",
       listDelay: 60,
       activeLists: 0,
       updateVersion: updateScenario === "available" ? "1.4.0" : null,
@@ -102,6 +114,13 @@ try {
         }
         if (command === "restart_after_update") return null;
         if (command === "default_output_dir") return "/Users/carlos/Downloads/Visuales";
+        if (command === "get_desktop_settings")
+          return structuredClone({ settings: state.settings, defaults: state.settingsDefaults });
+        if (command === "save_desktop_settings") {
+          state.settings = structuredClone(args.settings);
+          window.localStorage.setItem("test-settings", JSON.stringify(state.settings));
+          return structuredClone({ settings: state.settings, defaults: state.settingsDefaults });
+        }
         if (command === "search_content") return { results: state.results };
         if (command === "plugin:dialog|open") return "/Users/carlos/Downloads/Chosen";
         if (command === "start_download") return { id: "new-task" };
@@ -135,6 +154,77 @@ try {
   assert.equal(await page.getByText("Connected", { exact: true }).count(), 0);
   assert.equal(await page.locator(".results-toolbar").count(), 0, "no empty selection toolbar");
   await page.screenshot({ path: `${screenshots}/default-empty.png` });
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByLabel("Default output folder", { exact: true }).waitFor();
+  const settingsOutput = page.getByLabel("Default output folder", { exact: true });
+  const concurrentFiles = page.getByLabel("Concurrent files", { exact: true });
+  const retries = page.getByLabel("Retries per file", { exact: true });
+  const saveSettings = page.getByRole("button", { name: "Save changes", exact: true });
+  assert.equal(await concurrentFiles.inputValue(), "5");
+  const connections = page.getByLabel("Connections per file", { exact: true });
+  assert.equal(await connections.inputValue(), "3");
+  assert.equal(await connections.getAttribute("readonly"), null);
+  assert.equal(await saveSettings.isDisabled(), true);
+  await page.screenshot({ path: `${screenshots}/settings-default.png` });
+  await concurrentFiles.fill("2");
+  await connections.fill("9");
+  assert.equal(await saveSettings.isDisabled(), true);
+  await page.getByText("Enter a whole number from 1 to 8.", { exact: true }).waitFor();
+  await connections.fill("4");
+  await retries.fill("0");
+  await page.getByRole("button", { name: "Choose default output folder", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("#settings-output").value.endsWith("/Chosen"));
+  await page.getByRole("tab", { name: "Search", exact: true }).click();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  assert.equal(await concurrentFiles.inputValue(), "2", "unsaved edits survive navigation");
+  await concurrentFiles.fill("0");
+  assert.equal(await saveSettings.isDisabled(), true);
+  await page.getByText("Enter a whole number from 1 to 32.", { exact: true }).waitFor();
+  await concurrentFiles.fill("2");
+  await page.evaluate(() => {
+    window.testBridge.fail = "save_desktop_settings";
+  });
+  await saveSettings.click();
+  await page.getByRole("alert").filter({ hasText: "Test failure: save_desktop_settings" }).waitFor();
+  assert.equal(await concurrentFiles.inputValue(), "2", "save errors retain draft");
+  await page.evaluate(() => {
+    window.testBridge.fail = "";
+  });
+  await saveSettings.click();
+  await page.getByText("Saved", { exact: true }).waitFor();
+  await page.reload();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("#settings-concurrent")?.value === "2");
+  assert.equal(await retries.inputValue(), "0");
+  assert.equal(await connections.inputValue(), "4");
+  assert.equal(await settingsOutput.inputValue(), "/Users/carlos/Downloads/Chosen");
+  await settingsOutput.fill(`/Users/carlos/Downloads/${"Long destination folder ".repeat(12)}`);
+  for (const viewport of [
+    { width: 1240, height: 820 },
+    { width: 760, height: 620 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.screenshot({ path: `${screenshots}/settings-${viewport.width}.png` });
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      true,
+      "settings has no horizontal overflow"
+    );
+    const bounds = await saveSettings.boundingBox();
+    assert.ok(bounds.y + bounds.height <= viewport.height, "save action stays reachable");
+  }
+  await page.setViewportSize({ width: 1240, height: 820 });
+  await page.getByRole("button", { name: "Discard", exact: true }).click();
+  assert.equal(await settingsOutput.inputValue(), "/Users/carlos/Downloads/Chosen");
+  await page.getByRole("button", { name: "Restore defaults", exact: true }).click();
+  assert.equal(await concurrentFiles.inputValue(), "5");
+  assert.equal(await connections.inputValue(), "3");
+  assert.equal(await saveSettings.isEnabled(), true, "reset requires explicit save");
+  await saveSettings.click();
+  await page.getByText("Saved", { exact: true }).waitFor();
+  await page.reload();
+  await page.getByText("No search results yet").waitFor();
   const search = page.getByRole("searchbox", { name: "Search library", exact: true });
   await search.fill("planet earth");
   await search.focus();
@@ -176,6 +266,23 @@ try {
   await checkSelectionAccents();
   await page.screenshot({ path: `${screenshots}/selection-accents.png` });
   assert.equal(await page.getByLabel("Download destination").inputValue(), "/Users/carlos/Downloads/Visuales");
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsOutput.fill("/Users/carlos/Downloads/New default");
+  await saveSettings.click();
+  await page.getByText("Saved", { exact: true }).waitFor();
+  await page.getByRole("tab", { name: "Search", exact: true }).click();
+  assert.equal(await page.getByLabel("Download destination").inputValue(), "/Users/carlos/Downloads/New default");
+  await page.getByLabel("Download destination").fill("/Users/carlos/Downloads/Visuales");
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await retries.fill("4");
+  await saveSettings.click();
+  await page.getByText("Saved", { exact: true }).waitFor();
+  await page.getByRole("tab", { name: "Search", exact: true }).click();
+  assert.equal(
+    await page.getByLabel("Download destination").inputValue(),
+    "/Users/carlos/Downloads/Visuales",
+    "saving defaults preserves an explicit destination"
+  );
   assert.equal(await page.getByRole("checkbox", { name: "Select all results" }).getAttribute("aria-checked"), "mixed");
   const checkboxStyles = await page.getByRole("checkbox").evaluateAll((inputs) =>
     inputs.map((input) => {
@@ -678,6 +785,15 @@ try {
   await page.getByLabel("App updates", { exact: true }).click();
   await page.getByText("Use the AppImage for in-app updates.").waitFor();
   assert.equal(await page.getByRole("button", { name: "Check for updates", exact: true }).isDisabled(), true);
+  automaticUrl.searchParams.set("updates", "settings-error");
+  await page.goto(automaticUrl.href);
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Test failure: get_desktop_settings" }).waitFor();
+  await page.evaluate(() => {
+    window.testBridge.fail = "";
+  });
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await page.getByLabel("Concurrent files", { exact: true }).waitFor();
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {

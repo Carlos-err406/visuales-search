@@ -73,7 +73,9 @@ export async function probeRemoteCompletion(
       headers: createDownloadHeaders({ Range: `bytes=${offset}-${offset}` }),
       signal: getRequestTimeoutSignal(options),
     });
-    await response.arrayBuffer();
+    // Never buffer an entire movie when a server ignores the one-byte Range request.
+    if (response.status === 206 && response.headers.get("content-length") === "1") await response.arrayBuffer();
+    else await response.body?.cancel();
 
     return interpretProbeResponse(response, localSize);
   } catch {
