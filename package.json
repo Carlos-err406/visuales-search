@@ -31,7 +31,7 @@
     "release:check": "npm run check && npm pack --dry-run --cache .cache/npm",
     "version:check": "node scripts/release-version.mjs",
     "version:sync": "node scripts/release-version.mjs --write",
-    "test:desktop": "node scripts/test-desktop.mjs",
+    "test:desktop": "npm run build -w @visuales/core && node scripts/test-desktop.mjs",
     "test:signatures": "node scripts/test-update-signatures.mjs",
     "version": "node scripts/release-version.mjs --write --stage",
     "release:patch": "npm version patch",
