@@ -36,6 +36,14 @@ export function renderDesktopCask(version, checksums) {
   depends_on macos: :ventura
 
   app "Visuales.app"
+
+  caveats <<~EOS
+    Visuales is ad-hoc signed and is not notarized by Apple.
+    If macOS blocks the first launch and you trust this release, open
+    System Settings > Privacy & Security, click Open Anyway for Visuales,
+    then confirm Open. Try launching the app once before checking Settings.
+    Managed Macs may not allow this exception.
+  EOS
 end
 `;
 }

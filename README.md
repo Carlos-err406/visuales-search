@@ -224,6 +224,18 @@ brew install --cask Carlos-err406/visuales/visuales-desktop
 
 This installs `Visuales.app` for Apple Silicon or Intel (macOS 13.5+). The `visuales` formula remains the CLI; both can be installed together. Desktop releases automatically update the cask after installers are published.
 
+### First Launch on macOS
+
+Visuales uses ad-hoc signing and is not notarized by Apple. macOS may block the first launch. If you trust the release you installed:
+
+1. Try opening Visuales once.
+2. Open **System Settings > Privacy & Security** and find the Visuales warning.
+3. Click **Open Anyway**, then confirm **Open** (authenticate if prompted).
+
+This approves Visuales specifically; do not disable Gatekeeper globally. Managed Macs may not permit this exception. See [Apple's instructions](https://support.apple.com/en-us/102445).
+
+### Release Automation
+
 The CLI and desktop share one release version. GitHub Actions publishes when `package.json` changes on `main`; desktop installers and signed in-app updates join the same release. See [Desktop Releases and Updates](docs/desktop-releases.md) for signing setup, build rehearsals, and recovery.
 
 One-time setup:

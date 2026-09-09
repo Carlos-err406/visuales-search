@@ -17,6 +17,8 @@ test("desktop cask uses separate architecture checksums and preserves CLI state"
   assert.match(cask, /auto_updates true/);
   assert.match(cask, /depends_on macos: :ventura/);
   assert.match(cask, /app "Visuales.app"/);
+  assert.match(cask, /not notarized by Apple/);
+  assert.match(cask, /Privacy & Security, click Open Anyway for Visuales/);
   assert.doesNotMatch(cask, /zap|binary |\.visuales-cli-cache|Downloads|no_check|quarantine/);
 });
 

@@ -115,7 +115,10 @@ jobs:
         with:
           projectPath: apps/desktop
           args: --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
-          uploadUpdaterJson: false
+          includeUpdaterJson: false
+      - name: Verify macOS bundle signature and Node runtime
+        if: runner.os == 'macOS'
+        run: node scripts/verify-macos-bundle.mjs
       - name: Stage platform artifacts
         run: node scripts/desktop-artifacts.mjs stage ${{ matrix.platform }}
       - name: Verify artifacts against the app's public key
