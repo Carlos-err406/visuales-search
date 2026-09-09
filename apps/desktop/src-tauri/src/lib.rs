@@ -33,10 +33,30 @@ async fn list_download_tasks(app: tauri::AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn get_desktop_settings(app: tauri::AppHandle) -> Result<Value, String> {
+    sidecar::request(
+        &app,
+        "settings.get",
+        json!({ "defaultOutput": default_output_dir()? }),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn save_desktop_settings(app: tauri::AppHandle, settings: Value) -> Result<Value, String> {
+    sidecar::request(
+        &app,
+        "settings.save",
+        json!({ "settings": settings, "defaultOutput": default_output_dir()? }),
+    )
+    .await
+}
+
+#[tauri::command]
 async fn start_download(
     app: tauri::AppHandle,
     urls: Vec<String>,
-    output: String,
+    output: Option<String>,
     queue: Option<bool>,
 ) -> Result<Value, String> {
     let updates = app.state::<updates::UpdateState>();
@@ -45,7 +65,7 @@ async fn start_download(
     sidecar::request(
         &app,
         "download.start",
-        json!({ "urls": urls, "output": output, "queue": queue.unwrap_or(false) }),
+        json!({ "urls": urls, "output": output, "queue": queue.unwrap_or(false), "defaultOutput": default_output_dir()? }),
     )
     .await
 }
@@ -77,6 +97,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search_content,
             default_output_dir,
+            get_desktop_settings,
+            save_desktop_settings,
             folders::open_output_folder,
             list_download_tasks,
             start_download,

@@ -31,6 +31,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  Settings,
   Square,
   Trash2,
   X,
@@ -49,11 +50,13 @@ import {
 import { isDesktop, useTransfers } from "./use-transfers";
 import { useAppUpdates } from "./use-app-updates";
 import { AppUpdatesButton, AppUpdatesPanel } from "./app-updates";
+import { useDesktopSettings } from "./use-desktop-settings";
+import { SettingsView } from "./settings-view";
 import appIcon from "../app-icon.svg?no-inline";
 import "./theme.css";
 import "./styles.css";
 
-type View = "search" | "downloads";
+type View = "search" | "downloads" | "settings";
 type Filter = "all" | "active" | "attention" | "completed";
 const statusFilters: { value: Filter; label: string }[] = [
   { value: "all", label: "All statuses" },
@@ -247,6 +250,7 @@ function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [taskQuery, setTaskQuery] = useState("");
   const updates = useAppUpdates();
+  const settings = useDesktopSettings();
   const { tasks, refresh, refreshManually, refreshing, connectionError, pending, act } = useTransfers(
     updates.blocksTransfers
   );
@@ -266,19 +270,11 @@ function App() {
   }, [message]);
 
   useEffect(() => {
-    if (!isDesktop()) return;
-    let active = true;
-    void invoke<string>("default_output_dir")
-      .then((path) => {
-        if (active && !outputEdited.current) setOutput(path);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
+    if (settings.snapshot && !outputEdited.current) setOutput(settings.snapshot.settings.output);
+  }, [settings.snapshot]);
 
   useLayoutEffect(() => {
+    if (view === "settings") return;
     const element = view === "search" ? searchList.current : downloadsList.current;
     if (element) element.scrollTop = scrollPositions.current[view];
   }, [view]);
@@ -303,7 +299,7 @@ function App() {
 
   function switchView(next: View) {
     const element = view === "search" ? searchList.current : downloadsList.current;
-    if (element) scrollPositions.current[view] = element.scrollTop;
+    if (element && view !== "settings") scrollPositions.current[view] = element.scrollTop;
     setView(next);
   }
 
@@ -381,7 +377,11 @@ function App() {
     setSelectionError("");
     setMessage("");
     try {
-      await invoke("start_download", { urls: [...selected], output: output.trim(), queue });
+      await invoke("start_download", {
+        urls: [...selected],
+        output: outputEdited.current ? output.trim() : undefined,
+        queue,
+      });
       clearSelection();
       setMessage(queue ? "Transfer added to queue" : "Transfer started");
       await refresh(true);
@@ -464,6 +464,9 @@ function App() {
                 {failedCount}
               </Badge>
             )}
+          </TabsTrigger>
+          <TabsTrigger value="settings" id="tab-settings">
+            <Settings size={16} /> Settings
           </TabsTrigger>
         </TabsList>
         {isDesktop() && <AppUpdatesButton updates={updates} />}
@@ -861,6 +864,15 @@ function App() {
           )}
           <span className="footer-speed">{totalSpeed > 0 ? `${formatBytes(totalSpeed)}/s` : ""}</span>
         </footer>
+      </TabsContent>
+      <TabsContent
+        value="settings"
+        keepMounted
+        hidden={view !== "settings"}
+        id="panel-settings"
+        className="workspace-panel settings-panel"
+      >
+        <SettingsView controller={settings} />
       </TabsContent>
     </Tabs>
   );

@@ -1,7 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
-import path from "node:path";
-import os from "node:os";
 import {
   searchContent,
   downloadUrl,
@@ -22,6 +20,8 @@ import {
   type DownloadProgress,
 } from "@visuales/core";
 import { createDownloadTargets } from "@visuales/core/download/targets";
+import { downloadDefaults } from "@visuales/core/download/defaults";
+import { loadDesktopSettings, saveDesktopSettings, resolveDesktopOutput } from "@visuales/core/desktop-settings";
 
 const PROTOCOL_VERSION = 1;
 setLogger({ log: (...values) => console.error(...values), error: (...values) => console.error(...values) });
@@ -157,6 +157,15 @@ async function runServer() {
         const { results, totalResults } = await searchContent(terms, { noCache: params.noCache === true });
         return { results, totalResults };
       }
+      case "settings.get":
+        return loadDesktopSettings(
+          params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput)
+        );
+      case "settings.save":
+        return saveDesktopSettings(
+          params.settings,
+          params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput)
+        );
       // Not in the read-only allowlist: updater snapshots wait behind pending starts/resumes.
       case "tasks.prepareUpdate":
       case "tasks.list":
@@ -167,7 +176,10 @@ async function runServer() {
           if (!["http:", "https:"].includes(new URL(url).protocol))
             throw new Error("Only HTTP and HTTPS downloads are supported");
         }
-        const destination = outputPath(params.output);
+        const { settings } = await loadDesktopSettings(
+          params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput)
+        );
+        const destination = params.output == null ? settings.output : resolveDesktopOutput(params.output);
         // Desktop destinations are parent folders. Store the resolved single target
         // once so resume keeps both new and legacy tasks at their original paths.
         const output = urls.length === 1 ? createDownloadTargets(urls, destination)[0].output : destination;
@@ -175,12 +187,12 @@ async function runServer() {
           urls,
           {
             output,
-            resume: true,
-            maxRetries: 3,
-            timeout: Infinity,
-            concurrent: 5,
-            connections: 3,
-            compact: false,
+            resume: downloadDefaults.resume,
+            maxRetries: settings.maxRetries,
+            timeout: downloadDefaults.timeout,
+            concurrent: settings.concurrent,
+            connections: settings.connections,
+            compact: downloadDefaults.compact,
             exclude: [],
           },
           params.queue === true
@@ -269,12 +281,4 @@ function string(value: unknown, name: string): string {
 function strings(value: unknown, name: string): string[] {
   if (!Array.isArray(value) || value.length === 0) throw new Error(`${name} must be a nonempty array`);
   return [...new Set(value.map((entry) => string(entry, name)))];
-}
-
-function outputPath(value: unknown): string {
-  const output = string(value, "output");
-  if (output === "~") return os.homedir();
-  if (output.startsWith("~/") || output.startsWith("~\\")) return path.join(os.homedir(), output.slice(2));
-  if (!path.isAbsolute(output)) throw new Error("Output folder must be an absolute path");
-  return path.normalize(output);
 }

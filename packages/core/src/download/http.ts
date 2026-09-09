@@ -31,6 +31,11 @@ export function isUnavailableResponse(response: Response): boolean {
   return contentType.includes("text/html") && !response.url.toLowerCase().endsWith(".html");
 }
 
+export function checkRetryableStatus(response: Response): void {
+  if (response.status === 429 || response.status >= 500)
+    throw Object.assign(new Error(`Download failed: HTTP ${response.status}`), { code: "ERR_DOWNLOAD_RETRYABLE" });
+}
+
 /**
  * Reads the total resource length from a Content-Range header. Apache answers both
  * `bytes <start>-<end>/<total>` (206) and `bytes * /<total>` (416) with the total last.

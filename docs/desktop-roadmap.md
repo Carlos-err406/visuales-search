@@ -1,6 +1,6 @@
 # Desktop Roadmap
 
-This is the entry point for desktop UI priorities and future feature requests. Add later ideas here as they come up; they do not automatically become part of the next implementation.
+This is the entry point for desktop priorities and future feature requests. Add later ideas here as they come up; they do not automatically become part of the next implementation.
 
 ## Completed: Search Workspace
 
@@ -25,14 +25,19 @@ Use a compact activity strip while transfers are active or queued, expandable in
 
 On the Downloads tab, the task table replaces the tray so the same transfers are not shown twice. A failed transfer must still surface a visible indication when the tray collapses or becomes idle.
 
+## Completed: Desktop Settings
+
+[005: Settings page](../.context/compound-engineering/todos/005-complete-p3-desktop-settings.md) adds persistent desktop-only defaults for output folder, concurrent files, connections per file (1-8), and retries per file. The shared Node engine supports resumable parallel range downloads with safe single-stream fallback. Explicit destinations override the default; existing, queued, and resumed tasks keep their recorded options. CLI defaults are unchanged; its existing connection option is now honored.
+
 ## Later
 
-| Feature                                                                                                                   | Status              | Notes                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md)                           | Requested; deferred | Monitor the same shared transfers outside the main window. Platform coverage and behavior after closing the window need separate triage. |
-| [Browse directory contents in Search](../.context/compound-engineering/todos/003-pending-p3-search-directory-browsing.md) | Requested; deferred | Inspect and select individual files while preserving search state.                                                                       |
-| [Click-to-preview images](../.context/compound-engineering/todos/004-pending-p3-search-image-previews.md)                 | Requested; deferred | Open an in-app preview from Search or browsed directories.                                                                               |
-| [Settings page](../.context/compound-engineering/todos/005-pending-p3-desktop-settings.md)                                | Requested; deferred | Configure default output folder, maximum connections, concurrency, and retries. Other download defaults need triage.                     |
+| Feature                                                                                                                   | Status              | Notes                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md)                           | Requested; deferred | Monitor the same shared transfers outside the main window. Platform coverage and behavior after closing the window need separate triage.       |
+| [Browse directory contents in Search](../.context/compound-engineering/todos/003-pending-p3-search-directory-browsing.md) | Requested; deferred | Inspect and select individual files while preserving search state.                                                                             |
+| [Click-to-preview images](../.context/compound-engineering/todos/004-pending-p3-search-image-previews.md)                 | Requested; deferred | Open an in-app preview from Search or browsed directories.                                                                                     |
+| [Automatic update UX](../.context/compound-engineering/todos/007-pending-p3-automatic-update-ux.md)                       | After Settings      | Automatically surface updates across views; preserve Download and Restart sections; remove the header check arrow and separate Install action. |
+| [Faster desktop CI builds](../.context/compound-engineering/todos/006-pending-p3-desktop-ci-build-performance.md)         | Requested; deferred | Measure cold/warm builds, improve Rust/npm caching, and evaluate duplicate validation/release work.                                            |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 
@@ -49,3 +54,7 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 - 2026-09-08: User selected the compact, expandable activity strip as the default. Search Workspace scope marked ready; menu bar progress remains deferred.
 - 2026-09-08: Search Workspace implemented and verified at default, minimum desktop, and narrow viewports. macOS app rebuilt; menu bar progress remains in Later.
 - 2026-09-08: Simplify Search chrome and its expanded activity summary; preserve Downloads. Remove the ambiguous local-engine Connected badge, expire transfer confirmations after four seconds, and add native open-output-folder actions. Directory browsing and image previews added to Later.
+- 2026-09-09: Defer updater UX until after Settings. Detect outdated versions automatically, keep Download update and Restart app to update visible across views, and remove the manual-check header arrow and redundant Install button.
+- 2026-09-09: Implement Settings with desktop-only defaults, as requested. Leave CLI behavior unchanged; updater UX remains the related follow-up.
+- 2026-09-09: User requested working parallel connections in the engine first. Added shared Node range downloading, resumable segments, range/version validation, and a per-process connection budget; unlocked the Settings control. CLI and desktop consume the same implementation.
+- 2026-09-09: Centralize transfer defaults in core for CLI and desktop (five files, three connections, three retries). Desktop persists overrides independently and retains Downloads/Visuales as its destination; existing preferences and task options stay unchanged.
