@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p3
 issue_id: "006"
 tags: [desktop, ci, performance, caching, later]
@@ -10,9 +10,11 @@ dependencies: []
 
 ## Problem Statement
 
-Reduce desktop CI and release build times. During the first 2.0.0 run, the user reported a macOS build taking about seven minutes while other platforms were still running. Requested for the Later bucket, not immediate implementation.
+Reduce desktop CI and release build times. During the first 2.0.0 run, the user reported a macOS build taking about seven minutes while other platforms were still running. Originally requested for Later; implementation approved on 2026-09-09.
 
 ## Findings
+
+Baseline findings, before implementation:
 
 - `.github/workflows/desktop-release.yml` uses `swatinem/rust-cache@v2` with the root Cargo workspace and `target` directory.
 - `.github/workflows/desktop.yml` has no explicit Rust build cache.
@@ -33,18 +35,20 @@ Approved on 2026-09-09. Add shared dependency caching and remove redundant prepa
 
 ## Acceptance Criteria
 
-- [ ] Record baseline cold/warm timings and cache hits for all supported desktop targets.
-- [ ] Verify cache invalidation for dependency, Rust toolchain, architecture, and build-setting changes.
-- [ ] Measure improvement on a subsequent run; do not promise a target before establishing a baseline.
-- [ ] Retain tests, signature verification, and the all-platform release publication gate.
-- [ ] Never cache signing credentials or treat cached signed installers as freshly verified release output.
-- [ ] Document remaining bottlenecks and any deliberately retained duplicate work.
+- [x] Record baseline cold/warm timings and cache hits for all supported desktop targets.
+- [x] Verify cache invalidation for dependency, Rust toolchain, architecture, and build-setting changes.
+- [x] Measure improvement on a subsequent run; do not promise a target before establishing a baseline.
+- [x] Retain tests, signature verification, and the all-platform release publication gate.
+- [x] Never cache signing credentials or treat cached signed installers as freshly verified release output.
+- [x] Document remaining bottlenecks and any deliberately retained duplicate work.
 
 ## Work Log
 
 ### 2026-09-09 - Implementation and Measurement
 
-Confirmed exact release cache hits on all four platforms; regular desktop validation had no Rust cache. Added shared Rust/npm caching, eliminated redundant sidecar builds, and limited cancellation to superseded validation runs. Cross-platform build-only measurement is in progress; no application release requested.
+Confirmed exact release cache hits on all four platforms; regular desktop validation had no Rust cache. Added shared Rust/npm caching, eliminated redundant sidecar builds, and limited cancellation to superseded validation runs.
+
+Both signed build-only rehearsals passed on all four targets, including updater manifest assembly. Exact Rust/npm hits on the second run reduced combined build-job time from 58m16s cold to 31m30s warm. This is a cold/warm comparison, not an improvement over already-cached previous releases. Regular PR platform/UI validation and local lint/111 Node tests passed. Audited cache key construction, dependency-only cleanup, and preserved publication gates; full results and remaining bottlenecks are in the performance document. No app version or public release changed.
 
 ### 2026-09-08 - Requested for Later
 

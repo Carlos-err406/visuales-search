@@ -29,6 +29,10 @@ On the Downloads tab, the task table replaces the tray so the same transfers are
 
 [005: Settings page](../.context/compound-engineering/todos/005-complete-p3-desktop-settings.md) adds persistent desktop-only defaults for output folder, concurrent files, connections per file (1-8), and retries per file. The shared Node engine supports resumable parallel range downloads with safe single-stream fallback. Explicit destinations override the default; existing, queued, and resumed tasks keep their recorded options. CLI defaults are unchanged; its existing connection option is now honored.
 
+## Completed: CI Performance
+
+Completed [006: Faster desktop CI builds](../.context/compound-engineering/todos/006-complete-p3-desktop-ci-build-performance.md): shared Rust/npm dependency caching, fewer repeated sidecar builds, and cancellation of superseded validation runs. See [measured cold/warm results](ci-performance.md); no app release was made for this change.
+
 ## Later
 
 | Feature                                                                                                                   | Status              | Notes                                                                                                                                          |
@@ -37,7 +41,6 @@ On the Downloads tab, the task table replaces the tray so the same transfers are
 | [Browse directory contents in Search](../.context/compound-engineering/todos/003-pending-p3-search-directory-browsing.md) | Requested; deferred | Inspect and select individual files while preserving search state.                                                                             |
 | [Click-to-preview images](../.context/compound-engineering/todos/004-pending-p3-search-image-previews.md)                 | Requested; deferred | Open an in-app preview from Search or browsed directories.                                                                                     |
 | [Automatic update UX](../.context/compound-engineering/todos/007-pending-p3-automatic-update-ux.md)                       | After Settings      | Automatically surface updates across views; preserve Download and Restart sections; remove the header check arrow and separate Install action. |
-| [Faster desktop CI builds](../.context/compound-engineering/todos/006-ready-p3-desktop-ci-build-performance.md)           | In progress         | Shared dependency caches and less repeated preparation; measuring cross-platform cold/warm builds.                                             |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 

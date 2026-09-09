@@ -66,7 +66,42 @@ signed, and verified. Cargo executable caching is explicitly disabled. See
   propagation wait remain uncached. The v2.0.4 Homebrew CLI job spent 301 seconds waiting for its tarball.
 - Small privileged npm publication and Homebrew jobs retain their existing cache policy.
 
-## Follow-Up Measurement
+## Cold/Warm Verification
+
+Both build-only rehearsals used commit `c8a984c` and the same matrix, with no publication:
+[cold run](https://github.com/Carlos-err406/visuales-search/actions/runs/34380303180) and
+[warm run](https://github.com/Carlos-err406/visuales-search/actions/runs/34381489484).
+Every cold Rust restore reported `No cache found`; every warm restore reported an exact match.
+All four warm npm restores hit as well. Both complete updater manifests passed validation.
+
+| Target              | Cold job | Warm job | Warm Rust restore | Rust tests, cold / warm | Packaging, cold / warm |
+| ------------------- | -------- | -------- | ----------------- | ----------------------- | ---------------------- |
+| macOS Apple Silicon | 10m21s   | 4m37s    | 28s               | 124s / 25s              | 301s / 97s             |
+| macOS Intel         | 22m26s   | 13m12s   | 76s               | 391s / 61s              | 542s / 295s            |
+| Windows x64         | 14m42s   | 6m48s    | 27s               | 199s / 36s              | 407s / 146s            |
+| Linux x64           | 10m47s   | 6m53s    | 29s               | 127s / 13s              | 347s / 182s            |
+
+Across the four build jobs this was 58m16s cold versus 31m30s warm, about 46% fewer runner minutes.
+This measures cold versus warm behavior of the new configuration, **not** a 46% improvement over
+previous releases, which already had working Rust caches. Their warm durations were broadly similar
+on three targets; Intel was slower in this sample. Its Node checks took 184s versus the previous
+release's 101s, and Linux system-package installation took 88s versus 40s. Runner variability and
+uncached work remain significant. The principal improvement is extending caching to regular Desktop
+validation and avoiding known repeated preparation, not making release compilation disappear.
+
+The [regular PR validation](https://github.com/Carlos-err406/visuales-search/actions/runs/34380356515)
+also passed all four native targets and the UI smoke tests. Its cold Intel job was an outlier at
+37m35s; no warm-validation duration is claimed from this run. Package validation passed in 1m16s.
+Locally, lint, all 111 Node tests, version consistency, and npm package inspection passed.
+
+Cache invalidation was checked against the action's [key construction](https://github.com/Swatinem/rust-cache/blob/v2/src/config.ts)
+and the emitted keys, not by running a separate build for every possible dependency/toolchain change.
+Root workspace settings and runner image are explicit inputs; OS/architecture, compiler/environment,
+package manifests, dependency lockfile, and Cargo/toolchain config are action-managed inputs.
+Signing credentials are only supplied to the signing step, and publication/Homebrew were skipped in
+both rehearsals. The initial main-branch run after merge will populate its own new cache namespace.
+
+## Repeating the Measurement
 
 Run Desktop Release on the implementation branch with an empty tag and `publish=false`, then repeat
 on the same ref after it finishes. Compare each platform's job duration, Rust cache restore result,
