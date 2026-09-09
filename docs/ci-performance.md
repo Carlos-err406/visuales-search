@@ -103,6 +103,14 @@ both rehearsals. The initial main-branch run after merge will populate its own n
 
 ## Repeating the Measurement
 
+Linux jobs disable only the hosted runner's system Google Chrome APT source (both `.list` and
+`.sources` formats) before installing dependencies. A subsequent PR run failed in native and UI
+setup because that unused repository returned a `Hash Sum mismatch`. Tauri uses Ubuntu's WebKit
+packages and the smoke tests use Playwright's downloaded Chromium, not system Chrome. Ubuntu
+repositories, package hash/signature verification, and real installation failures remain intact.
+This applies to validation, Playwright dependency installation, and release packaging runners only;
+it does not change the user's system or the distributed app.
+
 Run Desktop Release on the implementation branch with an empty tag and `publish=false`, then repeat
 on the same ref after it finishes. Compare each platform's job duration, Rust cache restore result,
 dependency installation, test, and packaging steps. Record both run URLs and note runner variance.
