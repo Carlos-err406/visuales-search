@@ -44,7 +44,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          shared-key: desktop-${{ matrix.os }}
+          shared-key: desktop-${{ matrix.os }}-${{ hashFiles('Cargo.toml') }}
           cache-bin: false
       - run: npm ci
       - name: Core and sidecar integration tests

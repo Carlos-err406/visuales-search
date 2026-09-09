@@ -99,7 +99,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          shared-key: desktop-${{ matrix.os }}
+          shared-key: desktop-${{ matrix.os }}-${{ hashFiles('Cargo.toml') }}
           cache-bin: false
       - name: Linux build dependencies
         if: runner.os == 'Linux'

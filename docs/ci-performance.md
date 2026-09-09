@@ -35,7 +35,9 @@ validation had no Rust cache, and both workflows rebuilt the Node sidecar unnece
 ## Cache Boundaries
 
 The explicit shared key includes the runner image (`macos-15`, `macos-15-intel`, `windows-latest`,
-or `ubuntu-22.04`). Rust-cache also hashes compiler identity/host, Cargo manifests and lockfile,
+or `ubuntu-22.04`) and the root `Cargo.toml` hash. The root is a virtual workspace, so it is not
+included among the package manifests discovered by `cargo metadata`; hashing it explicitly covers
+shared dependencies, features, and profile settings. Rust-cache also hashes compiler identity/host, package manifests and lockfile,
 toolchain/config files, and build-related environment variables. A changed key can restore a
 compatible dependency fallback; Cargo still validates fingerprints and recompiles as needed.
 The caches do not replace builds, tests, or signature checks.
