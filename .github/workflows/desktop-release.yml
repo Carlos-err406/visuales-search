@@ -47,7 +47,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: package-lock.json
       - run: npm ci
       - name: Validate version and signing configuration
         id: version
@@ -92,20 +93,26 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          shared-key: desktop-${{ matrix.os }}-${{ hashFiles('Cargo.toml') }}
+          cache-bin: false
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
+          # The runner's Chrome repository is unrelated to Tauri and can have stale index hashes.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - run: npm ci
       - run: npm run check
       - run: npm run version:check
-      - run: npm run sidecar:prepare
+      - name: Prepare tested sidecar
+        run: node scripts/prepare-sidecar.mjs
       - run: cargo test --workspace --locked
       - name: Build signed installers and updater artifacts
         uses: tauri-apps/tauri-action@v0
@@ -114,7 +121,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
-          args: --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+          args: --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json --config src-tauri/tauri.release.conf.json
           includeUpdaterJson: false
       - name: Verify macOS bundle signature and Node runtime
         if: runner.os == 'macOS'
@@ -144,7 +151,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: package-lock.json
       - run: npm ci
       - uses: actions/download-artifact@v8
         with:
