@@ -49,7 +49,7 @@ import {
 } from "./task-view";
 import { isDesktop, useTransfers } from "./use-transfers";
 import { useAppUpdates } from "./use-app-updates";
-import { AppUpdatesButton, AppUpdatesPanel } from "./app-updates";
+import { AppUpdatesPanel } from "./app-updates";
 import { useDesktopSettings } from "./use-desktop-settings";
 import { SettingsView } from "./settings-view";
 import appIcon from "../app-icon.svg?no-inline";
@@ -469,7 +469,6 @@ function App() {
             <Settings size={16} /> Settings
           </TabsTrigger>
         </TabsList>
-        {isDesktop() && <AppUpdatesButton updates={updates} />}
       </header>
 
       <AppUpdatesPanel updates={updates} activeTransfers={activeTasks.length > 0} />
@@ -872,7 +871,7 @@ function App() {
         id="panel-settings"
         className="workspace-panel settings-panel"
       >
-        <SettingsView controller={settings} />
+        <SettingsView controller={settings} updates={updates} />
       </TabsContent>
     </Tabs>
   );

@@ -13,7 +13,8 @@ export function useAppUpdates() {
   const [version, setVersion] = useState("");
   const [error, setError] = useState("");
   const [progress, setProgress] = useState<Progress>({ received: 0, total: null });
-  const [expanded, setExpanded] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [lastChecked, setLastChecked] = useState<number | null>(null);
   const mounted = useRef(false);
   const busy = useRef(false);
   const setPhase = useCallback((next: Phase) => {
@@ -23,18 +24,29 @@ export function useAppUpdates() {
 
   const check = useCallback(
     async (manual = true) => {
-      if (!isDesktop() || busy.current || ["downloaded", "ready", "available", "restarting"].includes(phaseRef.current))
+      if (!isDesktop() || busy.current || ["downloaded", "ready", "restarting"].includes(phaseRef.current)) return;
+      // Keep the checked version stable until download; remind on the next scheduled check.
+      if (phaseRef.current === "available") {
+        if (!manual) setDismissed(false);
         return;
+      }
       busy.current = true;
       setError("");
       setPhase("checking");
-      if (manual) setExpanded(true);
       try {
+        const nextInfo = await invoke<Info>("app_update_info");
+        if (!mounted.current) return;
+        setInfo(nextInfo);
+        if (!nextInfo.supported || (!manual && !nextInfo.automatic)) {
+          setPhase("idle");
+          return;
+        }
         const next = await invoke<string | null>("check_app_update");
         if (!mounted.current) return;
         setVersion(next || "");
+        setLastChecked(Date.now());
+        setDismissed(false);
         setPhase(next ? "available" : "current");
-        if (next) setExpanded(true);
       } catch (error) {
         if (mounted.current) {
           setError(String(error));
@@ -49,24 +61,12 @@ export function useAppUpdates() {
 
   useEffect(() => {
     mounted.current = true;
-    let live = true;
     let timer: number | undefined;
     if (isDesktop()) {
-      void invoke<Info>("app_update_info")
-        .then((next) => {
-          if (!live) return;
-          setInfo(next);
-          if (next.supported && next.automatic) {
-            void check(false);
-            timer = window.setInterval(() => void check(false), 6 * 60 * 60 * 1000);
-          }
-        })
-        .catch((error) => {
-          if (live) setError(String(error));
-        });
+      void check(false);
+      timer = window.setInterval(() => void check(false), 6 * 60 * 60 * 1000);
     }
     return () => {
-      live = false;
       mounted.current = false;
       clearInterval(timer);
     };
@@ -75,12 +75,13 @@ export function useAppUpdates() {
   const download = async () => {
     if (busy.current || phaseRef.current !== "available") return;
     busy.current = true;
+    setDismissed(false);
     setError("");
     setProgress({ received: 0, total: null });
     setPhase("downloading");
     const channel = new Channel<Progress>();
     channel.onmessage = (next) => {
-      if (mounted.current) setProgress(next);
+      if (mounted.current && phaseRef.current === "downloading") setProgress(next);
     };
     try {
       await invoke("download_app_update", { onProgress: channel });
@@ -120,8 +121,12 @@ export function useAppUpdates() {
     version,
     error,
     progress,
-    expanded,
-    setExpanded,
+    lastChecked,
+    noticeVisible:
+      (phase === "available" && !dismissed) || ["downloading", "downloaded", "restarting", "ready"].includes(phase),
+    dismiss: () => {
+      if (phaseRef.current === "available") setDismissed(true);
+    },
     check,
     download,
     restart,

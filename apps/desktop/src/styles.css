@@ -124,14 +124,6 @@ h3 {
   align-items: center;
   gap: 9px;
 }
-.app-updates-button {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-.app-updates-button.update-available {
-  color: var(--primary);
-  background: var(--primary-soft);
-}
 .app-updates {
   display: flex;
   align-items: center;
@@ -158,6 +150,25 @@ h3 {
 .app-update-error {
   color: var(--danger);
 }
+.settings-update-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 0;
+  font-size: 12px;
+}
+.settings-update-row > button {
+  flex-shrink: 0;
+}
+.settings-loading .settings-updates {
+  width: 100%;
+  flex: 0 0 100%;
+}
+.settings-loading > [role="status"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
 @media (max-width: 680px) {
   .app-updates {
     flex-wrap: wrap;
@@ -166,6 +177,9 @@ h3 {
   }
   .app-update-copy {
     flex-basis: 100%;
+  }
+  .settings-update-row {
+    flex-wrap: wrap;
   }
 }
 .brand-mark {
@@ -253,6 +267,9 @@ h3 {
   padding: 0;
   margin: 0;
 }
+.settings-control [data-slot="input-group-addon"][data-align="inline-end"] {
+  margin-inline-end: 0;
+}
 .settings-section {
   padding: 22px 0 8px;
   border-bottom: 1px solid var(--border);
@@ -334,6 +351,9 @@ h3 {
 }
 .settings-loading {
   display: flex;
+  flex-wrap: wrap;
+  overflow-y: auto;
+  min-height: 0;
   gap: 12px;
   align-items: center;
   padding: 24px 0;
@@ -1384,10 +1404,6 @@ h3 {
   }
   .app-header [data-slot="tabs-trigger"] {
     min-height: 38px;
-  }
-  .app-header .app-updates-button {
-    grid-column: 2;
-    grid-row: 1;
   }
   .settings-heading {
     padding: 18px 0 14px;
