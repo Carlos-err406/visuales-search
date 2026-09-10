@@ -62,9 +62,9 @@ Implemented [011: Conditional save/discard footer and header Restore defaults](.
 
 ## Later
 
-| Bucket | Feature                                                                                         | Status              | Notes                                                                                                        |
-| ------ | ----------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md) | Requested; deferred | Monitor shared transfers outside the main window. Platform coverage and closing-window behavior need triage. |
+| Bucket | Feature                                                                                         | Status                   | Notes                                                                                                                          |
+| ------ | ----------------------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md) | Planned; not implemented | All desktop platforms, status-only; preserve close/quit behavior. [Plan](plans/2026-09-10-001-feat-menu-bar-progress-plan.md). |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 
@@ -96,3 +96,4 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 - 2026-09-10: Implement item 2.4. Initial and cleared Search show the full parsed library with collapsed roots, session reuse of the shared cache, virtualized large branches, and explicit loading/error/retry states. Clearing a query clears its selections; late search responses cannot overwrite library browsing. Settings action layout and menu bar progress stay deferred.
 - 2026-09-10: Prepare v2.0.7 with Search browsing and cached previews. Checkboxes share a fixed gutter; only names/icons are indented. Equivalent URL encodings merge into one row, known children use a quiet refresh spinner, and expanding/collapsing across the virtualization threshold preserves scroll position. Settings action layout and menu bar progress remain deferred.
 - 2026-09-10: Implement Settings action layout on user request. Save/Discard appear only while dirty; Restore defaults moves to the right of the header. Preserve explicit saves and immediate theme persistence. Menu bar progress is the only remaining deferred feature.
+- 2026-09-10: User requested pushing Settings without a release and planning menu bar progress. Approved all desktop platforms with status-only integration and unchanged close/quit behavior. Written plan covers shared Node status, native polling and menu rendering, Downloads navigation, and platform verification; implementation has not started.
