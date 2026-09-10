@@ -121,7 +121,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
-          args: --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json --config src-tauri/tauri.release.conf.json
+          args: --verbose --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json --config src-tauri/tauri.release.conf.json
           includeUpdaterJson: false
       - name: Verify macOS bundle signature and Node runtime
         if: runner.os == 'macOS'
