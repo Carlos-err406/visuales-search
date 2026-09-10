@@ -264,8 +264,18 @@ try {
   const connections = page.getByLabel("Connections per file", { exact: true });
   assert.equal(await connections.inputValue(), "3");
   assert.equal(await connections.getAttribute("readonly"), null);
-  assert.equal(await saveSettings.isDisabled(), true);
+  const settingsFooter = page.locator(".settings-footer");
+  const restoreDefaults = page.getByRole("button", { name: "Restore defaults", exact: true });
+  assert.equal(await settingsFooter.count(), 0, "clean settings have no footer");
+  assert.equal(await saveSettings.count(), 0);
+  assert.equal(await page.locator(".settings-heading").getByRole("button", { name: "Restore defaults" }).count(), 1);
+  await restoreDefaults.click();
+  assert.equal(await settingsFooter.count(), 0, "restoring unchanged defaults stays clean");
   await page.screenshot({ path: `${screenshots}/settings-default.png` });
+  await concurrentFiles.fill("2");
+  assert.equal(await settingsFooter.count(), 1, "editing shows actions");
+  await concurrentFiles.fill("5");
+  assert.equal(await settingsFooter.count(), 0, "reverting a field hides actions");
   await concurrentFiles.fill("2");
   await connections.fill("9");
   assert.equal(await saveSettings.isDisabled(), true);
@@ -292,6 +302,7 @@ try {
   });
   await saveSettings.click();
   await page.getByText("Saved", { exact: true }).waitFor();
+  assert.equal(await settingsFooter.count(), 0, "successful save hides actions");
   await page.reload();
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#settings-concurrent")?.value === "2");
@@ -313,11 +324,22 @@ try {
     );
     const bounds = await saveSettings.boundingBox();
     assert.ok(bounds.y + bounds.height <= viewport.height, "save action stays reachable");
+    const restoreBounds = await restoreDefaults.boundingBox();
+    const headingBounds = await page.locator(".settings-heading").boundingBox();
+    assert.ok(
+      Math.abs(restoreBounds.x + restoreBounds.width - headingBounds.x - headingBounds.width) < 1,
+      "restore defaults is right-aligned in the header"
+    );
+    assert.ok(
+      restoreBounds.y >= 0 && restoreBounds.y + restoreBounds.height <= viewport.height,
+      "restore defaults stays reachable"
+    );
   }
   await page.setViewportSize({ width: 1240, height: 820 });
   await page.getByRole("button", { name: "Discard", exact: true }).click();
   assert.equal(await settingsOutput.inputValue(), "/Users/carlos/Downloads/Chosen");
-  await page.getByRole("button", { name: "Restore defaults", exact: true }).click();
+  assert.equal(await settingsFooter.count(), 0, "discard hides actions");
+  await restoreDefaults.click();
   assert.equal(await concurrentFiles.inputValue(), "5");
   assert.equal(await connections.inputValue(), "3");
   assert.equal(await saveSettings.isEnabled(), true, "reset requires explicit save");
@@ -1068,6 +1090,29 @@ try {
   await testAppearance({ page, screenshots, checkLayout });
   await testSearchBrowsing({ page, screenshots, checkLayout });
   await testLibraryIndex({ page, screenshots, checkLayout });
+  const preview = await browser.newPage({ viewport: { width: 1240, height: 820 } });
+  try {
+    await preview.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420");
+    await preview.getByRole("tab", { name: "Settings", exact: true }).click();
+    await preview.getByText("Transfer settings are read-only in browser preview.", { exact: true }).waitFor();
+    for (const label of ["Default output folder", "Concurrent files", "Connections per file", "Retries per file"]) {
+      assert.equal(
+        await preview.getByLabel(label, { exact: true }).isDisabled(),
+        true,
+        `${label} needs native storage`
+      );
+    }
+    assert.equal(await preview.getByRole("button", { name: "Restore defaults", exact: true }).isDisabled(), true);
+    assert.equal(
+      await preview.getByRole("button", { name: "Choose default output folder", exact: true }).isDisabled(),
+      true
+    );
+    assert.equal(await preview.locator(".settings-footer").count(), 0, "browser preview cannot create unsavable edits");
+    assert.equal(await preview.getByRole("combobox", { name: "Theme", exact: true }).isEnabled(), true);
+    await preview.screenshot({ path: `${screenshots}/settings-browser-preview.png` });
+  } finally {
+    await preview.close();
+  }
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {

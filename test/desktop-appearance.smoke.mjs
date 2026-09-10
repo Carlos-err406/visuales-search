@@ -69,7 +69,7 @@ export async function testAppearance({ page, screenshots, checkLayout }) {
   assert.equal(await isDark(), true);
   await checkContrast();
   assert.equal(await page.evaluate((key) => window.localStorage.getItem(key), storageKey), "dark");
-  assert.equal(await page.getByRole("button", { name: "Save changes", exact: true }).isDisabled(), true);
+  assert.equal(await page.locator(".settings-footer").count(), 0, "immediate theme changes leave settings clean");
   assert.equal(await page.evaluate(() => window.localStorage.getItem("test-settings")), storedDownloads);
   const url = new URL(page.url());
   url.searchParams.set("updates", "current");
