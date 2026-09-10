@@ -128,6 +128,15 @@ jobs:
       - name: Verify macOS bundle signature and Node runtime
         if: runner.os == 'macOS'
         run: node scripts/verify-macos-bundle.mjs
+      - name: Isolate temporary disk images left by packaging retries
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          for image in target/release/bundle/macos/rw.*.dmg; do
+            [ -f "$image" ] || continue
+            echo "Moving incomplete disk image out of the release bundle: $image"
+            mv "$image" "$RUNNER_TEMP/$(basename "$image")"
+          done
       - name: Stage platform artifacts
         run: node scripts/desktop-artifacts.mjs stage ${{ matrix.platform }}
       - name: Verify artifacts against the app's public key
