@@ -43,20 +43,33 @@ Later hides only an available-update notice until the next scheduled check or ap
 
 Implemented [008: Dark mode](../.context/compound-engineering/todos/008-complete-p3-desktop-dark-mode.md) for v2.0.6. Settings > Appearance offers System, Light, and Dark with immediate desktop-only persistence. System follows live OS changes; explicit choices override them. Theme bootstrap avoids a light flash, and native window appearance follows the choice. Search, Downloads, Settings, update notices, menus, and tooltips share the charcoal/teal palette while preserving 1px corners and JetBrains Mono.
 
+## Completed: Search Browser
+
+Included in v2.0.7. Search work is tracked as four completed implementation items:
+
+| Bucket | Feature                                                                                                                  | Behavior                                                                                                                                      |
+| ------ | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.1    | [Finder-style Search tree](../.context/compound-engineering/todos/009-complete-p3-search-tree-layout.md)                 | Collapsible folders, indentation, keyboard navigation, and separate selection. Initial grouping requires no directory fetch.                  |
+| 2.2    | [Directory contents](../.context/compound-engineering/todos/003-complete-p3-search-directory-browsing.md)                | On-demand inline listings, refresh/retry, and shared Node discovery/cache. Search matches and browsed children merge by URL.                  |
+| 2.3    | [Cached image/text previews](../.context/compound-engineering/todos/004-complete-p3-search-file-previews.md)             | Click supported files to preview without starting a transfer. Closing preserves selection and restores focus.                                 |
+| 2.4    | [Empty-search library browsing](../.context/compound-engineering/todos/010-complete-p3-empty-search-library-browsing.md) | Empty Search loads parsed listado.html through the shared cache. Starts collapsed, virtualizes large branches, and clearing resets selection. |
+
+Preview limits: PNG/JPEG/GIF/WebP up to 4 MB, UTF-8 text up to 512 KB. The unified `previews` cache retains content for 24 hours, evicts oldest entries above 32 MB, and supports explicit refresh and CLI cache management. Text is inert; remote HTML/scripts are never executed. Visuales keeps its themes, typography, and 1px corners. CLI download behavior is unchanged.
+
 ## Later
 
-| Feature                                                                                                                   | Status              | Notes                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md)                           | Requested; deferred | Monitor the same shared transfers outside the main window. Platform coverage and behavior after closing the window need separate triage. |
-| [Browse directory contents in Search](../.context/compound-engineering/todos/003-pending-p3-search-directory-browsing.md) | Requested; deferred | Inspect and select individual files while preserving search state.                                                                       |
-| [Click-to-preview images](../.context/compound-engineering/todos/004-pending-p3-search-image-previews.md)                 | Requested; deferred | Open an in-app preview from Search or browsed directories.                                                                               |
+| Bucket | Feature                                                                                         | Status              | Notes                                                                                                        |
+| ------ | ----------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md) | Requested; deferred | Monitor shared transfers outside the main window. Platform coverage and closing-window behavior need triage. |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
+
+Settings follow-up: [Conditional save/discard footer and header Restore defaults](../.context/compound-engineering/todos/011-pending-p3-settings-action-layout.md). Show the bottom actions only with unsaved changes; right-align Restore defaults in the Settings header. Requested for later, not implemented.
 
 ## Boundaries
 
 - This pass reorganizes the desktop interface; the Node core and shared state remain the source of truth.
-- Directory browsing from option 2 and detailed per-file drill-down from option 3 are not included in the proposed pass.
+- Search tree presentation (2.1), directory listings (2.2), cached previews (2.3), and empty-search library browsing (2.4) are included in v2.0.7.
 - Menu bar progress does not implicitly authorize close-to-tray, autostart, notifications, or changing worker lifetime.
 - Android remains a separate architecture decision.
 
@@ -73,3 +86,10 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 - 2026-09-09: Finish updater UX after Settings. Move routine checks into Settings, keep actionable update states global, and remind after Later on the next six-hour check or launch. Retain Download then Restart with native verification and idle-transfer safeguards.
 - 2026-09-09: Add desktop dark mode to the Later bucket. Theme preferences and native window appearance remain open for triage.
 - 2026-09-09: User requested shipping dark mode. Implement System (default), Light, and Dark with desktop-only persistence and native window synchronization; leave CLI and transfer settings unchanged.
+- 2026-09-10: Split Search work into 2.1 Finder-style collapsible/indented tree presentation, 2.2 actual directory listings, and 2.3 cached image and text previews (formerly item 3). Keep menu bar progress as item 1. No application changes in this bucket update.
+- 2026-09-10: User approved beginning the Search work. Implemented 2.1-2.3 with shared-core discovery/previews, thin native transport, persisted bounded preview caching, and full engine/native/UI checks. Menu bar progress remains deferred; no release requested in this pass.
+- 2026-09-10: Add empty-search library browsing as deferred item 2.4. Fix preview tooltip layering and reserve folder refresh controls for listings already loaded; disclosure arrows load unopened folders.
+- 2026-09-10: Add Settings action layout to the bucket. Search folder selection now cascades through known descendants and newly loaded contents; partially selected branches show an indeterminate checkbox. Excluding a child removes whole-folder ancestor targets so it remains excluded from downloads.
+- 2026-09-10: Remove Search tree chevrons; clicking folder rows toggles expansion while checkboxes select. Expanded folders use open-folder icons. User explicitly dropped folder sizes; no size calculations or extra scans are included.
+- 2026-09-10: Implement item 2.4. Initial and cleared Search show the full parsed library with collapsed roots, session reuse of the shared cache, virtualized large branches, and explicit loading/error/retry states. Clearing a query clears its selections; late search responses cannot overwrite library browsing. Settings action layout and menu bar progress stay deferred.
+- 2026-09-10: Prepare v2.0.7 with Search browsing and cached previews. Checkboxes share a fixed gutter; only names/icons are indented. Equivalent URL encodings merge into one row, known children use a quiet refresh spinner, and expanding/collapsing across the virtualization threshold preserves scroll position. Settings action layout and menu bar progress remain deferred.

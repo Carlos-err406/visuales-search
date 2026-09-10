@@ -229,7 +229,11 @@ impl Bridge {
                 .map_err(|_| "Node engine disconnected".to_string())?
         };
         // Searches can take minutes on the upstream Apache server.
-        let timeout = if method == "search" { 300 } else { 30 };
+        let timeout = if method == "search" || method.starts_with("library.") {
+            300
+        } else {
+            30
+        };
         let result = tokio::time::timeout(Duration::from_secs(timeout), result)
             .await
             .unwrap_or_else(|_| Err("Node engine request timed out".to_string()));

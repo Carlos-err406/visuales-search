@@ -31,7 +31,7 @@ function TooltipContent({
         side={side}
         sideOffset={sideOffset}
         collisionPadding={10}
-        className="isolate z-50"
+        className="tooltip-positioner isolate"
       >
         <TooltipPrimitive.Popup
           data-slot="tooltip-content"

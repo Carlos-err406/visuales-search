@@ -23,9 +23,7 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
-  File,
   FolderOutput,
-  Folder,
   FolderOpen,
   ListPlus,
   Play,
@@ -53,6 +51,8 @@ import { AppUpdatesPanel } from "./app-updates";
 import { useDesktopSettings } from "./use-desktop-settings";
 import { SettingsView } from "./settings-view";
 import { useAppearance } from "./use-appearance";
+import { SearchTree, useSearchBrowser } from "./search-tree";
+import { distinctDownloadUrls, treeSelectionStates } from "@visuales/core/search-tree";
 import appIcon from "../app-icon.svg?no-inline";
 
 type View = "search" | "downloads" | "settings";
@@ -238,7 +238,13 @@ function App() {
   const [query, setQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
+  const searchBrowser = useSearchBrowser(results, searchedQuery !== "");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const selectionStates = useMemo(
+    () => treeSelectionStates(searchBrowser.tree, selected),
+    [searchBrowser.tree, selected]
+  );
+  const selectedCount = searchBrowser.entries.filter((entry) => selectionStates.get(entry.encodedUrl) === true).length;
   const [output, setOutput] = useState("~/Downloads/Visuales");
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState<"download" | "queue" | null>(null);
@@ -257,17 +263,35 @@ function App() {
   const outputEdited = useRef(false);
   const starting = useRef(false);
   const searchingRef = useRef(false);
-  const anchor = useRef<number | null>(null);
+  const searchRequest = useRef(0);
+  const libraryIndex = useRef<Promise<SearchResult[]> | null>(null);
+  const lastRequest = useRef("");
   const searchInput = useRef<HTMLInputElement>(null);
   const searchList = useRef<HTMLDivElement>(null);
   const downloadsList = useRef<HTMLDivElement>(null);
   const scrollPositions = useRef({ search: 0, downloads: 0 });
 
   useEffect(() => {
+    void loadSearch("");
+    return () => {
+      searchRequest.current++;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!message) return;
     const timer = window.setTimeout(() => setMessage(""), 4000);
     return () => window.clearTimeout(timer);
   }, [message]);
+
+  useEffect(() => {
+    const available = new Set(searchBrowser.entries.map((entry) => entry.encodedUrl));
+    setSelected((current) =>
+      [...current].every((url) => available.has(url))
+        ? current
+        : new Set([...current].filter((url) => available.has(url)))
+    );
+  }, [searchBrowser.entries]);
 
   useEffect(() => {
     if (settings.snapshot && !outputEdited.current) setOutput(settings.snapshot.settings.output);
@@ -312,47 +336,70 @@ function App() {
   async function runSearch(event: React.FormEvent) {
     event.preventDefault();
     if (!query.trim() || searchingRef.current || starting.current) return;
+    await loadSearch(query);
+  }
+
+  async function loadSearch(value: string) {
+    const request = ++searchRequest.current;
+    const terms = value.trim() ? value.trim().split(/\s+/) : [];
+    lastRequest.current = terms.join(" ");
     searchingRef.current = true;
     setSearching(true);
     setSearchError("");
     setMessage("");
-    const terms = query.trim().split(/\s+/);
+    if (!terms.length) {
+      searchBrowser.reset();
+      setResults([]);
+      setSelected(new Set());
+      setSearchedQuery("");
+    }
     try {
       if (!isDesktop()) throw new Error("Library connection unavailable. Open Visuales to search.");
-      const response = await invoke<{ results: SearchResult[] }>("search_content", { terms, noCache: false });
-      setResults(response.results);
+      let response: SearchResult[];
+      if (!terms.length) {
+        // Share the initial request (including StrictMode's remount) and reuse the
+        // parsed index when clearing a query, even if the server goes offline.
+        const pending =
+          libraryIndex.current ??
+          invoke<{ results: SearchResult[] }>("search_content", { terms: [], noCache: false }).then(
+            (result) => result.results
+          );
+        libraryIndex.current = pending;
+        try {
+          response = await pending;
+        } catch (error) {
+          if (libraryIndex.current === pending) libraryIndex.current = null;
+          throw error;
+        }
+      } else {
+        response = (await invoke<{ results: SearchResult[] }>("search_content", { terms, noCache: false })).results;
+      }
+      if (searchRequest.current !== request) return;
+      searchBrowser.reset();
+      setResults(response);
       setSelected(new Set());
       setSearchedQuery(terms.join(" "));
       setSelectionError("");
-      anchor.current = null;
       scrollPositions.current.search = 0;
       if (searchList.current) searchList.current.scrollTop = 0;
     } catch (error) {
-      setSearchError(String(error));
+      if (searchRequest.current === request) setSearchError(String(error));
     } finally {
-      setSearching(false);
-      searchingRef.current = false;
+      if (searchRequest.current === request) {
+        setSearching(false);
+        searchingRef.current = false;
+      }
     }
   }
 
-  function toggleResult(index: number, checked: boolean, range: boolean) {
-    const first = range && anchor.current !== null ? Math.min(anchor.current, index) : index;
-    const last = range && anchor.current !== null ? Math.max(anchor.current, index) : index;
-    setSelected((current) => {
-      const next = new Set(current);
-      for (let i = first; i <= last; i++) {
-        if (checked) next.add(results[i].encodedUrl);
-        else next.delete(results[i].encodedUrl);
-      }
-      return next;
-    });
-    anchor.current = index;
+  function changeQuery(value: string) {
+    setQuery(value);
+    if (!value.trim() && query.trim()) void loadSearch("");
   }
 
   function clearSelection() {
     setSelected(new Set());
     setSelectionError("");
-    anchor.current = null;
     searchList.current?.querySelector<HTMLElement>('[role="checkbox"]')?.focus({ preventScroll: true });
   }
 
@@ -378,7 +425,7 @@ function App() {
     setMessage("");
     try {
       await invoke("start_download", {
-        urls: [...selected],
+        urls: distinctDownloadUrls(selected),
         output: outputEdited.current ? output.trim() : undefined,
         queue,
       });
@@ -504,7 +551,8 @@ function App() {
               ref={searchInput}
               type="search"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => changeQuery(event.target.value)}
+              disabled={Boolean(submitting)}
               placeholder="Search titles, folders, or files"
               aria-label="Search library"
             />
@@ -512,9 +560,10 @@ function App() {
               {query && (
                 <IconButton
                   label="Clear search"
-                  description="Clear the search text. Current results stay available."
+                  description="Clear the search and selection to browse the full library."
+                  disabled={Boolean(submitting)}
                   onClick={() => {
-                    setQuery("");
+                    changeQuery("");
                     searchInput.current?.focus();
                   }}
                 >
@@ -546,26 +595,39 @@ function App() {
           <Alert variant="destructive" className="inline-error">
             <AlertCircle size={15} />
             <AlertDescription>{searchError}</AlertDescription>
+            <Button
+              variant="link"
+              disabled={searching || Boolean(submitting)}
+              onClick={() => void loadSearch(lastRequest.current)}
+            >
+              Retry
+            </Button>
           </Alert>
         )}
-        {searchedQuery !== null && (
+        {searchedQuery !== null && results.length > 0 && (
           <div className="results-toolbar">
             <Label className="select-all">
               <SelectAll
-                count={selected.size}
-                total={results.length}
+                count={selectedCount}
+                total={searchBrowser.entries.length}
                 disabled={searching || Boolean(submitting)}
                 onChange={() => {
                   setSelected(
-                    selected.size === results.length ? new Set() : new Set(results.map((result) => result.encodedUrl))
+                    selectedCount === searchBrowser.entries.length
+                      ? new Set()
+                      : new Set(searchBrowser.entries.map((result) => result.encodedUrl))
                   );
-                  anchor.current = null;
                 }}
               />
-              <span>{results.length} results</span>
+              <span>
+                {results.length} {searchedQuery === "" ? "items" : "results"}
+                {searchBrowser.entries.length > results.length
+                  ? ` · ${searchBrowser.entries.length - results.length} browsed`
+                  : ""}
+              </span>
             </Label>
             <span className="secondary truncate" role="status">
-              {query.trim() !== searchedQuery ? `for "${searchedQuery}"` : ""}
+              {searchedQuery === "" ? "Library" : query.trim() !== searchedQuery ? `for "${searchedQuery}"` : ""}
             </span>
             {message && (
               <Alert className="success-message" role="status">
@@ -582,38 +644,13 @@ function App() {
           aria-busy={searching}
         >
           {results.length > 0 ? (
-            <ul>
-              {results.map((result, index) => (
-                <li key={result.encodedUrl}>
-                  <Label className={`result-row ${selected.has(result.encodedUrl) ? "selected" : ""}`}>
-                    <Checkbox
-                      aria-label={`Select ${result.text || result.encodedUrl}`}
-                      disabled={searching || Boolean(submitting)}
-                      checked={selected.has(result.encodedUrl)}
-                      onCheckedChange={(checked, details) => {
-                        const range = "shiftKey" in details.event && Boolean(details.event.shiftKey);
-                        toggleResult(index, checked, range);
-                      }}
-                    />
-                    <span
-                      className={`file-symbol ${result.isDirectoryLink ? "directory" : ""}`}
-                      title={result.isDirectoryLink ? "Folder" : "File"}
-                    >
-                      <span className="sr-only">{result.isDirectoryLink ? "Folder" : "File"}</span>
-                      {result.isDirectoryLink ? <Folder size={19} /> : <File size={18} />}
-                    </span>
-                    <span className="file-copy">
-                      <span className="file-title" title={result.text || result.encodedUrl}>
-                        {result.text || result.encodedUrl}
-                      </span>
-                      <span className="secondary truncate" title={result.directory}>
-                        {result.directory}
-                      </span>
-                    </span>
-                  </Label>
-                </li>
-              ))}
-            </ul>
+            <SearchTree
+              key={searchedQuery}
+              browser={searchBrowser}
+              selectionStates={selectionStates}
+              setSelected={setSelected}
+              disabled={searching || Boolean(submitting)}
+            />
           ) : (
             <Empty className="empty-state">
               <EmptyHeader>
@@ -622,12 +659,18 @@ function App() {
                 </EmptyMedia>
                 <EmptyTitle>
                   {searching
-                    ? "Searching the library"
-                    : searchedQuery === null
-                      ? "No search results yet"
-                      : "No matching results"}
+                    ? lastRequest.current === ""
+                      ? "Loading library"
+                      : "Searching the library"
+                    : searchError
+                      ? "Library unavailable"
+                      : searchedQuery === ""
+                        ? "Library is empty"
+                        : searchedQuery === null
+                          ? "Loading library"
+                          : "No matching results"}
                 </EmptyTitle>
-                {searchedQuery !== null && !searching && <EmptyDescription>{searchedQuery}</EmptyDescription>}
+                {searchedQuery && !searching && <EmptyDescription>{searchedQuery}</EmptyDescription>}
               </EmptyHeader>
             </Empty>
           )}
@@ -637,7 +680,7 @@ function App() {
           <div className="selection-bar" aria-label="Selected downloads">
             <div className="selection-count">
               <Check size={16} />
-              <span>{selected.size} selected</span>
+              <span>{selectedCount} selected</span>
               <IconButton
                 label="Clear selection"
                 description="Deselect all results without clearing your search."

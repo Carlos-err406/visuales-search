@@ -12,6 +12,15 @@ export async function ensureCacheDirectory(): Promise<void> {
   }
 }
 
+export async function registerPreviewCache(): Promise<void> {
+  await updateCacheEntry("previews", {
+    name: "File Previews",
+    type: "directory",
+    path: "previews",
+    description: "Cached image and text previews (24 hours, up to 32 MB)",
+  });
+}
+
 function writeJsonFileAtomic(filePath: string, data: unknown): void {
   const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(temporaryPath, JSON.stringify(data));
@@ -99,6 +108,7 @@ function calculateDirectorySize(dirPath: string): number {
 
 // Public cache management functions
 export async function listCaches(): Promise<CacheEntry[]> {
+  if (fs.existsSync(path.join(CONFIG.CACHE_DIR, "previews"))) await registerPreviewCache();
   const index = await loadCacheIndex();
 
   // Auto-detect download cache if it exists but isn't indexed

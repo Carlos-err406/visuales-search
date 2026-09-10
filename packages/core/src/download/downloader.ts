@@ -825,23 +825,35 @@ function addDirectoryListingEntry(
   });
 }
 
-export async function getDirectoryListing(url: string): Promise<DirectoryListing> {
+export async function getDirectoryListing(
+  url: string,
+  options: {
+    refresh?: boolean;
+    allowEmptyCache?: boolean;
+    fetcher?: (url: string) => Promise<Response>;
+  } = {}
+): Promise<DirectoryListing> {
   const cached = dirListingCache.get(url);
-  if (cached && (cached.files.length > 0 || cached.dirs.length > 0)) {
+  if (!options.refresh && cached && (options.allowEmptyCache || cached.files.length > 0 || cached.dirs.length > 0)) {
     return cached;
   }
 
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": DOWNLOAD_USER_AGENT,
-    },
-  });
+  const response = await (options.fetcher
+    ? options.fetcher(url)
+    : fetch(url, {
+        headers: {
+          "User-Agent": DOWNLOAD_USER_AGENT,
+        },
+      }));
   if (!response.ok) {
     throw new Error(`Failed to fetch directory listing: ${response.statusText} (${url})`);
   }
 
   const html = await response.text();
   const $ = cheerio.load(html);
+  if (options.allowEmptyCache && (!$("pre, table").length || /URL not available/i.test($("title").text()))) {
+    throw new Error("The library did not return a directory listing");
+  }
   const result: DirectoryListing = { files: [], dirs: [], parserVersion: DIRECTORY_LISTING_PARSER_VERSION };
   const baseUrl = url.endsWith("/") ? url : url + "/";
   const seenUrls = new Set<string>();
@@ -863,7 +875,7 @@ export async function getDirectoryListing(url: string): Promise<DirectoryListing
     addDirectoryListingEntry(href, sizeText, baseUrl, result, seenUrls);
   });
 
-  if (result.files.length > 0 || result.dirs.length > 0) {
+  if (options.allowEmptyCache || result.files.length > 0 || result.dirs.length > 0) {
     dirListingCache.set(url, result);
     await saveDiscoveryCache();
   }

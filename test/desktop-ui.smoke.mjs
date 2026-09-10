@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { testAppearance } from "./desktop-appearance.smoke.mjs";
+import { testSearchBrowsing } from "./desktop-search.smoke.mjs";
+import { testLibraryIndex } from "./desktop-library.smoke.mjs";
+import { testTreeExpansion } from "./desktop-tree-expansion.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -25,6 +28,33 @@ page.on("pageerror", (error) => errors.push(error.message));
 try {
   await page.addInitScript(() => {
     const updateScenario = new URL(window.location.href).searchParams.get("updates");
+    const libraryScenario = new URL(window.location.href).searchParams.get("library");
+    const libraryEntry = (path) => ({
+      text: decodeURIComponent(path.split("/").filter(Boolean).at(-1)),
+      url: `https://visuales.uclv.cu${path}`,
+      encodedUrl: `https://visuales.uclv.cu${path}`,
+      directory: "",
+      isDirectoryLink: true,
+    });
+    const libraryResults =
+      libraryScenario === "scroll"
+        ? [
+            libraryEntry("/Peliculas/"),
+            libraryEntry("/Peliculas/Extranjeras/"),
+            ...Array.from({ length: 127 }, (_, index) => libraryEntry(`/Peliculas/Extranjeras/${1900 + index}/`)),
+            ...Array.from({ length: 230 }, (_, index) =>
+              libraryEntry(`/Peliculas/Extranjeras/2013/Movie%20${String(index).padStart(3, "0")}%20(2013)/`)
+            ),
+          ]
+        : libraryScenario === "empty"
+          ? []
+          : [
+              libraryEntry("/Library/"),
+              libraryEntry("/Library/Albums/"),
+              ...Array.from({ length: libraryScenario === "large" ? 3000 : 1 }, (_, index) =>
+                libraryEntry(`/Library/Albums/Album%20${String(index).padStart(4, "0")}/`)
+              ),
+            ];
     const now = Date.now();
     const statuses = ["running", "queued", "failed", "interrupted", "completed", "running"];
     const names = [
@@ -51,7 +81,18 @@ try {
             ? "app_update_info"
             : updateScenario === "settings-error"
               ? "get_desktop_settings"
-              : "",
+              : libraryScenario === "error"
+                ? "search_content"
+                : "",
+      libraryResults,
+      directoryEntries: {
+        "https://visuales.uclv.cu/Library/": libraryResults.slice(1, 2),
+        "https://visuales.uclv.cu/Library/Albums/": libraryResults.slice(2),
+        "https://visuales.uclv.cu/Peliculas/Extranjeras/2013/": libraryResults
+          .filter((entry) => entry.encodedUrl.includes("/2013/"))
+          .filter((entry) => !entry.encodedUrl.endsWith("/2013/"))
+          .map((entry) => ({ ...entry, encodedUrl: entry.encodedUrl.replaceAll("(", "%28").replaceAll(")", "%29") })),
+      },
       listDelay: 60,
       activeLists: 0,
       updateVersion: updateScenario === "available" ? "1.4.0" : null,
@@ -147,7 +188,38 @@ try {
           window.localStorage.setItem("test-settings", JSON.stringify(state.settings));
           return structuredClone({ settings: state.settings, defaults: state.settingsDefaults });
         }
-        if (command === "search_content") return { results: state.results };
+        if (command === "search_content") {
+          const results = structuredClone(args.terms.length ? state.results : state.libraryResults);
+          if (state.holdSearch && args.terms.length)
+            await new Promise((resolve) => {
+              state.releaseSearch = resolve;
+            });
+          return { results };
+        }
+        if (command === "list_library_directory") {
+          if (state.holdListing)
+            await new Promise((resolve) => {
+              state.releaseListing = resolve;
+            });
+          return structuredClone(state.directoryEntries?.[args.url] ?? []);
+        }
+        if (command === "preview_library_file") {
+          const image = args.url.endsWith(".png");
+          state.previewed ??= [];
+          const cached = state.previewed.includes(args.url) && !args.refresh;
+          state.previewed.push(args.url);
+          return {
+            url: args.url,
+            kind: image ? "image" : "text",
+            mime: image ? "image/png" : "text/plain",
+            content: image
+              ? "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+              : "<script>window.remoteExecuted = true</script>\nPreview text",
+            bytes: 72,
+            cached,
+            fetchedAt: Date.now(),
+          };
+        }
         if (command === "plugin:dialog|open") return "/Users/carlos/Downloads/Chosen";
         if (command === "start_download") return { id: "new-task" };
         if (command === "open_output_folder") return null;
@@ -160,7 +232,9 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
-  await page.getByText("No search results yet").waitFor();
+  await testTreeExpansion({ page, screenshots });
+  await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  await page.getByRole("treeitem", { name: "Library", exact: true }).waitFor();
   await page.waitForFunction(() => document.querySelector(".brand-mark use")?.getBBox().width > 0);
   assert.equal(await page.locator(".brand-mark").evaluate((el) => window.getComputedStyle(el).borderRadius), "1px");
   const favicon = await page.locator('link[rel="icon"]').getAttribute("href");
@@ -172,13 +246,13 @@ try {
   await page.keyboard.press("Enter");
   assert.equal(
     await page.evaluate(() => window.testBridge.calls.filter((call) => call.command === "search_content").length),
-    0
+    1
   );
   await page.screenshot({ path: `${screenshots}/tooltip-disabled-search.png` });
   await page.keyboard.press("Escape");
   await page.getByRole("tooltip").waitFor({ state: "detached" });
   assert.equal(await page.getByText("Connected", { exact: true }).count(), 0);
-  assert.equal(await page.locator(".results-toolbar").count(), 0, "no empty selection toolbar");
+  assert.equal(await page.locator(".results-toolbar").count(), 1, "library selection toolbar");
   await page.screenshot({ path: `${screenshots}/default-empty.png` });
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.getByLabel("Default output folder", { exact: true }).waitFor();
@@ -250,7 +324,7 @@ try {
   await saveSettings.click();
   await page.getByText("Saved", { exact: true }).waitFor();
   await page.reload();
-  await page.getByText("No search results yet").waitFor();
+  await page.getByRole("treeitem", { name: "Library", exact: true }).waitFor();
   const search = page.getByRole("searchbox", { name: "Search library", exact: true });
   await search.fill("planet earth");
   await search.focus();
@@ -262,6 +336,7 @@ try {
   await search.fill("planet earth");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "Searching", exact: true }).isDisabled(), true);
+  await page.waitForFunction(() => document.querySelector(".results-list")?.getAttribute("aria-busy") === "false");
   await page.locator(".result-row").first().waitFor();
   assert.equal(await page.locator(".result-row").count(), 45);
   const checkboxes = page.locator('.result-row [role="checkbox"]');
@@ -991,6 +1066,8 @@ try {
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.getByLabel("Concurrent files", { exact: true }).waitFor();
   await testAppearance({ page, screenshots, checkLayout });
+  await testSearchBrowsing({ page, screenshots, checkLayout });
+  await testLibraryIndex({ page, screenshots, checkLayout });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {

@@ -175,8 +175,9 @@ export async function testAppearance({ page, screenshots, checkLayout }) {
   await page.getByRole("tab", { name: "Search", exact: true }).click();
   await page.getByRole("searchbox").fill("Planet Earth");
   await page.getByRole("button", { name: "Search", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".results-list")?.getAttribute("aria-busy") === "false");
   await page.locator(".result-row").first().waitFor();
-  await page.locator(".result-row").first().click();
+  await page.locator('.result-row [role="checkbox"]').first().click();
   const checked = page.locator('.result-row.selected [data-slot="checkbox"]');
   assert.equal(await checked.evaluate((el) => window.getComputedStyle(el).color), "rgb(16, 38, 40)");
   for (const viewport of [
