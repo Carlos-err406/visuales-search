@@ -27,9 +27,7 @@ Effort: medium for status-only integration; larger if background lifecycle chang
 
 ## Recommended Action
 
-Defer. Keep this in the [Later bucket](../../../docs/desktop-roadmap.md#later). Do not start it or make it a dependency of the Search Workspace refactor.
-
-Open questions for later: macOS menu bar first or Windows/Linux tray support too; count/speed/percentage presentation; click behavior; treatment of unknown totals; close versus quit semantics.
+Planning requested. The user approved all desktop platforms, status-only while the app runs, with no close/quit lifecycle change. Review the [implementation plan](../../../docs/plans/2026-09-10-001-feat-menu-bar-progress-plan.md) before coding. Presentation details remain proposed; implementation has not started.
 
 ## Acceptance Criteria
 
@@ -44,3 +42,7 @@ Open questions for later: macOS menu bar first or Windows/Linux tray support too
 ### 2026-09-08 - Added to Later
 
 Captured the user's menu bar progress request. Priority p3 indicates deferred work, not a judgment against its value. Detailed scope is intentionally unapproved.
+
+### 2026-09-10 - Cross-Platform Plan
+
+User selected macOS, Windows, and Linux with status-only integration. Planned native menus backed by a shared-core summary and single-flight native refresh, honest unknown/stale states, and Open Downloads navigation. No close-to-tray, background worker lifetime changes, implementation, or release authorized. Platform-specific API limitations and native verification requirements are documented in the plan.

@@ -300,11 +300,14 @@ h3 {
 }
 .settings-heading {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
   gap: 14px;
   padding: 24px 0 20px;
   border-bottom: 1px solid var(--border);
+}
+.settings-restore {
+  margin-left: auto;
 }
 .settings-scroll {
   flex: 1;
@@ -1680,7 +1683,7 @@ h3 {
     flex-basis: 100%;
     justify-content: flex-end;
   }
-  .settings-save-status {
+  .settings-footer .settings-save-status {
     margin-left: auto;
   }
 }

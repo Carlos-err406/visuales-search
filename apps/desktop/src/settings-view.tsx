@@ -35,6 +35,7 @@ export function SettingsView({
   appearance: AppearanceController;
 }) {
   const { snapshot, loading, error, saving, save, reload } = controller;
+  const desktop = isDesktop();
   const [draft, setDraft] = useState<Draft>(() => toDraft({ output: "", ...downloadDefaults }));
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -90,7 +91,7 @@ export function SettingsView({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!dirty || Object.keys(errors).length || saving || picking) return;
+    if (!desktop || !dirty || Object.keys(errors).length || saving || picking) return;
     setSaveError("");
     try {
       await save({
@@ -134,10 +135,36 @@ export function SettingsView({
     <form className="settings-form" onSubmit={(event) => void submit(event)} noValidate>
       <div className="settings-heading">
         <h2>Settings</h2>
+        <span className="settings-save-status" role="status">
+          {saved && (
+            <>
+              <Check size={14} /> Saved
+            </>
+          )}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          className="settings-restore"
+          disabled={!desktop || saving || picking}
+          onClick={() => {
+            setDraft(toDraft(snapshot.defaults));
+            setSaveError("");
+            setSaved(false);
+          }}
+        >
+          <RotateCcw size={15} /> Restore defaults
+        </Button>
       </div>
       <div className="settings-scroll">
         <AppearanceSettings controller={appearance} />
-        <fieldset disabled={saving || picking} className="settings-fields">
+        {!desktop && (
+          <Alert className="settings-save-error">
+            <Info />
+            <AlertDescription>Transfer settings are read-only in browser preview.</AlertDescription>
+          </Alert>
+        )}
+        <fieldset disabled={!desktop || saving || picking} className="settings-fields">
           <section className="settings-section" aria-labelledby="destination-heading">
             <h3 id="destination-heading">Destination</h3>
             <div className="settings-row settings-output-row">
@@ -154,8 +181,12 @@ export function SettingsView({
                   <InputGroupAddon align="inline-end">
                     <IconButton
                       label="Choose default output folder"
-                      disabled={saving || picking}
-                      disabledReason="Wait for the current settings operation to finish."
+                      disabled={!desktop || saving || picking}
+                      disabledReason={
+                        desktop
+                          ? "Wait for the current settings operation to finish."
+                          : "Folder selection requires the desktop app."
+                      }
                       description="Choose the parent folder for new desktop downloads."
                       onClick={() => void chooseFolder()}
                     >
@@ -257,53 +288,30 @@ export function SettingsView({
           </Alert>
         )}
       </div>
-      <footer className="settings-footer">
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={saving || picking}
-          onClick={() => {
-            setDraft(toDraft(snapshot.defaults));
-            setSaveError("");
-            setSaved(false);
-          }}
-        >
-          <RotateCcw size={15} /> Restore defaults
-        </Button>
-        <span className="settings-save-status" role="status">
-          {saving ? (
-            "Saving..."
-          ) : saved ? (
-            <>
-              <Check size={14} /> Saved
-            </>
-          ) : dirty ? (
-            "Unsaved changes"
-          ) : (
-            ""
-          )}
-        </span>
-        <div className="settings-actions">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!dirty || saving || picking}
-            onClick={() => {
-              setDraft(toDraft(snapshot.settings));
-              setSaveError("");
-              setSaved(false);
-            }}
-          >
-            <X size={15} /> Discard
-          </Button>
-          <Button
-            type="submit"
-            disabled={!dirty || saving || picking || Boolean(Object.keys(errors).length) || !isDesktop()}
-          >
-            {saving ? <Spinner /> : <Save size={15} />} Save changes
-          </Button>
-        </div>
-      </footer>
+      {desktop && dirty && (
+        <footer className="settings-footer">
+          <span className="settings-save-status" role="status">
+            {saving ? "Saving..." : "Unsaved changes"}
+          </span>
+          <div className="settings-actions">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!dirty || saving || picking}
+              onClick={() => {
+                setDraft(toDraft(snapshot.settings));
+                setSaveError("");
+                setSaved(false);
+              }}
+            >
+              <X size={15} /> Discard
+            </Button>
+            <Button type="submit" disabled={!dirty || saving || picking || Boolean(Object.keys(errors).length)}>
+              {saving ? <Spinner /> : <Save size={15} />} Save changes
+            </Button>
+          </div>
+        </footer>
+      )}
     </form>
   );
 }
