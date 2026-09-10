@@ -28,6 +28,34 @@ async fn search_content(
 }
 
 #[tauri::command]
+async fn list_library_directory(
+    app: tauri::AppHandle,
+    url: String,
+    refresh: bool,
+) -> Result<Value, String> {
+    sidecar::request(
+        &app,
+        "library.list",
+        json!({ "url": url, "refresh": refresh }),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn preview_library_file(
+    app: tauri::AppHandle,
+    url: String,
+    refresh: bool,
+) -> Result<Value, String> {
+    sidecar::request(
+        &app,
+        "library.preview",
+        json!({ "url": url, "refresh": refresh }),
+    )
+    .await
+}
+
+#[tauri::command]
 async fn list_download_tasks(app: tauri::AppHandle) -> Result<Value, String> {
     sidecar::request(&app, "tasks.list", json!({})).await
 }
@@ -96,6 +124,8 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             search_content,
+            list_library_directory,
+            preview_library_file,
             default_output_dir,
             get_desktop_settings,
             save_desktop_settings,

@@ -7,6 +7,7 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import { FILE_BODY, startTestServer } from "./helpers/test-server.mjs";
 
 let home, rpc, server, slowServer, slowUrl;
@@ -161,6 +162,42 @@ after(async () => {
 });
 
 describe("packaged Node sidecar", () => {
+  it("serves cached directory listings and file previews through the packaged RPC adapter", async () => {
+    const root = path.join(home, ".visuales-cli-cache");
+    await fs.mkdir(path.join(root, "previews"), { recursive: true });
+    const url = "https://visuales.uclv.cu/RpcFixtures/readme.txt";
+    await fs.writeFile(
+      path.join(root, "discovery.json"),
+      JSON.stringify({
+        "https://visuales.uclv.cu/RpcFixtures/": {
+          files: [{ url, size: 42, exact: true }],
+          dirs: [],
+          parserVersion: 4,
+        },
+      })
+    );
+    const preview = {
+      url,
+      kind: "text",
+      mime: "text/plain",
+      content: "Cached preview",
+      bytes: 14,
+      fetchedAt: Date.now(),
+      cached: false,
+    };
+    const name = createHash("sha256").update(url).digest("hex") + ".json";
+    await fs.writeFile(path.join(root, "previews", name), JSON.stringify(preview));
+    const entries = await rpc.request("library.list", { url: "https://visuales.uclv.cu/RpcFixtures/" });
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].encodedUrl, url);
+    assert.deepEqual(await rpc.request("library.preview", { url }), { ...preview, cached: true });
+    await assert.rejects(rpc.request("library.preview", { url: "file:///etc/passwd" }), /Only Visuales/);
+    await assert.rejects(rpc.request("library.list", { url: "https://example.com/" }), /Only Visuales/);
+    const registry = JSON.parse(await fs.readFile(path.join(root, "index.json"), "utf8"));
+    assert.ok(registry.entries.some((entry) => entry.id === "previews"));
+    assert.deepEqual(await rpc.request("tasks.list"), [], "browsing never creates a transfer");
+  });
+
   it("uses saved connection counts for real parallel downloads in a packaged worker", async () => {
     const initial = await rpc.request("settings.get");
     const body = Buffer.concat(Array.from({ length: 16 }, () => FILE_BODY));
@@ -389,10 +426,17 @@ describe("packaged Node sidecar", () => {
       path.join(cache, "list.json"),
       JSON.stringify({
         timestamp: Date.now(),
-        html: '<a href="https://visuales.uclv.cu/Series/Example/">Example</a>',
+        html: '<a href="https://visuales.uclv.cu/Series/Example/">Example</a><a href="https://visuales.uclv.cu/Music/Other/">Other</a>',
       })
     );
     const result = await rpc.request("search", { terms: ["example"] });
+    const library = await rpc.request("search", { terms: [] });
+    assert.equal(library.results.length, 2, "an empty query returns even entries that did not match");
+    assert.equal(library.totalResults, library.results.length);
+    assert.ok(library.results.every((entry) => entry.downloadId));
+    await assert.rejects(rpc.request("search", { terms: [""] }), /nonempty string/);
+    await assert.rejects(rpc.request("search", { terms: "" }), /array/);
+    await assert.rejects(rpc.request("download.start", { urls: [] }), /nonempty array/);
     assert.equal(result.totalResults, 1);
     assert.ok(result.results[0].downloadId);
     const aliases = JSON.parse(await fs.readFile(path.join(cache, "search-aliases.json"), "utf8"));

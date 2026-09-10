@@ -22,6 +22,7 @@ import {
 import { createDownloadTargets } from "@visuales/core/download/targets";
 import { downloadDefaults } from "@visuales/core/download/defaults";
 import { loadDesktopSettings, saveDesktopSettings, resolveDesktopOutput } from "@visuales/core/desktop-settings";
+import { listLibraryDirectory, previewLibraryFile } from "@visuales/core/library";
 
 const PROTOCOL_VERSION = 1;
 setLogger({ log: (...values) => console.error(...values), error: (...values) => console.error(...values) });
@@ -153,7 +154,7 @@ async function runServer() {
       case "hello":
         return { protocolVersion: PROTOCOL_VERSION, runtime: process.version };
       case "search": {
-        const terms = strings(params.terms, "terms");
+        const terms = strings(params.terms, "terms", true);
         const { results, totalResults } = await searchContent(terms, { noCache: params.noCache === true });
         return { results, totalResults };
       }
@@ -161,6 +162,10 @@ async function runServer() {
         return loadDesktopSettings(
           params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput)
         );
+      case "library.list":
+        return listLibraryDirectory(string(params.url, "url"), params.refresh === true);
+      case "library.preview":
+        return previewLibraryFile(string(params.url, "url"), params.refresh === true);
       case "settings.save":
         return saveDesktopSettings(
           params.settings,
@@ -244,7 +249,7 @@ async function runServer() {
       const params = request.params ?? {};
       if (typeof params !== "object" || params === null || Array.isArray(params)) throw new Error("Invalid params");
       if (shuttingDown) throw new Error("Sidecar is shutting down");
-      const readOnly = ["hello", "search", "tasks.list"].includes(request.method);
+      const readOnly = ["hello", "search", "tasks.list", "library.list", "library.preview"].includes(request.method);
       const result = readOnly
         ? dispatch(request.method, params)
         : mutations.then(() => dispatch(request.method, params));
@@ -278,7 +283,8 @@ function string(value: unknown, name: string): string {
   return value;
 }
 
-function strings(value: unknown, name: string): string[] {
-  if (!Array.isArray(value) || value.length === 0) throw new Error(`${name} must be a nonempty array`);
+function strings(value: unknown, name: string, allowEmpty = false): string[] {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0))
+    throw new Error(`${name} must be ${allowEmpty ? "an array" : "a nonempty array"}`);
   return [...new Set(value.map((entry) => string(entry, name)))];
 }
