@@ -122,6 +122,8 @@ jobs:
         with:
           projectPath: apps/desktop
           args: --verbose --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json --config src-tauri/tauri.release.conf.json
+          # hdiutil can transiently fail with "Resource busy" on hosted macOS runners.
+          retryAttempts: ${{ runner.os == 'macOS' && 3 || 0 }}
           includeUpdaterJson: false
       - name: Verify macOS bundle signature and Node runtime
         if: runner.os == 'macOS'
