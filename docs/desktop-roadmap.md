@@ -58,7 +58,7 @@ Preview limits: PNG/JPEG/GIF/WebP up to 4 MB, UTF-8 text up to 512 KB. The unifi
 
 ## Completed: Settings Action Layout
 
-Implemented [011: Conditional save/discard footer and header Restore defaults](../.context/compound-engineering/todos/011-complete-p3-settings-action-layout.md). The bottom actions appear only with unsaved changes; Restore defaults is right-aligned in the Settings header and still requires an explicit save. The brief Saved confirmation remains visible in the header. Appearance continues to persist immediately without showing the footer. Not released yet.
+Included in v2.0.8: [011: Conditional save/discard footer and header Restore defaults](../.context/compound-engineering/todos/011-complete-p3-settings-action-layout.md). The bottom actions appear only with unsaved changes; Restore defaults is right-aligned in the Settings header and still requires an explicit save. The brief Saved confirmation remains visible in the header. Appearance continues to persist immediately without showing the footer. Browser previews clearly mark transfer settings read-only and cannot create unsavable drafts.
 
 ## Later
 
