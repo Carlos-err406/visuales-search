@@ -10,6 +10,7 @@ import { testTreeExpansion } from "./desktop-tree-expansion.smoke.mjs";
 import { testSearchStatuses } from "./desktop-search-status.smoke.mjs";
 import { testSettingsExclusions } from "./desktop-settings-exclusions.smoke.mjs";
 import { testSettingsHelp } from "./desktop-help.smoke.mjs";
+import { testTrayPopup } from "./desktop-tray.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -69,6 +70,7 @@ try {
       "Discovery",
     ];
     const state = {
+      navigation: new URL(window.location.href).searchParams.get("downloadTask"),
       settings: JSON.parse(window.localStorage.getItem("test-settings") || "null") || {
         output: "/Users/carlos/Downloads/Visuales",
         concurrent: 5,
@@ -156,6 +158,11 @@ try {
         await new Promise((resolve) => setTimeout(resolve, command === "search_content" ? 300 : 60));
         if (state.fail === command) throw new Error(`Test failure: ${command}`);
         if (command.startsWith("plugin:event|")) return 1;
+        if (command === "take_download_navigation") {
+          const pending = state.navigation;
+          state.navigation = null;
+          return pending;
+        }
         if (command === "plugin:app|set_app_theme") {
           if (state.slowTheme) await new Promise((resolve) => setTimeout(resolve, args.theme === "light" ? 400 : 20));
           state.nativeTheme = args.theme;
@@ -1103,6 +1110,18 @@ try {
   await testSearchStatuses({ page, screenshots, checkLayout });
   await testSettingsExclusions({ page, screenshots, checkLayout });
   await testSettingsHelp({ page, screenshots, checkLayout });
+  await testTrayPopup({ browser, screenshots });
+  await page.goto(`${process.env.DESKTOP_URL || "http://127.0.0.1:1420"}/?downloadTask=task-1`);
+  await page.waitForFunction(() =>
+    document.querySelector('[role="tab"][aria-selected="true"]')?.textContent.includes("Downloads")
+  );
+  assert.equal(await page.getByPlaceholder("Filter downloads").inputValue(), "task-1");
+  await page.waitForFunction(() => document.querySelectorAll(".transfer-row").length === 1);
+  assert.equal(
+    await page.evaluate(() => window.testBridge.navigation),
+    null,
+    "pending tray navigation consumed after frontend mount"
+  );
   const preview = await browser.newPage({ viewport: { width: 1240, height: 820 } });
   try {
     await preview.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420");

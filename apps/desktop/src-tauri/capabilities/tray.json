@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray-window",
+  "description": "Appearance and event access for the local status popup.",
+  "windows": ["tray"],
+  "permissions": ["core:event:default", "core:app:allow-set-app-theme"]
+}

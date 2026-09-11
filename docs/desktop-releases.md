@@ -57,6 +57,14 @@ For first launch, try opening Visuales, then use **System Settings > Privacy & S
 
 If the cask job fails after app publication, rerun that failed job or dispatch **Publish Desktop Homebrew Cask** with the latest tag. This does not rebuild or republish installers. Repeating the same cask update is a no-op; older releases are refused.
 
+## Native Relaunch Check
+
+On an interactive macOS desktop, run `npm run test:relaunch:macos` before shipping changes to the updater or window lifecycle. Do not interact with other windows during this focus test. It builds an isolated temporary app bundle and runs two startup/reopen/restart cycles using the production native handlers. It checks a hidden/minimized window, real macOS reopen delivery, both exit events, and a visible, restored, focused window in the new process. It does not install an update, start the download engine, or touch installed apps, preferences, tasks, or downloads.
+
+Packaged macOS restarts use Launch Services (`open -n -a`) so the new bundle is registered and activated instead of directly spawning its executable. A failed launch leaves the old app open for retry. Other platforms and unbundled development binaries use Tauri's event-loop `request_restart`. Startup and Dock reopen explicitly restore the main window. Signature verification and the updater's idle-transfer checks still precede installation/restart.
+
+The native smoke test complements signature/package checks and browser mocks; it does not replace a signed old-to-new update rehearsal or Windows/Linux platform testing.
+
 ## First Release
 
 `v1.3.10` already exists as a CLI release. Do not reuse or move that tag. After committing this migration and configuring signing:

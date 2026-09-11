@@ -203,14 +203,14 @@ pub async fn install_app_update(
 }
 
 #[tauri::command]
-pub fn restart_after_update(
+pub async fn restart_after_update(
     app: tauri::AppHandle,
     state: tauri::State<'_, UpdateState>,
 ) -> Result<(), String> {
     if !state.installed.load(Ordering::SeqCst) {
         return Err("No installed update is waiting for restart".to_string());
     }
-    app.restart();
+    crate::relaunch::restart(app).await
 }
 
 #[cfg(test)]

@@ -21,6 +21,7 @@ import {
 } from "@visuales/core";
 import { createDownloadTargets } from "@visuales/core/download/targets";
 import { downloadDefaults } from "@visuales/core/download/defaults";
+import { summarizeTransfers } from "@visuales/core/download/transfer-summary";
 import { loadDesktopSettings, saveDesktopSettings, resolveDesktopOutput } from "@visuales/core/desktop-settings";
 import { listLibraryDirectory, previewLibraryFile } from "@visuales/core/library";
 
@@ -175,6 +176,10 @@ async function runServer() {
       case "tasks.prepareUpdate":
       case "tasks.list":
         return listDownloadTasks();
+      case "tasks.snapshot": {
+        const tasks = await listDownloadTasks();
+        return { tasks, summary: summarizeTransfers(tasks) };
+      }
       case "tasks.prepareQuit": {
         const tasks = await listDownloadTasks();
         const summary = { running: 0, queued: 0, ownedRunning: 0, ownedQueued: 0 };
@@ -262,7 +267,9 @@ async function runServer() {
       const params = request.params ?? {};
       if (typeof params !== "object" || params === null || Array.isArray(params)) throw new Error("Invalid params");
       if (shuttingDown) throw new Error("Sidecar is shutting down");
-      const readOnly = ["hello", "search", "tasks.list", "library.list", "library.preview"].includes(request.method);
+      const readOnly = ["hello", "search", "tasks.list", "tasks.snapshot", "library.list", "library.preview"].includes(
+        request.method
+      );
       const result = readOnly
         ? dispatch(request.method, params)
         : mutations.then(() => dispatch(request.method, params));

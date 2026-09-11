@@ -77,9 +77,9 @@ Prepared for v3.0.0 alongside clickable Settings help popovers. Help opens on cl
 
 ## Later
 
-| Bucket | Feature                                                                                         | Status                   | Notes                                                                                                                          |
-| ------ | ----------------------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md) | Planned; not implemented | All desktop platforms, status-only; preserve close/quit behavior. [Plan](plans/2026-09-10-001-feat-menu-bar-progress-plan.md). |
+| Bucket | Feature                                                                                       | Status                                             | Notes                                                                                                                                                                                      |
+| ------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md) | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md). |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 
