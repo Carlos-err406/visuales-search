@@ -5,7 +5,12 @@ import { randomUUID } from "node:crypto";
 import lockfile from "proper-lockfile";
 import { CONFIG } from "./lib/types.js";
 import { downloadDefaults } from "./download/defaults.js";
-import { desktopSettingsLimits, type DesktopSettings, type DesktopSettingsSnapshot } from "./desktop-settings-types.js";
+import {
+  desktopSettingsLimits,
+  normalizeDesktopExclusions,
+  type DesktopSettings,
+  type DesktopSettingsSnapshot,
+} from "./desktop-settings-types.js";
 
 export function resolveDesktopOutput(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.includes("\0"))
@@ -20,7 +25,7 @@ export function resolveDesktopOutput(value: unknown): string {
 export function validateDesktopSettings(value: unknown): DesktopSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid desktop settings");
   const settings = value as Record<string, unknown>;
-  const keys = ["output", ...Object.keys(desktopSettingsLimits)];
+  const keys = ["output", "exclude", ...Object.keys(desktopSettingsLimits)];
   if (Object.keys(settings).some((key) => !keys.includes(key))) throw new Error("Unknown desktop setting");
   for (const [key, { min, max }] of Object.entries(desktopSettingsLimits)) {
     const number = settings[key];
@@ -32,6 +37,7 @@ export function validateDesktopSettings(value: unknown): DesktopSettings {
     concurrent: settings.concurrent as number,
     connections: settings.connections as number,
     maxRetries: settings.maxRetries as number,
+    exclude: normalizeDesktopExclusions(settings.exclude),
   };
 }
 
@@ -48,6 +54,7 @@ export async function loadDesktopSettings(
     concurrent: downloadDefaults.concurrent,
     connections: downloadDefaults.connections,
     maxRetries: downloadDefaults.maxRetries,
+    exclude: [],
   });
   let content: string;
   try {

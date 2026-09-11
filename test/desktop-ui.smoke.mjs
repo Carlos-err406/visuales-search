@@ -7,6 +7,9 @@ import { testAppearance } from "./desktop-appearance.smoke.mjs";
 import { testSearchBrowsing } from "./desktop-search.smoke.mjs";
 import { testLibraryIndex } from "./desktop-library.smoke.mjs";
 import { testTreeExpansion } from "./desktop-tree-expansion.smoke.mjs";
+import { testSearchStatuses } from "./desktop-search-status.smoke.mjs";
+import { testSettingsExclusions } from "./desktop-settings-exclusions.smoke.mjs";
+import { testSettingsHelp } from "./desktop-help.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -71,8 +74,15 @@ try {
         concurrent: 5,
         connections: 3,
         maxRetries: 3,
+        exclude: [],
       },
-      settingsDefaults: { output: "/Users/carlos/Downloads/Visuales", concurrent: 5, connections: 3, maxRetries: 3 },
+      settingsDefaults: {
+        output: "/Users/carlos/Downloads/Visuales",
+        concurrent: 5,
+        connections: 3,
+        maxRetries: 3,
+        exclude: [],
+      },
       calls: [],
       fail:
         updateScenario === "offline"
@@ -1090,12 +1100,21 @@ try {
   await testAppearance({ page, screenshots, checkLayout });
   await testSearchBrowsing({ page, screenshots, checkLayout });
   await testLibraryIndex({ page, screenshots, checkLayout });
+  await testSearchStatuses({ page, screenshots, checkLayout });
+  await testSettingsExclusions({ page, screenshots, checkLayout });
+  await testSettingsHelp({ page, screenshots, checkLayout });
   const preview = await browser.newPage({ viewport: { width: 1240, height: 820 } });
   try {
     await preview.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420");
     await preview.getByRole("tab", { name: "Settings", exact: true }).click();
     await preview.getByText("Transfer settings are read-only in browser preview.", { exact: true }).waitFor();
-    for (const label of ["Default output folder", "Concurrent files", "Connections per file", "Retries per file"]) {
+    for (const label of [
+      "Default output folder",
+      "Concurrent files",
+      "Connections per file",
+      "Retries per file",
+      "Ignore rules",
+    ]) {
       assert.equal(
         await preview.getByLabel(label, { exact: true }).isDisabled(),
         true,

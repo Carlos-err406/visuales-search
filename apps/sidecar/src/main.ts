@@ -175,6 +175,19 @@ async function runServer() {
       case "tasks.prepareUpdate":
       case "tasks.list":
         return listDownloadTasks();
+      case "tasks.prepareQuit": {
+        const tasks = await listDownloadTasks();
+        const summary = { running: 0, queued: 0, ownedRunning: 0, ownedQueued: 0 };
+        for (const task of tasks) {
+          if (task.status !== "running" && task.status !== "queued") continue;
+          summary[task.status]++;
+          const worker = workers.get(task.id)?.child;
+          if (worker && worker.pid === task.pid && worker.exitCode === null && worker.signalCode === null) {
+            summary[task.status === "running" ? "ownedRunning" : "ownedQueued"]++;
+          }
+        }
+        return summary;
+      }
       case "download.start": {
         const urls = strings(params.urls, "urls");
         for (const url of urls) {
@@ -198,7 +211,7 @@ async function runServer() {
             concurrent: settings.concurrent,
             connections: settings.connections,
             compact: downloadDefaults.compact,
-            exclude: [],
+            exclude: settings.exclude,
           },
           params.queue === true
         );

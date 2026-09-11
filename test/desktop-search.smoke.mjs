@@ -54,7 +54,7 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
   const extras = page.getByRole("treeitem", { name: "Extras", exact: true });
   assert.equal(await page.getByRole("tree").locator(".lucide-chevron-down, .lucide-chevron-right").count(), 0);
   assert.equal(await example.locator(".lucide-folder-open").count(), 1);
-  assert.equal(await example.locator(".tree-size").textContent(), "", "folders do not show sizes");
+  assert.equal(await example.locator(".tree-size").count(), 0, "folders do not show sizes");
   assert.equal(await page.getByRole("button", { name: /^List contents of / }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "Refresh Example", exact: true }).count(), 0);
   assert.equal(await page.getByRole("treeitem", { name: "notes.txt", exact: true }).getAttribute("aria-level"), "3");
@@ -200,8 +200,8 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
   });
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.getByText("Folder is empty").waitFor();
-  assert.equal(await extras.locator(".tree-size").textContent(), "");
-  assert.equal(await example.locator(".tree-size").textContent(), "", "folder sizes stay hidden after listing");
+  assert.equal(await extras.locator(".tree-size").count(), 0);
+  assert.equal(await example.locator(".tree-size").count(), 0, "folder sizes stay hidden after listing");
   await example.focus();
   await page.keyboard.press("ArrowLeft");
   assert.equal(await example.getAttribute("aria-expanded"), "false");

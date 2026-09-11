@@ -29,6 +29,7 @@ export interface DownloadTaskRecord {
   interruptedCause?: DownloadTaskInterruptedCause;
   lastError?: string;
   lastProgress?: {
+    url?: string;
     fileName: string;
     progress: number;
     downloadedSize: number;
@@ -44,6 +45,7 @@ export interface DownloadTaskRecord {
     speedBytes: number;
     updatedAt: number;
     activeFiles?: {
+      url?: string;
       fileName: string;
       progress: number;
       downloadedSize: number;
@@ -553,6 +555,7 @@ export async function updateDownloadTaskProgress(id: string, progress: DownloadP
   const task = await findDownloadTask(id);
   const updates: Partial<DownloadTaskRecord> = {
     lastProgress: {
+      url: progress.url,
       fileName: progress.fileName,
       progress: progress.progress,
       downloadedSize: progress.downloadedSize,

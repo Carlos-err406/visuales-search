@@ -33,6 +33,12 @@ impl SidecarState {
     }
 
     pub async fn suspend_for_update(&self) -> Result<(), String> {
+        self.shutdown_and_wait()
+            .await
+            .map_err(|_| "Download engine did not stop; update was not installed".to_string())
+    }
+
+    pub async fn shutdown_and_wait(&self) -> Result<(), String> {
         let bridge = {
             let slot = self.bridge.lock().unwrap();
             self.suspended.store(true, Ordering::SeqCst);
@@ -46,7 +52,7 @@ impl SidecarState {
                 }
             })
             .await
-            .map_err(|_| "Download engine did not stop; update was not installed".to_string())?;
+            .map_err(|_| "Download engine did not stop".to_string())?;
         }
         Ok(())
     }

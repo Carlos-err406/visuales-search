@@ -15,7 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { IconButton } from "./icon-button";
 import { FilePreview } from "./file-preview";
-import { formatBytes } from "./task-view";
+import { formatBytes, type Task } from "./task-view";
+import { createSearchDownloadStatusIndex } from "@visuales/core/search-download-status";
 import {
   buildSearchTree,
   canonicalTreeUrl,
@@ -95,12 +96,17 @@ export function SearchTree({
   selectionStates,
   setSelected,
   disabled,
+  tasks,
+  statusesUnavailable,
 }: {
   browser: ReturnType<typeof useSearchBrowser>;
   selectionStates: ReadonlyMap<string, TreeCheckState>;
   setSelected: Dispatch<SetStateAction<Set<string>>>;
   disabled: boolean;
+  tasks: Task[];
+  statusesUnavailable: boolean;
 }) {
+  const downloadStatus = useMemo(() => createSearchDownloadStatusIndex(tasks), [tasks]);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
   const anchor = useRef<string | null>(null);
@@ -239,6 +245,7 @@ export function SearchTree({
                 ? FileText
                 : File;
           const bytes = node.directory ? undefined : node.entry?.size;
+          const transfer = statusesUnavailable ? undefined : downloadStatus(node.url, node.directory);
           const loadingEmpty = listing?.loading && node.children.length === 0;
           const refreshing = listing?.loading && node.children.length > 0;
           return (
@@ -304,7 +311,14 @@ export function SearchTree({
                     )}
                   </span>
                 </span>
-                <span className="secondary tree-size">{bytes !== undefined ? formatBytes(bytes) : ""}</span>
+                <span className="tree-metadata">
+                  {transfer && (
+                    <span className={`tree-download-status ${transfer.status}`} aria-label={transfer.description}>
+                      {transfer.label}
+                    </span>
+                  )}
+                  {bytes !== undefined && <span className="secondary tree-size">{formatBytes(bytes)}</span>}
+                </span>
                 {refreshing ? (
                   <Spinner size={14} aria-label="Refreshing folder contents" className="tree-refresh-spinner" />
                 ) : node.directory && listing?.entries ? (

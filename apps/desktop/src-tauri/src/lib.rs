@@ -1,4 +1,5 @@
 mod folders;
+mod quit;
 mod sidecar;
 mod updates;
 
@@ -90,6 +91,7 @@ async fn start_download(
     let updates = app.state::<updates::UpdateState>();
     let _guard = updates.transfers.read().await;
     updates.ensure_downloads_allowed()?;
+    app.state::<quit::QuitState>().ensure_downloads_allowed()?;
     sidecar::request(
         &app,
         "download.start",
@@ -113,6 +115,7 @@ async fn resume_download_task(app: tauri::AppHandle, id: String) -> Result<Value
     let updates = app.state::<updates::UpdateState>();
     let _guard = updates.transfers.read().await;
     updates.ensure_downloads_allowed()?;
+    app.state::<quit::QuitState>().ensure_downloads_allowed()?;
     sidecar::request(&app, "tasks.resume", json!({ "id": id })).await
 }
 
@@ -122,6 +125,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(sidecar::SidecarState::default())
         .manage(updates::UpdateState::default())
+        .manage(quit::QuitState::default())
         .invoke_handler(tauri::generate_handler![
             search_content,
             list_library_directory,
@@ -144,6 +148,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building visuales desktop app")
         .run(|app, event| {
+            quit::handle_event(app, &event);
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<sidecar::SidecarState>().shutdown();
             }
