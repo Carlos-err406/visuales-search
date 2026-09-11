@@ -264,6 +264,7 @@ describe("packaged Node sidecar", () => {
       concurrent: 2,
       connections: 4,
       maxRetries: 4,
+      exclude: ["*.{jpg,nfo}", "Extras/**"],
     };
     const ids = [];
     let other;
@@ -286,6 +287,7 @@ describe("packaged Node sidecar", () => {
         assert.equal(task.options.concurrent, 2);
         assert.equal(task.options.maxRetries, 4);
         assert.equal(task.options.connections, 4);
+        assert.deepEqual(task.options.exclude, changed.exclude);
       }
       const later = {
         ...changed,
@@ -293,6 +295,7 @@ describe("packaged Node sidecar", () => {
         concurrent: 7,
         connections: 8,
         maxRetries: 0,
+        exclude: ["*.txt"],
       };
       await rpc.request("settings.save", { settings: later });
       for (const id of ids) {
@@ -300,6 +303,7 @@ describe("packaged Node sidecar", () => {
         assert.equal(task.options.concurrent, 2);
         assert.equal(task.options.maxRetries, 4);
         assert.equal(task.options.connections, 4);
+        assert.deepEqual(task.options.exclude, changed.exclude);
       }
       await rpc.request("tasks.cancel", { id: queued.id });
       const resumed = await rpc.request("tasks.resume", { id: queued.id, queue: true });
@@ -307,6 +311,7 @@ describe("packaged Node sidecar", () => {
       assert.equal(resumed.options.concurrent, 2);
       assert.equal(resumed.options.maxRetries, 4);
       assert.equal(resumed.options.connections, 4);
+      assert.deepEqual(resumed.options.exclude, changed.exclude);
       const explicit = await rpc.request("download.start", {
         urls: [server.url("normal", "settings-explicit.bin")],
         output: path.join(home, "Explicit"),
@@ -316,6 +321,7 @@ describe("packaged Node sidecar", () => {
       assert.equal(explicit.options.concurrent, 7);
       assert.equal(explicit.options.maxRetries, 0);
       assert.equal(explicit.options.connections, 8);
+      assert.deepEqual(explicit.options.exclude, later.exclude);
       await assert.rejects(rpc.request("settings.save", { settings: { ...later, concurrent: 0 } }), /concurrent/);
       assert.deepEqual((await rpc.request("settings.get")).settings, later);
     } finally {
@@ -336,6 +342,116 @@ describe("packaged Node sidecar", () => {
       assert.equal(tasks.find((entry) => entry.id === task.id)?.status, "running");
     } finally {
       await rpc.request("tasks.cancel", { id: task.id });
+    }
+  });
+  it("applies saved exclusions to real immediate and queued folder downloads", async () => {
+    const initial = await rpc.request("settings.get");
+    const body = Buffer.from("local exclusion fixture\n");
+    const requestedFiles = [];
+    const fixture = http.createServer((req, res) => {
+      if (req.url.endsWith("/")) {
+        const names = req.url.endsWith("/Extras/")
+          ? ["notes.txt", "poster.jpg", "cover.jpg"]
+          : ["keep.txt", "cover.jpg", "poster.jpg", "release.nfo", "Extras/"];
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end(
+          `<pre>${names.map((name) => `<a href="${name}">${name}</a> 08-Sep-2026 12:00 ${name.endsWith("/") ? "-" : body.length}`).join("\n")}</pre>`
+        );
+      } else {
+        requestedFiles.push(req.url);
+        res.writeHead(200, { "content-length": body.length });
+        res.end(req.method === "HEAD" ? undefined : body);
+      }
+    });
+    await new Promise((resolve) => fixture.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${fixture.address().port}/Pack/`;
+    const ids = [];
+    try {
+      for (const queue of [false, true]) {
+        await rpc.request("settings.save", {
+          settings: {
+            ...initial.settings,
+            exclude: ["*.{jpg,nfo}", "!poster.jpg", "*.jpg", "!poster.jpg", "Extras/*", "!Extras/poster.jpg"],
+          },
+        });
+        let blocker;
+        if (queue) {
+          blocker = await rpc.request("download.start", {
+            urls: [`${slowUrl}/exclusions-blocker.bin`],
+            output: path.join(home, "exclusion blocker"),
+          });
+          ids.push(blocker.id);
+        }
+        const task = await rpc.request("download.start", {
+          urls: [base],
+          output: path.join(home, `excluded-${queue}`),
+          queue,
+        });
+        ids.push(task.id);
+        if (queue) {
+          assert.equal(task.status, "queued");
+          await rpc.request("settings.save", { settings: { ...initial.settings, exclude: [] } });
+          await rpc.request("tasks.cancel", { id: blocker.id });
+        }
+        await waitForTask(task.id, "completed");
+        assert.deepEqual(await fs.readFile(path.join(task.output, "keep.txt")), body);
+        for (const file of ["poster.jpg", "Extras/poster.jpg"])
+          assert.deepEqual(await fs.readFile(path.join(task.output, file)), body);
+        for (const file of ["cover.jpg", "release.nfo", "Extras/notes.txt", "Extras/cover.jpg"])
+          await assert.rejects(fs.access(path.join(task.output, file)));
+      }
+      assert.ok(requestedFiles.length > 0);
+      assert.ok(
+        requestedFiles.every((url) => url.endsWith("/keep.txt") || url.endsWith("/poster.jpg")),
+        "excluded files are not requested"
+      );
+      // Explicit file selection has the same precedence over exclusions as the CLI.
+      await rpc.request("settings.save", { settings: { ...initial.settings, exclude: ["*.jpg"] } });
+      const explicit = await rpc.request("download.start", {
+        urls: [base + "cover.jpg"],
+        output: path.join(home, "explicit excluded file"),
+      });
+      ids.push(explicit.id);
+      await waitForTask(explicit.id, "completed");
+      assert.deepEqual(await fs.readFile(path.join(explicit.output, "cover.jpg")), body);
+    } finally {
+      for (const id of ids) await rpc.request("tasks.cancel", { id });
+      await rpc.request("settings.save", { settings: initial.settings });
+      fixture.closeAllConnections();
+      await new Promise((resolve) => fixture.close(resolve));
+    }
+  });
+  it("serializes quit snapshots and distinguishes this instance's workers from external transfers", async () => {
+    const other = await startRpc();
+    let running, queued;
+    try {
+      const starting = rpc.request("download.start", {
+        urls: [`${slowUrl}/quit-warning.bin`],
+        output: path.join(home, "quit warning"),
+      });
+      const snapshot = rpc.request("tasks.prepareQuit");
+      running = await starting;
+      const own = await snapshot;
+      assert.equal(own.ownedRunning, 1);
+      assert.ok(own.running >= 1);
+      const external = await other.request("tasks.prepareQuit");
+      assert.equal(external.ownedRunning, 0);
+      assert.equal(external.running, own.running);
+      queued = await rpc.request("download.start", {
+        urls: [`${slowUrl}/quit-queued.bin`],
+        output: path.join(home, "quit queued"),
+        queue: true,
+      });
+      const both = await rpc.request("tasks.prepareQuit");
+      assert.equal(both.ownedRunning, 1);
+      assert.equal(both.ownedQueued, 1);
+      // A snapshot is read-only: declining quit does not stop or change workers.
+      assert.equal((await waitForTask(running.id, "running")).pid, running.pid);
+      assert.equal((await waitForTask(queued.id, "queued")).pid, queued.pid);
+    } finally {
+      if (queued) await rpc.request("tasks.cancel", { id: queued.id });
+      if (running) await rpc.request("tasks.cancel", { id: running.id });
+      await other.close();
     }
   });
   it("keeps a single selected folder below the desktop destination, immediately or queued", async () => {
@@ -541,5 +657,48 @@ describe("packaged Node sidecar", () => {
     const interrupted = await waitForTask(task.id, "interrupted");
     assert.notEqual(interrupted.status, "completed");
     assert.throws(() => process.kill(task.pid, 0));
+  });
+  it("quitting an instance stops its running and queued workers but lets a real CLI transfer finish", async () => {
+    const owner = await startRpc();
+    const output = path.join(home, "quit cli survives");
+    const cliUrl = `${slowUrl}/cli-survives.bin`;
+    const cli = spawn(process.execPath, [path.resolve("dist/cli.js"), "download", cliUrl, "--output", output], {
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      stdio: "ignore",
+    });
+    const closed = once(cli, "close");
+    let ownerClosed = false;
+    try {
+      await waitForPartial(output);
+      const running = await owner.request("download.start", {
+        urls: [`${slowUrl}/owned-closing.bin`],
+        output: path.join(home, "owned closing"),
+      });
+      const queued = await owner.request("download.start", {
+        urls: [`${slowUrl}/queued-closing.bin`],
+        output: path.join(home, "queued closing"),
+        queue: true,
+      });
+      await waitForPartial(running.output);
+      const summary = await owner.request("tasks.prepareQuit");
+      assert.equal(summary.ownedRunning, 1);
+      assert.equal(summary.ownedQueued, 1);
+      assert.ok(summary.running > summary.ownedRunning, "CLI is counted but not owned");
+      await owner.close();
+      ownerClosed = true;
+      await waitForTask(running.id, "interrupted");
+      await waitForTask(queued.id, "interrupted");
+      const [exitCode] = await closed;
+      assert.equal(exitCode, 0);
+      assert.deepEqual(await fs.readFile(path.join(output, "cli-survives.bin")), FILE_BODY);
+      const history = await rpc.request("tasks.list");
+      const completed = history.find((task) => task.url === cliUrl);
+      assert.equal(completed.status, "completed");
+      assert.equal(completed.lastProgress.url, cliUrl, "CLI persists canonical file identity alongside progress");
+    } finally {
+      if (!ownerClosed) await owner.close();
+      cli.kill();
+      await closed;
+    }
   });
 });

@@ -66,7 +66,7 @@ Download a season while skipping artwork, metadata, and text files:
 
 ```bash
 visuales download "http://visuales.uclv.cu/Series/Ingles/Supernatural/S06/" \
-  --exclude "*.{nfo,jpg,png,txt}" \
+  --ignore "*.{nfo,jpg,png,txt}" \
   -o ../supernatural_6
 ```
 
@@ -75,12 +75,41 @@ Useful download options:
 - `--output, -o`: output directory. Optional; defaults to the current directory for file URLs and a target-named folder for directory URLs. With multiple targets, this is the parent directory.
 - `--concurrent, -c`: maximum number of files to download at once. Default: `5`.
 - `--connections`: maximum parallel connections per large file, capped at `8`. Default: `3`.
-- `--exclude`: skip files by glob. Can be repeated or comma-separated.
-- `--ignore`: alias for `--exclude`.
+- `--ignore`: ordered gitignore-style rules. Repeat the flag; `!pattern` includes a match again.
 - `--resume, -r`: resume interrupted downloads. Default: `true`.
 - `--max-retries`: maximum retry attempts. Default: `3`.
 - `--timeout`: request timeout in seconds. Default: `Infinity`.
 - `--detach, -d`: start the download in the background and return immediately.
+
+### Ignore Rules
+
+**Upgrading to v3:** `--exclude` has been removed. Replace it with `--ignore` in commands and scripts. Existing task records remain readable and retain their saved rules when resumed. Matching now follows the ordered rules below.
+
+Skip JPEGs except poster artwork:
+
+```bash
+visuales download "https://visuales.uclv.cu/Movies/Example/" \
+  --ignore '*.jpg' --ignore '!poster.jpg'
+```
+
+Quote patterns so the shell does not expand `*` or interpret `!`. The shared Node engine evaluates rules in order: later matches override earlier ones. Repeating `--ignore '*.jpg'` after the exception would exclude the poster again. Queued, detached, and resumed transfers keep the ordered rules saved with their task.
+
+Desktop Settings > Transfers > Ignore rules uses the same rules, one per line:
+
+```gitignore
+# Skip artwork except the poster
+*.jpg
+!poster.jpg
+```
+
+- A rule without a slash matches names at any depth. `/poster.jpg` matches only at the selected folder's root; `Extras/poster.jpg` is a root-relative path. Each target in a batch has its own root.
+- `Extras/` excludes that directory and its contents, without scanning it. As in gitignore, include an ignored parent before including a child: `Extras/`, `!Extras/`, `Extras/*`, `!Extras/poster.jpg`.
+- `**`, `?`, character classes, `#` comments, and escaped `\!` / `\#` names are supported. Spaces follow gitignore rules: leading spaces are significant; escape a trailing space to match it.
+- Visuales retains case-insensitive matching and its comma/brace shorthand (`*.{jpg,nfo},*.srt`) as extensions to gitignore syntax. Escape literal commas with `\,`. Brace expansions are limited to 1,000 patterns per rule.
+- Rules filter folder contents. An explicitly selected file URL still downloads, even if a rule matches it.
+- Saved desktop rules affect new desktop transfers only. They do not change CLI defaults or overwrite existing task options.
+
+Matching uses [node-ignore](https://github.com/kaelzhang/node-ignore), following the [gitignore pattern rules](https://git-scm.com/docs/gitignore).
 
 Recursive and multi-target downloads show a whole-job file counter such as `FILES 7/24`, so you can see how many files are complete across the full synthetic directory tree.
 

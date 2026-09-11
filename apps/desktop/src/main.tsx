@@ -647,6 +647,8 @@ function App() {
             <SearchTree
               key={searchedQuery}
               browser={searchBrowser}
+              tasks={tasks}
+              statusesUnavailable={Boolean(connectionError)}
               selectionStates={selectionStates}
               setSelected={setSelected}
               disabled={searching || Boolean(submitting)}

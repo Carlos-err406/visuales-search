@@ -9,6 +9,7 @@ const previewDefaults: DesktopSettings = {
   concurrent: downloadDefaults.concurrent,
   connections: downloadDefaults.connections,
   maxRetries: downloadDefaults.maxRetries,
+  exclude: [],
 };
 
 export function useDesktopSettings() {

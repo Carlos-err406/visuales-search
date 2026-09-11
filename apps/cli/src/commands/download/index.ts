@@ -39,7 +39,6 @@ interface DownloadCommandOptions {
   compact?: boolean;
   detach?: boolean;
   queue?: boolean;
-  exclude?: string[];
   ignore?: string[];
   verbose?: boolean;
 }
@@ -128,7 +127,7 @@ export async function downloadCommand(urls: string | string[], options: Download
     concurrent: parseNumberOption(options.concurrent, downloadDefaults.concurrent),
     connections: parseNumberOption(options.connections, downloadDefaults.connections),
     compact: options.compact ?? downloadDefaults.compact,
-    exclude: [...(options.exclude ?? []), ...(options.ignore ?? [])],
+    exclude: options.ignore ?? [],
     verbose: options.verbose,
   };
 
@@ -271,7 +270,7 @@ function buildDownloadArgs(options: DownloadOptions): string[] {
 
   if (options.compact) args.push("--compact");
   for (const pattern of options.exclude) {
-    args.push("--exclude", pattern);
+    args.push("--ignore", pattern);
   }
 
   return args;
@@ -361,6 +360,7 @@ export async function resumeCommand(
   for (const task of resumableTasks) {
     await downloadCommand(task.urls ?? task.url, {
       ...task.options,
+      ignore: task.options.exclude,
       resume: true,
       detach: options.detach,
       queue: options.queue,
@@ -474,8 +474,7 @@ export function setupDownloadCommand(program: Command): void {
     .option("--compact", "Hide individual thread details (default: false)")
     .option("-d, --detach", "Run the download in the background")
     .option("-q, --queue", "Wait for running downloads to finish before starting")
-    .option("--exclude <patterns...>", 'Exclude files by glob, e.g. --exclude "*.{jpg,nfo}"')
-    .option("--ignore <patterns...>", "Alias for --exclude")
+    .option("--ignore <patterns...>", "Ordered gitignore-style rules; !pattern includes again (repeatable)")
     .action((urls, options, cmd) => {
       // In subcommands, options is from command, but we need program for global options
       const globalOpts = cmd.parent.opts();

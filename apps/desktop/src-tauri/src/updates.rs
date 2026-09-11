@@ -170,6 +170,8 @@ pub async fn install_app_update(
     }
     // Serialize against desktop starts/resumes and re-read shared state at install time.
     let _guard = state.transfers.write().await;
+    app.state::<crate::quit::QuitState>()
+        .ensure_downloads_allowed()?;
     let tasks = crate::sidecar::request(&app, "tasks.prepareUpdate", json!({})).await?;
     ensure_idle(&tasks)?;
     let engine = app.state::<crate::sidecar::SidecarState>();

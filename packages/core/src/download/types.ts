@@ -20,6 +20,7 @@ export interface ThreadState {
 }
 
 export interface DownloadProgress {
+  url?: string;
   fileName: string;
   progress: number;
   speed: string;
@@ -39,6 +40,7 @@ export interface DownloadOverallProgress {
 }
 
 export interface DownloadActiveFileProgress {
+  url?: string;
   fileName: string;
   progress: number;
   downloadedSize: number;

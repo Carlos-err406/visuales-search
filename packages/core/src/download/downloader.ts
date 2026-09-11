@@ -8,8 +8,9 @@ import path from "path";
 import fs from "fs/promises";
 import colors from "ansi-colors";
 import pLimit from "p-limit";
-import { DownloadOptions, DownloadProgress } from "./types.js";
-import { createGlobMatcher, formatSize, parseSize } from "./utils.js";
+import { DownloadOptions, DownloadProgress, type DownloadActiveFileProgress } from "./types.js";
+import { formatSize, parseSize } from "./utils.js";
+import { createIgnoreMatcher } from "./ignore-rules.js";
 import {
   DIRECTORY_LISTING_PARSER_VERSION,
   dirListingCache,
@@ -68,16 +69,7 @@ interface FileCountProgress {
   completedBytes: number;
   activeBytes: Map<string, number>;
   activeSpeeds: Map<string, number>;
-  activeFiles: Map<
-    string,
-    {
-      fileName: string;
-      progress: number;
-      downloadedSize: number;
-      totalSize: number;
-      speed: string;
-    }
-  >;
+  activeFiles: Map<string, DownloadActiveFileProgress>;
   freeSlots: number[];
   nextSlot: number;
   bar: ReturnType<typeof createFileCountBar>;
@@ -475,6 +467,7 @@ export async function downloadFile(
           });
 
           onProgress?.({
+            url,
             fileName: filename,
             progress: progress.percentage,
             speed: `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`,
@@ -685,6 +678,7 @@ export async function downloadFile(
 
           if (onProgress) {
             onProgress({
+              url,
               fileName: filename,
               progress: currentPercentage,
               speed: `${(currentSpeed / 1024 / 1024).toFixed(2)} MB/s`,
@@ -712,6 +706,7 @@ export async function downloadFile(
                 expectedFileSize,
                 onProgress: (progress) =>
                   onProgress?.({
+                    url,
                     fileName: filename,
                     progress: progress.percentage,
                     speed: `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`,
@@ -889,7 +884,7 @@ async function summarizeDirectoryDownload(
   relativePath: string = ""
 ): Promise<DownloadPlanSummary> {
   const { files, dirs } = initialData || (await getDirectoryListing(url));
-  const isExcluded = createGlobMatcher(options.exclude);
+  const isExcluded = createIgnoreMatcher(options.exclude);
   const summary: DownloadPlanSummary = {
     fileCount: 0,
     totalBytes: 0,
@@ -900,7 +895,7 @@ async function summarizeDirectoryDownload(
   for (const file of files) {
     const filename = getDecodedUrlBasename(file.url);
     const relativeFilePath = path.posix.join(relativePath, filename);
-    if (isExcluded(filename) || isExcluded(relativeFilePath)) continue;
+    if (isExcluded(relativeFilePath)) continue;
 
     summary.fileCount++;
     if (file.size > 0) {
@@ -911,10 +906,12 @@ async function summarizeDirectoryDownload(
   }
 
   const subSummaries = await Promise.all(
-    dirs.map(async (dirUrl) => {
-      const dirName = getDecodedUrlBasename(dirUrl);
-      return summarizeDirectoryDownload(dirUrl, options, undefined, path.posix.join(relativePath, dirName));
-    })
+    dirs
+      .filter((dirUrl) => !isExcluded(path.posix.join(relativePath, getDecodedUrlBasename(dirUrl)) + "/"))
+      .map(async (dirUrl) => {
+        const dirName = getDecodedUrlBasename(dirUrl);
+        return summarizeDirectoryDownload(dirUrl, options, undefined, path.posix.join(relativePath, dirName));
+      })
   );
 
   for (const subSummary of subSummaries) {
@@ -970,6 +967,7 @@ async function downloadFileWithOverallProgress(
           fileCountProgress.activeBytes.set(fileUrl, Math.min(progress.downloadedSize, expectedBytes));
           fileCountProgress.activeSpeeds.set(fileUrl, progress.speedBytes ?? 0);
           fileCountProgress.activeFiles.set(fileUrl, {
+            url: fileUrl,
             fileName: progress.fileName,
             progress: progress.progress,
             downloadedSize: progress.downloadedSize,
@@ -980,6 +978,7 @@ async function downloadFileWithOverallProgress(
         }
         onProgress?.({
           ...progress,
+          url: fileUrl,
           overall: fileCountProgress ? getOverallDownloadProgress(fileCountProgress) : undefined,
         });
       },
@@ -1029,16 +1028,17 @@ export async function downloadRecursive(
   onProgress?: (progress: DownloadProgress) => void,
   initialData?: { files: { url: string; size: number; exact?: boolean }[]; dirs: string[] },
   relativePath: string = "",
-  fileCountProgress?: FileCountProgress
+  fileCountProgress?: FileCountProgress,
+  ignorePath: string = ""
 ): Promise<DownloadFailure[]> {
   const { files, dirs } = initialData || (await getDirectoryListing(url));
   await fs.mkdir(options.output, { recursive: true });
-  const isExcluded = createGlobMatcher(options.exclude);
+  const isExcluded = createIgnoreMatcher(options.exclude);
   const failures: DownloadFailure[] = [];
   const includedFiles = files.filter((file) => {
     const filename = getDecodedUrlBasename(file.url);
     const relativeFilePath = path.posix.join(relativePath, filename);
-    const excluded = isExcluded(filename) || isExcluded(relativeFilePath);
+    const excluded = isExcluded(path.posix.join(ignorePath, filename));
 
     if (excluded) {
       logDownloadSkipped(relativeFilePath, "excluded");
@@ -1062,29 +1062,32 @@ export async function downloadRecursive(
     })
   );
 
-  const recursionTasks = dirs.map(async (dirUrl) => {
-    try {
-      const dirName = getDecodedUrlBasename(dirUrl);
-      const subOptions = { ...options, output: path.join(options.output, dirName) };
-      return await downloadRecursive(
-        dirUrl,
-        subOptions,
-        limit,
-        onProgress,
-        undefined,
-        path.posix.join(relativePath, dirName),
-        fileCountProgress
-      );
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      failures.push({
-        filePath: path.posix.join(relativePath, getDecodedUrlBasename(dirUrl)),
-        error: errorMsg,
-      });
+  const recursionTasks = dirs
+    .filter((dirUrl) => !isExcluded(path.posix.join(ignorePath, getDecodedUrlBasename(dirUrl)) + "/"))
+    .map(async (dirUrl) => {
+      try {
+        const dirName = getDecodedUrlBasename(dirUrl);
+        const subOptions = { ...options, output: path.join(options.output, dirName) };
+        return await downloadRecursive(
+          dirUrl,
+          subOptions,
+          limit,
+          onProgress,
+          undefined,
+          path.posix.join(relativePath, dirName),
+          fileCountProgress,
+          path.posix.join(ignorePath, dirName)
+        );
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        failures.push({
+          filePath: path.posix.join(relativePath, getDecodedUrlBasename(dirUrl)),
+          error: errorMsg,
+        });
 
-      return [];
-    }
-  });
+        return [];
+      }
+    });
 
   await Promise.all(downloadTasks);
   await removePartsDirectoryIfEmpty(path.join(options.output, PARTS_DIRECTORY_NAME));
@@ -1139,7 +1142,7 @@ async function downloadMany(
             continue;
           }
 
-          const targetSummary = await summarizeDirectoryDownload(target.url, options, listing, target.relativePath);
+          const targetSummary = await summarizeDirectoryDownload(target.url, options, listing);
           addSummary(summary, targetSummary);
           directoryTargets.push({ target, listing, summary: targetSummary });
         } catch (err: unknown) {

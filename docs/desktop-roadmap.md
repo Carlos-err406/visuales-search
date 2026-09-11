@@ -60,6 +60,21 @@ Preview limits: PNG/JPEG/GIF/WebP up to 4 MB, UTF-8 text up to 512 KB. The unifi
 
 Included in v2.0.8: [011: Conditional save/discard footer and header Restore defaults](../.context/compound-engineering/todos/011-complete-p3-settings-action-layout.md). The bottom actions appear only with unsaved changes; Restore defaults is right-aligned in the Settings header and still requires an explicit save. The brief Saved confirmation remains visible in the header. Appearance continues to persist immediately without showing the footer. Browser previews clearly mark transfer settings read-only and cannot create unsavable drafts.
 
+## Implemented: Search Status and Quit Warning
+
+Prepared for v3.0.0:
+
+- [012: Download statuses in Search](../.context/compound-engineering/todos/012-complete-p3-search-download-status.md): compact shared-task labels in search results and library browsing. Exact file progress uses fresh URL metadata; parent/child coverage is explicitly distinguished from whole-folder or individual-file completion.
+- [013: Quit warning](../.context/compound-engineering/todos/013-complete-p3-quit-download-warning.md): native Keep open/Quit confirmation for running or queued work, fresh serialized ownership checks, and unchanged CLI worker lifetime. Idle exits and authorized updater restarts remain prompt-free. Cross-platform native dialog smoke testing remains a release check.
+
+## Implemented: Settings Exclusions
+
+[014: Download exclusions in Settings](../.context/compound-engineering/todos/014-complete-p3-desktop-download-exclusions.md) adds a persistent glob-pattern editor under Transfers with Save, Discard, and Restore defaults. New desktop downloads and queued tasks receive the saved patterns through the shared CLI engine; existing/resumed tasks and CLI defaults stay unchanged. Missing exclusions in older preferences default to an empty list. As with the CLI, exclusions filter folder contents, while explicitly selected files are still downloaded. Implemented locally, not yet released.
+
+The editor now uses ordered gitignore-style rules: `*.jpg` followed by `!poster.jpg` keeps the poster. Comments, escapes, directory rules, and root-relative paths share the Node matcher with CLI `--ignore`; repeated rules retain order. Legacy brace/comma shorthand remains supported. See [Ignore rules](../README.md#ignore-rules).
+
+Prepared for v3.0.0 alongside clickable Settings help popovers. Help opens on click, tap, or keyboard activation and closes with Escape, its close button, or an outside click. Only one help panel can be open. The major version reflects removal of the CLI `--exclude` flag; use `--ignore` instead. Stored tasks and preferences remain compatible. Menu bar progress is not included.
+
 ## Later
 
 | Bucket | Feature                                                                                         | Status                   | Notes                                                                                                                          |
@@ -97,3 +112,12 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 - 2026-09-10: Prepare v2.0.7 with Search browsing and cached previews. Checkboxes share a fixed gutter; only names/icons are indented. Equivalent URL encodings merge into one row, known children use a quiet refresh spinner, and expanding/collapsing across the virtualization threshold preserves scroll position. Settings action layout and menu bar progress remain deferred.
 - 2026-09-10: Implement Settings action layout on user request. Save/Discard appear only while dirty; Restore defaults moves to the right of the header. Preserve explicit saves and immediate theme persistence. Menu bar progress is the only remaining deferred feature.
 - 2026-09-10: User requested pushing Settings without a release and planning menu bar progress. Approved all desktop platforms with status-only integration and unchanged close/quit behavior. Written plan covers shared Node status, native polling and menu rendering, Downloads navigation, and platform verification; implementation has not started.
+- 2026-09-10: Add download statuses on Search folder/file rows to the bucket. Presentation and folder aggregation need triage; no implementation or release work requested.
+- 2026-09-10: Add an alert when quitting with downloads in progress to the bucket. Track separately from status-only menu bar progress; no lifecycle changes implemented.
+- 2026-09-10: Add desktop Settings support for CLI `--exclude` / `--ignore` patterns to the bucket. Reuse shared-engine matching and persist desktop defaults; no implementation requested.
+- 2026-09-11: User approved bucket items 2 and 3. Implement Search transfer status labels and a native quit warning; menu bar progress and Settings exclusions remain deferred. No release requested.
+- 2026-09-11: Simplify completed Search statuses: show completion only on exact transfer targets, without "Contains completed" on ancestors or "Folder transfer completed" on descendants. Other transfer states are unchanged.
+- 2026-09-11: Clarification: remove every "Contains ..." label, not just completion. Ancestors no longer aggregate child transfer states; their own direct transfer status remains visible.
+- 2026-09-11: Implement bucket item 4, persistent desktop exclusions matching CLI `--exclude` / `--ignore`. Preserve shared-engine matching, explicit-file precedence, legacy preferences, existing task options, and CLI defaults. No release requested; menu bar progress remains deferred.
+- 2026-09-11: Refactor exclusions into ordered gitignore-style rules across core, CLI, and desktop. Preserve exceptions and duplicate rules in task snapshots and preferences; use each downloaded folder as the rule root. No release requested.
+- 2026-09-11: Remove the redundant CLI `--exclude` flag at the user's request. Only `--ignore` is accepted; detached and resumed tasks use it while preserving the existing stored `exclude` array for compatibility.

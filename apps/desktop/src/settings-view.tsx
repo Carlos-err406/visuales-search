@@ -3,26 +3,33 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { AlertCircle, Check, FolderOpen, Info, RefreshCw, RotateCcw, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { InputGroup, InputGroupInput, InputGroupAddon } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { IconButton } from "./icon-button";
+import { HelpButton, HelpPopover, createHelpHandle } from "./help-button";
 import { isDesktop } from "./use-transfers";
 import type { useDesktopSettings } from "./use-desktop-settings";
-import { desktopSettingsLimits, type DesktopSettings } from "@visuales/core/desktop-settings-types";
+import {
+  desktopSettingsLimits,
+  normalizeDesktopExclusions,
+  type DesktopSettings,
+} from "@visuales/core/desktop-settings-types";
 import { downloadDefaults } from "@visuales/core/download/defaults";
 import { AppUpdatesSettings } from "./app-updates";
 import type { AppUpdates } from "./use-app-updates";
 import { AppearanceSettings } from "./appearance-settings";
 import type { AppearanceController } from "./use-appearance";
 
-type Draft = { output: string; concurrent: string; connections: string; maxRetries: string };
+type Draft = { output: string; concurrent: string; connections: string; maxRetries: string; exclude: string };
 const toDraft = (settings: DesktopSettings): Draft => ({
   output: settings.output,
   concurrent: String(settings.concurrent),
   connections: String(settings.connections),
   maxRetries: String(settings.maxRetries),
+  exclude: (settings.exclude ?? []).join("\n"),
 });
 
 export function SettingsView({
@@ -36,10 +43,11 @@ export function SettingsView({
 }) {
   const { snapshot, loading, error, saving, save, reload } = controller;
   const desktop = isDesktop();
-  const [draft, setDraft] = useState<Draft>(() => toDraft({ output: "", ...downloadDefaults }));
+  const [draft, setDraft] = useState<Draft>(() => toDraft({ output: "", exclude: [], ...downloadDefaults }));
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [helpHandle] = useState(createHelpHandle);
   const pickerBusy = useRef(false);
 
   useEffect(() => {
@@ -56,6 +64,12 @@ export function SettingsView({
     stored && Object.keys(draft).some((key) => draft[key as keyof Draft] !== stored[key as keyof Draft])
   );
   const errors: Partial<Record<keyof Draft, string>> = {};
+  let exclusions: string[] = [];
+  try {
+    exclusions = normalizeDesktopExclusions(draft.exclude.split(/\r?\n/).filter((line) => line.trim()));
+  } catch (error) {
+    errors.exclude = error instanceof Error ? error.message : String(error);
+  }
   if (!draft.output.trim()) errors.output = "Enter an output folder.";
   else if (!/^(?:\/|[A-Za-z]:[\\/]|\\\\|~(?:[\\/]|$))/.test(draft.output.trim()))
     errors.output = "Use an absolute path or ~/Downloads/Visuales.";
@@ -99,6 +113,7 @@ export function SettingsView({
         concurrent: Number(draft.concurrent),
         maxRetries: Number(draft.maxRetries),
         connections: Number(draft.connections),
+        exclude: exclusions,
       });
       setSaved(true);
     } catch (error) {
@@ -229,12 +244,11 @@ export function SettingsView({
             <div className="settings-row">
               <div className="settings-label">
                 <Label htmlFor="settings-connections">Connections per file</Label>
-                <IconButton
+                <HelpButton
+                  handle={helpHandle}
                   label="About connections per file"
                   description="Maximum parallel connections for each file. Small files, legacy partial files, and servers without reliable byte ranges use one connection."
-                >
-                  <Info size={14} />
-                </IconButton>
+                />
               </div>
               <div className="settings-control settings-number">
                 <Input
@@ -278,6 +292,35 @@ export function SettingsView({
                 )}
               </div>
             </div>
+            <div className="settings-row settings-exclusions-row">
+              <div className="settings-label">
+                <Label htmlFor="settings-exclude">Ignore rules</Label>
+                <HelpButton
+                  handle={helpHandle}
+                  label="About ignore rules"
+                  description="One rule per line, in order. !poster.jpg includes a file again; # starts a comment. Paths are relative to each downloaded folder. To keep a file inside an ignored directory, include its parent first. Explicitly selected files are still downloaded."
+                />
+              </div>
+              <div className="settings-control">
+                <Textarea
+                  id="settings-exclude"
+                  rows={3}
+                  spellCheck={false}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  placeholder={"*.jpg\n!poster.jpg\n# Keep cover artwork"}
+                  value={draft.exclude}
+                  onChange={(event) => edit("exclude", event.target.value)}
+                  aria-invalid={Boolean(errors.exclude)}
+                  aria-describedby={errors.exclude ? "settings-exclude-error" : undefined}
+                />
+                {errors.exclude && (
+                  <span className="settings-field-error" id="settings-exclude-error">
+                    {errors.exclude}
+                  </span>
+                )}
+              </div>
+            </div>
           </section>
         </fieldset>
         <AppUpdatesSettings updates={updates} />
@@ -312,6 +355,7 @@ export function SettingsView({
           </div>
         </footer>
       )}
+      <HelpPopover handle={helpHandle} />
     </form>
   );
 }
