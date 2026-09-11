@@ -27,7 +27,7 @@ export function useTransfers(paused = false) {
     if (inFlight.current) return inFlight.current;
     const request = (async () => {
       try {
-        const next = await invoke<Task[]>("list_download_tasks");
+        const next = await invoke<Task[]>("list_download_tasks", { refresh: force });
         if (mounted.current && !pausedRef.current) {
           setTasks(next);
           setConnectionError("");

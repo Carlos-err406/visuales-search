@@ -1,7 +1,11 @@
 mod folders;
 mod quit;
+mod relaunch;
 mod sidecar;
+mod task_monitor;
+mod tray;
 mod updates;
+mod windows;
 
 use serde_json::{json, Value};
 use tauri::Manager;
@@ -57,8 +61,16 @@ async fn preview_library_file(
 }
 
 #[tauri::command]
-async fn list_download_tasks(app: tauri::AppHandle) -> Result<Value, String> {
-    sidecar::request(&app, "tasks.list", json!({})).await
+async fn list_download_tasks(
+    app: tauri::AppHandle,
+    refresh: Option<bool>,
+) -> Result<Value, String> {
+    if refresh == Some(true) {
+        app.state::<task_monitor::TaskMonitor>().invalidate();
+    }
+    task_monitor::snapshot(&app)
+        .await
+        .map(|value| value["tasks"].clone())
 }
 
 #[tauri::command]
@@ -126,6 +138,15 @@ pub fn run() {
         .manage(sidecar::SidecarState::default())
         .manage(updates::UpdateState::default())
         .manage(quit::QuitState::default())
+        .manage(task_monitor::TaskMonitor::default())
+        .manage(tray::TrayState::default())
+        .setup(|app| {
+            if let Err(error) = tray::setup(app.handle()) {
+                eprintln!("Tray unavailable; use the Downloads view: {error}");
+            }
+            task_monitor::start(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             search_content,
             list_library_directory,
@@ -135,6 +156,11 @@ pub fn run() {
             save_desktop_settings,
             folders::open_output_folder,
             list_download_tasks,
+            tray::tray_snapshot,
+            tray::dismiss_tray,
+            tray::open_downloads,
+            tray::take_download_navigation,
+            tray::quit_from_tray,
             start_download,
             cancel_download_task,
             delete_download_task,
@@ -148,8 +174,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building visuales desktop app")
         .run(|app, event| {
+            windows::handle_event(app, &event);
             quit::handle_event(app, &event);
             if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<task_monitor::TaskMonitor>().stop();
                 app.state::<sidecar::SidecarState>().shutdown();
             }
         });

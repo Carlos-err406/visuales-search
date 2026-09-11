@@ -139,6 +139,7 @@ pub fn handle_event(app: &tauri::AppHandle, event: &tauri::RunEvent) {
         let state = app.state::<QuitState>();
         if approved {
             state.approved.store(true, Ordering::SeqCst);
+            app.state::<crate::task_monitor::TaskMonitor>().stop();
             // Let owned workers close their files and persist resumable state
             // before ending the native event loop. Never stop external CLI jobs.
             let _ = app

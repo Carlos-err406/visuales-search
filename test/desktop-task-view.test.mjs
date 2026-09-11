@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { transform } from "esbuild";
+import { build } from "esbuild";
 
-const source = await readFile(new URL("../apps/desktop/src/task-view.ts", import.meta.url), "utf8");
-const { code } = await transform(source, { loader: "ts", format: "esm" });
+const bundled = await build({
+  entryPoints: ["apps/desktop/src/task-view.ts"],
+  bundle: true,
+  write: false,
+  format: "esm",
+});
+const code = bundled.outputFiles[0].text;
 const view = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 
 test("desktop names decode folder URLs and distinguish batches", () => {
@@ -16,6 +20,13 @@ test("desktop names decode folder URLs and distinguish batches", () => {
 });
 
 test("desktop progress distinguishes unknown size, queued work and verified completion", () => {
+  assert.equal(
+    view.taskProgress({
+      status: "running",
+      overallProgress: { downloadedBytes: 90, totalBytes: 1000, completedFiles: 6, totalFiles: 7 },
+    }),
+    9
+  );
   assert.equal(view.taskProgress({ status: "running" }), null);
   assert.equal(view.taskProgress({ status: "queued" }), 0);
   assert.equal(view.taskProgress({ status: "completed" }), 100);

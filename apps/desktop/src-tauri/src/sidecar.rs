@@ -24,6 +24,9 @@ pub struct SidecarState {
 }
 
 impl SidecarState {
+    pub fn is_suspended(&self) -> bool {
+        self.suspended.load(Ordering::SeqCst)
+    }
     pub fn shutdown(&self) {
         if let Some(bridge) = self.bridge.lock().unwrap().as_ref() {
             if let Some(stop) = bridge.stop.lock().unwrap().take() {
@@ -116,6 +119,7 @@ impl Bridge {
             .join("resources/sidecar.cjs");
         let app = app.clone();
         Self::spawn_process(runtime, script, move || {
+            app.state::<crate::task_monitor::TaskMonitor>().invalidate();
             let _ = app.emit("tasks-changed", ());
         })
     }

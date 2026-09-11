@@ -3,12 +3,18 @@ title: Cross-platform menu bar and tray progress
 type: feat
 status: draft
 date: 2026-09-10
-origin: .context/compound-engineering/todos/002-pending-p3-menu-bar-progress.md
+origin: .context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md
 ---
 
 # Cross-Platform Menu Bar and Tray Progress
 
+## September 11 Implementation Amendment
+
+The user selected and authorized option 3: a custom Mini Downloads popup, replacing the native-menu-only presentation and the earlier no-second-webview constraint. macOS and Windows now use a compact themed popup; Linux and right-click access use a native summary menu. Status-only scope, shared CLI/desktop state, and unchanged close/quit behavior remain approved. Following testing with uneven file sizes, bars use byte progress matching Downloads; file counts are secondary and unknown byte totals have no bar. See [implementation and verification](../menu-bar-progress.md). Local implementation and macOS verification are underway; Windows/Linux native verification remains required before release. The original sections below record the earlier plan, not the revised popup layout.
+
 ## Scope and Requirements
+
+Additional September 11 authorization supersedes status-only for the custom popup: explicit folder and interrupt/resume controls, a status filter defaulting to Active, and non-clickable rows. Existing desktop commands handle actions; native fallback menus remain status-only. No close/quit lifecycle change or release is included.
 
 Show transfer status without bringing the main window forward. The user approved macOS, Windows, and Linux, **status-only while the app is running**, with no change to close/quit behavior. This document plans the feature; it does not authorize implementation or a release.
 

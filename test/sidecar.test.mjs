@@ -533,6 +533,10 @@ describe("packaged Node sidecar", () => {
     await assert.rejects(rpc.request("missing"), /Unknown method/);
     await assert.rejects(rpc.request("download.start", { urls: ["file:///etc/hosts"], output: home }), /HTTP/);
     assert.ok(Array.isArray(await rpc.request("tasks.list")));
+    const snapshot = await rpc.request("tasks.snapshot");
+    assert.ok(Array.isArray(snapshot.tasks));
+    assert.equal(snapshot.summary.running, snapshot.tasks.filter((task) => task.status === "running").length);
+    assert.equal(snapshot.summary.queued, snapshot.tasks.filter((task) => task.status === "queued").length);
   });
 
   it("uses the CLI search cache and stable aliases", async () => {

@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { TrayPopup } from "./tray-popup";
 import { open } from "@tauri-apps/plugin-dialog";
 import { IconButton, IconTooltipProvider } from "./icon-button";
 import { Button } from "@/components/ui/button";
@@ -270,6 +272,28 @@ function App() {
   const searchList = useRef<HTMLDivElement>(null);
   const downloadsList = useRef<HTMLDivElement>(null);
   const scrollPositions = useRef({ search: 0, downloads: 0 });
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let stopped = false;
+    const navigate = async () => {
+      const id = await invoke<string | null>("take_download_navigation");
+      if (stopped || typeof id !== "string") return;
+      setFilter("all");
+      setTaskQuery(id);
+      setView("downloads");
+    };
+    const unlisten = listen("open-downloads", () => void navigate().catch(() => {}));
+    void unlisten
+      .then(() => {
+        if (!stopped) return navigate();
+      })
+      .catch(() => {});
+    return () => {
+      stopped = true;
+      void unlisten.then((stop) => stop()).catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     void loadSearch("");
@@ -925,7 +949,7 @@ function App() {
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <IconTooltipProvider>
-      <App />
+      {new URLSearchParams(window.location.search).has("tray") ? <TrayPopup /> : <App />}
     </IconTooltipProvider>
   </React.StrictMode>
 );
