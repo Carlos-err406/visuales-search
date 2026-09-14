@@ -10,6 +10,8 @@ const previewDefaults: DesktopSettings = {
   connections: downloadDefaults.connections,
   maxRetries: downloadDefaults.maxRetries,
   exclude: [],
+  notifyCompleted: true,
+  notifyFailed: true,
 };
 
 export function useDesktopSettings() {

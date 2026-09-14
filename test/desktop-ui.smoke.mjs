@@ -77,8 +77,12 @@ try {
         connections: 3,
         maxRetries: 3,
         exclude: [],
+        notifyCompleted: true,
+        notifyFailed: true,
       },
       settingsDefaults: {
+        notifyCompleted: true,
+        notifyFailed: true,
         output: "/Users/carlos/Downloads/Visuales",
         concurrent: 5,
         connections: 3,
@@ -289,6 +293,28 @@ try {
   await restoreDefaults.click();
   assert.equal(await settingsFooter.count(), 0, "restoring unchanged defaults stays clean");
   await page.screenshot({ path: `${screenshots}/settings-default.png` });
+  const completedAlerts = page.getByRole("checkbox", { name: "Completed downloads", exact: true });
+  const failedAlerts = page.getByRole("checkbox", { name: "Failed downloads", exact: true });
+  assert.equal(await completedAlerts.isChecked(), true);
+  assert.equal(await failedAlerts.isChecked(), true);
+  await completedAlerts.click();
+  assert.equal(await saveSettings.isEnabled(), true);
+  await page.getByRole("button", { name: "Discard", exact: true }).click();
+  assert.equal(await completedAlerts.isChecked(), true);
+  assert.equal(await settingsFooter.count(), 0);
+  await completedAlerts.click();
+  await saveSettings.click();
+  await page.getByText("Saved", { exact: true }).waitFor();
+  await page.reload();
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  assert.equal(await completedAlerts.isChecked(), false, "completion preference survives reload");
+  assert.equal(await failedAlerts.isChecked(), true, "failure preference is independent");
+  await page.locator(".settings-notifications").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${screenshots}/settings-notifications.png` });
+  await restoreDefaults.click();
+  await saveSettings.click();
+  await page.getByText("Saved", { exact: true }).waitFor();
+  assert.equal(await completedAlerts.isChecked(), true);
   await concurrentFiles.fill("2");
   assert.equal(await settingsFooter.count(), 1, "editing shows actions");
   await concurrentFiles.fill("5");

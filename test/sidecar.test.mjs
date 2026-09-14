@@ -609,6 +609,111 @@ describe("packaged Node sidecar", () => {
     await assert.rejects(fs.access(path.join(home, "blocked", "blocked.bin")));
   });
 
+  it("notifies once per desktop run, without history, CLI transfers, interruptions, or disabled events", async () => {
+    const client = await startRpc();
+    const original = (await client.request("settings.get")).settings;
+    const drain = () => client.request("notifications.take");
+    async function waitForNotice() {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        const notices = await drain();
+        if (notices.length) return notices;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.fail("Expected a terminal notification event");
+    }
+    async function settled(id, status) {
+      await waitForTask(id, status, client);
+      // The terminal event is flushed before the worker exits; let close cleanup finish.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    try {
+      assert.deepEqual(await drain(), [], "new sidecar must not replay shared history");
+      await client.request("settings.save", {
+        settings: { ...original, notifyCompleted: true, notifyFailed: true, maxRetries: 0 },
+      });
+      const task = await client.request("download.start", {
+        urls: [server.url("normal", "notification.bin")],
+        output: path.join(home, "notification-complete"),
+      });
+      const [notice] = await waitForNotice();
+      assert.equal(notice.taskId, task.id);
+      assert.equal(notice.status, "completed");
+      assert.equal(notice.name, "notification.bin");
+      assert.ok(Date.now() - notice.at < 10000);
+      await settled(task.id, "completed");
+      await client.request("tasks.snapshot");
+      assert.deepEqual(await drain(), [], "polls and worker close do not repeat notifications");
+      const observer = await startRpc();
+      try {
+        assert.deepEqual(await observer.request("notifications.take"), [], "another desktop session stays quiet");
+      } finally {
+        await observer.close();
+      }
+
+      const failed = await client.request("download.start", {
+        urls: [server.url("unavailable", "notification-blocked.bin")],
+        output: path.join(home, "notification-failed"),
+      });
+      assert.equal((await waitForNotice())[0].status, "failed");
+      await settled(failed.id, "failed");
+      await client.request("tasks.resume", { id: failed.id });
+      assert.equal((await waitForNotice())[0].taskId, failed.id, "a resumed run can notify again");
+      await settled(failed.id, "failed");
+      assert.deepEqual(await drain(), []);
+
+      const canceled = await client.request("download.start", {
+        urls: [`${slowUrl}/notification-cancel.bin`],
+        output: path.join(home, "notification-cancel"),
+      });
+      await client.request("tasks.cancel", { id: canceled.id });
+      await settled(canceled.id, "interrupted");
+      assert.deepEqual(await drain(), [], "manual interruptions never notify");
+
+      const cli = spawn(
+        process.execPath,
+        [
+          path.resolve("dist/cli.js"),
+          "download",
+          server.url("normal", "notification-cli.bin"),
+          "--output",
+          path.join(home, "notification-cli"),
+        ],
+        {
+          env: { ...process.env, HOME: home, USERPROFILE: home },
+          stdio: "ignore",
+        }
+      );
+      assert.equal((await once(cli, "close"))[0], 0);
+      await client.request("tasks.snapshot");
+      assert.deepEqual(await drain(), [], "CLI completion never creates a desktop event");
+
+      for (const [notifyCompleted, notifyFailed] of [
+        [false, true],
+        [true, false],
+        [false, false],
+      ]) {
+        await client.request("settings.save", {
+          settings: { ...original, maxRetries: 0, notifyCompleted, notifyFailed },
+        });
+        const complete = await client.request("download.start", {
+          urls: [server.url("normal", "muted.bin")],
+          output: path.join(home, `notification-muted-${notifyCompleted}-${notifyFailed}`),
+        });
+        await settled(complete.id, "completed");
+        assert.equal((await drain()).length, Number(notifyCompleted));
+        await client.request("tasks.resume", { id: failed.id });
+        await settled(failed.id, "failed");
+        assert.equal((await drain()).length, Number(notifyFailed));
+      }
+      await client.request("settings.save", { settings: original });
+      assert.deepEqual(await drain(), [], "reenabling preferences does not replay muted events");
+    } finally {
+      await client.request("settings.save", { settings: original });
+      await client.close();
+    }
+  });
+
   it("cancels and resumes a partial download without restarting from zero", async () => {
     const output = path.join(home, "resumable");
     const task = await rpc.request("download.start", { urls: [`${slowUrl}/resume.bin`], output });

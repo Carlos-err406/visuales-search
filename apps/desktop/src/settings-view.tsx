@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { AlertCircle, Check, FolderOpen, Info, RefreshCw, RotateCcw, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { InputGroup, InputGroupInput, InputGroupAddon } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
@@ -23,13 +24,23 @@ import type { AppUpdates } from "./use-app-updates";
 import { AppearanceSettings } from "./appearance-settings";
 import type { AppearanceController } from "./use-appearance";
 
-type Draft = { output: string; concurrent: string; connections: string; maxRetries: string; exclude: string };
+type Draft = {
+  output: string;
+  concurrent: string;
+  connections: string;
+  maxRetries: string;
+  exclude: string;
+  notifyCompleted: boolean;
+  notifyFailed: boolean;
+};
 const toDraft = (settings: DesktopSettings): Draft => ({
   output: settings.output,
   concurrent: String(settings.concurrent),
   connections: String(settings.connections),
   maxRetries: String(settings.maxRetries),
   exclude: (settings.exclude ?? []).join("\n"),
+  notifyCompleted: settings.notifyCompleted ?? true,
+  notifyFailed: settings.notifyFailed ?? true,
 });
 
 export function SettingsView({
@@ -43,7 +54,9 @@ export function SettingsView({
 }) {
   const { snapshot, loading, error, saving, save, reload } = controller;
   const desktop = isDesktop();
-  const [draft, setDraft] = useState<Draft>(() => toDraft({ output: "", exclude: [], ...downloadDefaults }));
+  const [draft, setDraft] = useState<Draft>(() =>
+    toDraft({ output: "", exclude: [], notifyCompleted: true, notifyFailed: true, ...downloadDefaults })
+  );
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -80,7 +93,7 @@ export function SettingsView({
       errors[key] = `Enter a whole number from ${min} to ${max}.`;
   }
 
-  function edit(key: keyof Draft, value: string) {
+  function edit<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
     setSaved(false);
     setSaveError("");
@@ -114,6 +127,8 @@ export function SettingsView({
         maxRetries: Number(draft.maxRetries),
         connections: Number(draft.connections),
         exclude: exclusions,
+        notifyCompleted: draft.notifyCompleted,
+        notifyFailed: draft.notifyFailed,
       });
       setSaved(true);
     } catch (error) {
@@ -319,6 +334,38 @@ export function SettingsView({
                     {errors.exclude}
                   </span>
                 )}
+              </div>
+            </div>
+          </section>
+          <section className="settings-section settings-notifications" aria-labelledby="notifications-heading">
+            <div className="settings-label">
+              <h3 id="notifications-heading">Notifications</h3>
+              <HelpButton
+                handle={helpHandle}
+                label="About download notifications"
+                description="Alerts for transfers started or resumed in this desktop session, while the main window is in the background. CLI-only transfers and manual interruptions stay quiet. Delivery follows your system notification settings."
+              />
+            </div>
+            <div className="settings-row">
+              <Label htmlFor="settings-notify-completed">Completed downloads</Label>
+              <div className="settings-notification-control">
+                <Checkbox
+                  id="settings-notify-completed"
+                  checked={draft.notifyCompleted}
+                  disabled={!desktop || saving || picking}
+                  onCheckedChange={(checked) => edit("notifyCompleted", checked)}
+                />
+              </div>
+            </div>
+            <div className="settings-row">
+              <Label htmlFor="settings-notify-failed">Failed downloads</Label>
+              <div className="settings-notification-control">
+                <Checkbox
+                  id="settings-notify-failed"
+                  checked={draft.notifyFailed}
+                  disabled={!desktop || saving || picking}
+                  onCheckedChange={(checked) => edit("notifyFailed", checked)}
+                />
               </div>
             </div>
           </section>

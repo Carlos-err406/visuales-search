@@ -352,6 +352,14 @@ h3 {
   font-weight: 400;
   font-size: 13px;
 }
+.settings-notifications h3 {
+  margin: 0;
+}
+.settings-notification-control {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+}
 .settings-control {
   min-width: 0;
 }

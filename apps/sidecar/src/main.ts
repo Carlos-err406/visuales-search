@@ -21,7 +21,7 @@ import {
 } from "@visuales/core";
 import { createDownloadTargets } from "@visuales/core/download/targets";
 import { downloadDefaults } from "@visuales/core/download/defaults";
-import { summarizeTransfers } from "@visuales/core/download/transfer-summary";
+import { summarizeTransfers, transferName } from "@visuales/core/download/transfer-summary";
 import { loadDesktopSettings, saveDesktopSettings, resolveDesktopOutput } from "@visuales/core/desktop-settings";
 import { listLibraryDirectory, previewLibraryFile } from "@visuales/core/library";
 
@@ -29,13 +29,15 @@ const PROTOCOL_VERSION = 1;
 setLogger({ log: (...values) => console.error(...values), error: (...values) => console.error(...values) });
 
 type WorkerConfig = { taskId: string; urls: string[]; options: DownloadOptions; queue: boolean };
-type WorkerMessage = { type: "ready" } | { type: "changed"; taskId: string };
+type WorkerMessage = { type: "ready" } | { type: "finished"; taskId: string; status: "completed" | "failed" };
+type TransferNotice = { taskId: string; name: string; status: "completed" | "failed"; at: number };
 
 async function runWorker(config: WorkerConfig) {
   const { taskId, urls, queue } = config;
   // JSON transports Infinity as null; task records use the explicit string "Infinity".
   const options = { ...config.options, timeout: config.options.timeout ?? Infinity };
   let progressWrites = Promise.resolve();
+  let status: "completed" | "failed" = "completed";
   const onProgress = (progress: DownloadProgress) => {
     progressWrites = progressWrites.then(() => updateDownloadTaskProgress(taskId, progress));
     // Avoid an unhandled rejection while the transfer is still producing progress.
@@ -53,8 +55,14 @@ async function runWorker(config: WorkerConfig) {
   } catch (error) {
     await progressWrites.catch(() => {});
     await failDownloadTask(taskId, error);
+    status = "failed";
   }
-  process.send?.({ type: "changed", taskId });
+  // Flush the terminal event before exiting, including transfers faster than a poll.
+  await new Promise<void>((resolve) => {
+    if (process.send)
+      process.send({ type: "finished", taskId, status } satisfies WorkerMessage, undefined, undefined, () => resolve());
+    else resolve();
+  });
 }
 
 if (process.argv.includes("--worker")) {
@@ -79,7 +87,8 @@ if (process.argv.includes("--worker")) {
 }
 
 async function runServer() {
-  const workers = new Map<string, { child: ChildProcess; closed: Promise<void> }>();
+  const workers = new Map<string, { child: ChildProcess; closed: Promise<void>; silence: () => void }>();
+  const notices: TransferNotice[] = [];
   const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
   let shuttingDown = false;
   const send = (value: unknown) => {
@@ -98,6 +107,7 @@ async function runServer() {
     });
     child.stderr?.pipe(process.stderr, { end: false });
     let taskRegistered = false;
+    let notificationAllowed = true;
     const closed = new Promise<void>((resolve) => {
       child.once("close", () => {
         void (async () => {
@@ -114,7 +124,7 @@ async function runServer() {
           .finally(resolve);
       });
     });
-    workers.set(taskId, { child, closed });
+    workers.set(taskId, { child, closed, silence: () => (notificationAllowed = false) });
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("Download worker did not start")), 15000);
@@ -135,7 +145,21 @@ async function runServer() {
       });
       const task = await startDownloadTaskWithPid(urls, options, child.pid!, undefined, queue ? "queued" : "running");
       taskRegistered = true;
-      child.on("message", changed);
+      child.on("message", (message: WorkerMessage) => {
+        if (
+          message.type === "finished" &&
+          message.taskId === taskId &&
+          (message.status === "completed" || message.status === "failed") &&
+          notificationAllowed &&
+          !shuttingDown
+        ) {
+          notificationAllowed = false;
+          notices.push({ taskId, name: transferName(task), status: message.status, at: Date.now() });
+          // Session-only, bounded outbox: never replay task history after launch.
+          if (notices.length > 100) notices.shift();
+        }
+        changed();
+      });
       await new Promise<void>((resolve, reject) => {
         child.send({ taskId, urls, options, queue } satisfies WorkerConfig, (error) =>
           error ? reject(error) : resolve()
@@ -179,6 +203,18 @@ async function runServer() {
       case "tasks.snapshot": {
         const tasks = await listDownloadTasks();
         return { tasks, summary: summarizeTransfers(tasks) };
+      }
+      case "notifications.take": {
+        // Read before draining: failed settings reads must not bypass disabled preferences.
+        const { settings } = await loadDesktopSettings();
+        return notices.splice(0).filter((notice) => {
+          const age = Date.now() - notice.at;
+          return (
+            age >= 0 &&
+            age <= 30000 &&
+            (notice.status === "completed" ? settings.notifyCompleted : settings.notifyFailed)
+          );
+        });
       }
       case "tasks.prepareQuit": {
         const tasks = await listDownloadTasks();
@@ -239,7 +275,11 @@ async function runServer() {
       case "tasks.delete": {
         const id = string(params.id, "id");
         const owned = workers.get(id);
+        for (let index = notices.length - 1; index >= 0; index--) {
+          if (notices[index].taskId === id) notices.splice(index, 1);
+        }
         if (owned) {
+          owned.silence();
           owned.child.kill();
           await owned.closed;
           if (method === "tasks.cancel") await interruptDownloadTask(id, "canceled");

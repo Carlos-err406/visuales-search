@@ -34,7 +34,15 @@ after(async () => {
 
 test("desktop settings persist atomically, validate strictly, and survive cache clearing", async () => {
   const nativeOutput = path.join(home, "Native Downloads", "Visuales");
-  const defaults = { output: nativeOutput, concurrent: 5, connections: 3, maxRetries: 3, exclude: [] };
+  const notifications = { notifyCompleted: true, notifyFailed: true };
+  const defaults = {
+    output: nativeOutput,
+    concurrent: 5,
+    connections: 3,
+    maxRetries: 3,
+    exclude: [],
+    ...notifications,
+  };
   const program = new Command();
   setupDownloadCommand(program);
   const cliDefaults = program.commands.find((command) => command.name() === "download").opts();
@@ -68,13 +76,15 @@ test("desktop settings persist atomically, validate strictly, and survive cache 
   const legacy = { output: nativeOutput, concurrent: 7, connections: 2, maxRetries: 0 };
   const legacyDocument = JSON.stringify({ version: 1, settings: legacy });
   await fs.writeFile(settingsFile, legacyDocument);
-  assert.deepEqual((await loadDesktopSettings(nativeOutput)).settings, { ...legacy, exclude: [] });
+  assert.deepEqual((await loadDesktopSettings(nativeOutput)).settings, { ...legacy, exclude: [], ...notifications });
   assert.equal(
     await fs.readFile(settingsFile, "utf8"),
     legacyDocument,
     "loading old preferences does not rewrite them"
   );
   const custom = {
+    notifyCompleted: false,
+    notifyFailed: true,
     output: "~/Custom Downloads",
     concurrent: 2,
     connections: 4,
@@ -106,6 +116,9 @@ test("desktop settings persist atomically, validate strictly, and survive cache 
     { ...custom, connections: 9 },
     { ...custom, connections: 1.5 },
     { ...custom, unknown: true },
+    { ...custom, notifyCompleted: "false" },
+    { ...custom, notifyFailed: null },
+    { ...custom, notifyFailed: 0 },
     ...[null, "*.jpg", [5], ["x\0"], ["x\ny"], ["x".repeat(513)], Array(101).fill("*.jpg")].map((exclude) => ({
       ...custom,
       exclude,
