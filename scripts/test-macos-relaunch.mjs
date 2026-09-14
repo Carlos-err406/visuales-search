@@ -51,7 +51,7 @@ for (let round = 1; round <= 2; round++) {
     assert(passed, `Native relaunch timed out\n${output}`);
     assert.equal(await closed, 0, output);
     console.log(
-      `Native relaunch round ${round}: startup, hidden/minimized reopen, exit lifecycle, and restarted window passed`
+      `Native relaunch round ${round}: startup, hidden/minimized reopen, exit lifecycle, restored window size, and popup exclusion passed`
     );
   } finally {
     // Only verified processes from this temporary bundle, never installed apps.

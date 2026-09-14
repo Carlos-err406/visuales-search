@@ -65,6 +65,8 @@ Packaged macOS restarts use Launch Services (`open -n -a`) so the new bundle is 
 
 The native smoke test complements signature/package checks and browser mocks; it does not replace a signed old-to-new update rehearsal or Windows/Linux platform testing.
 
+The main window remembers its last normal size and maximized state through Tauri's native window-state plugin. It is restored before presentation; visibility, minimized state, fullscreen, and tray popup geometry are not restored. Window state lives in the platform app configuration directory, separate from CLI settings and download history. The native relaunch smoke test uses an isolated state file and also verifies size restoration after restarting from a minimized window, with the tray popup excluded.
+
 ## First Release
 
 `v1.3.10` already exists as a CLI release. Do not reuse or move that tag. After committing this migration and configuring signing:
