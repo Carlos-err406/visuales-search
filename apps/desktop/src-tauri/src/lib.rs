@@ -157,6 +157,7 @@ async fn resume_download_task(app: tauri::AppHandle, id: String) -> Result<Value
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(windows::state_builder().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(sidecar::SidecarState::default())

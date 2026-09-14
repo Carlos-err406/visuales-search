@@ -28,10 +28,19 @@ fn main() {
     context.config_mut().app.windows.clear();
     context.config_mut().identifier = "cu.uclv.visuales.relaunch-test".into();
     tauri::Builder::default()
+        .plugin(
+            windows::state_builder()
+                .with_filename(directory.join("window-state.json").to_string_lossy().into_owned())
+                .build(),
+        )
         .setup(|app| {
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External("about:blank".parse()?))
                 .title("Visuales relaunch test")
                 .inner_size(400.0, 240.0)
+                .visible(false)
+                .build()?;
+            WebviewWindowBuilder::new(app, "tray-popup", WebviewUrl::External("about:blank".parse()?))
+                .inner_size(200.0, 120.0)
                 .visible(false)
                 .build()?;
             app.hide()?;
@@ -77,6 +86,28 @@ fn main() {
                     };
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     check("startup")?;
+                    let size = window.inner_size().map_err(|e| e.to_string())?
+                        .to_logical::<f64>(window.scale_factor().map_err(|e| e.to_string())?);
+                    let expected = if restarted { (620.0, 360.0) } else { (400.0, 240.0) };
+                    if (size.width - expected.0).abs() > 1.0 || (size.height - expected.1).abs() > 1.0 {
+                        return Err(format!("window size was not restored: {size:?}, expected {expected:?}"));
+                    }
+                    let popup = app.get_webview_window("tray-popup").ok_or("missing popup")?;
+                    if popup.is_visible().map_err(|e| e.to_string())? {
+                        return Err("window persistence unexpectedly showed the popup".into());
+                    }
+                    if restarted {
+                        let saved: serde_json::Value = serde_json::from_slice(
+                            &fs::read(directory.join("window-state.json")).map_err(|e| e.to_string())?
+                        ).map_err(|e| e.to_string())?;
+                        if saved.get("main").is_none() || saved.get("tray-popup").is_some() {
+                            return Err("window persistence must track only the main window".into());
+                        }
+                    } else {
+                        window.set_size(tauri::LogicalSize::new(620.0, 360.0)).map_err(|e| e.to_string())?;
+                        popup.set_size(tauri::LogicalSize::new(300.0, 180.0)).map_err(|e| e.to_string())?;
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                    }
                     window.minimize().map_err(|e| e.to_string())?;
                     app.hide().map_err(|e| e.to_string())?;
                     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -115,6 +146,8 @@ fn main() {
                     } else {
                         fs::write(directory.join("restarting"), b"yes")
                             .map_err(|e| e.to_string())?;
+                        window.minimize().map_err(|e| e.to_string())?;
+                        tokio::time::sleep(Duration::from_millis(300)).await;
                         relaunch::restart(app.clone()).await?;
                     }
                     Ok(())

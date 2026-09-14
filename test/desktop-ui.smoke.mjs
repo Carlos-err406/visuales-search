@@ -13,6 +13,7 @@ import { testSettingsHelp } from "./desktop-help.smoke.mjs";
 import { testTrayPopup } from "./desktop-tray.smoke.mjs";
 import { testQueueManagement } from "./desktop-queue.smoke.mjs";
 import { testTransferInspector } from "./desktop-inspector.smoke.mjs";
+import { testSearchCache } from "./desktop-search-cache.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -277,6 +278,8 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  await page.getByRole("treeitem", { name: "Library", exact: true }).waitFor();
+  await testSearchCache({ page });
   await testTreeExpansion({ page, screenshots });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
   await page.getByRole("treeitem", { name: "Library", exact: true }).waitFor();

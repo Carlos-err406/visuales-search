@@ -14,6 +14,20 @@ const entry = (path, text = "") => ({
   directory: "",
   isDirectoryLink: path.endsWith("/"),
 });
+test("tree sorting keeps folders first and uses natural numeric order", () => {
+  const tree = buildSearchTree([
+    entry("/Library/Album%2010/"),
+    entry("/Library/1.txt"),
+    entry("/Library/Album%202/"),
+    entry("/Library/Album%201/"),
+    entry("/Library/10.txt"),
+    entry("/Library/2.txt"),
+  ]);
+  assert.deepEqual(
+    tree[0].children.map((node) => node.name),
+    ["Album 1", "Album 2", "Album 10", "1.txt", "2.txt", "10.txt"]
+  );
+});
 test("index and live-listing URL spellings identify the same folder and descendants", () => {
   const tree = buildSearchTree([
     entry("/Movies/2013/2%20Guns%20(2013)/"),

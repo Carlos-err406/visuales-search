@@ -33,6 +33,7 @@ export function canonicalTreeUrl(value: string): string {
 export function buildSearchTree(entries: LibraryEntry[]): SearchTreeNode[] {
   const nodes = new Map<string, SearchTreeNode>();
   const roots: SearchTreeNode[] = [];
+  const names = new Intl.Collator(undefined, { numeric: true });
   for (const entry of entries) {
     let parsed: URL;
     try {
@@ -66,9 +67,7 @@ export function buildSearchTree(entries: LibraryEntry[]): SearchTreeNode[] {
     }
   }
   function sort(nodes: SearchTreeNode[]) {
-    nodes.sort(
-      (a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name, undefined, { numeric: true })
-    );
+    nodes.sort((a, b) => Number(b.directory) - Number(a.directory) || names.compare(a.name, b.name));
     nodes.forEach((node) => sort(node.children));
   }
   sort(roots);

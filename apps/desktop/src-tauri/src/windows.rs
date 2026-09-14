@@ -1,5 +1,14 @@
 use tauri::Manager;
 
+pub fn state_builder() -> tauri_plugin_window_state::Builder {
+    use tauri_plugin_window_state::StateFlags;
+
+    tauri_plugin_window_state::Builder::default()
+        .with_filter(|label| label == "main")
+        // Keep startup visibility and the tray popup under the existing native handlers.
+        .with_state_flags(StateFlags::SIZE | StateFlags::MAXIMIZED)
+}
+
 pub fn handle_event(app: &tauri::AppHandle, event: &tauri::RunEvent) {
     let present = match event {
         tauri::RunEvent::Ready => true,
