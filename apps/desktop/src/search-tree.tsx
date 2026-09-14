@@ -25,35 +25,45 @@ import {
 } from "@visuales/core/search-tree";
 import { previewKind, type LibraryEntry } from "@visuales/core/library-types";
 
-type Listing = { entries?: LibraryEntry[]; loading?: boolean; error?: string };
+type Listing = { loading?: boolean; error?: string };
+
+function normalizeEntries(entries: LibraryEntry[]) {
+  return entries.map((entry) => ({ ...entry, encodedUrl: canonicalTreeUrl(entry.encodedUrl) }));
+}
 
 export function useSearchBrowser(results: LibraryEntry[], autoExpand = true) {
   const [listings, setListings] = useState<Record<string, Listing>>({});
+  const [contents, setContents] = useState<Record<string, LibraryEntry[]>>({});
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const generation = useRef(0);
   const pending = useRef(new Set<string>());
+  const indexedEntries = useMemo(() => normalizeEntries(results), [results]);
   const entries = useMemo(() => {
     const all = new Map<string, LibraryEntry>();
     function merge(entry: LibraryEntry) {
-      const encodedUrl = canonicalTreeUrl(entry.encodedUrl);
-      all.set(encodedUrl, { ...entry, encodedUrl, size: entry.size ?? all.get(encodedUrl)?.size });
+      const size = entry.size ?? all.get(entry.encodedUrl)?.size;
+      all.set(entry.encodedUrl, size === entry.size ? entry : { ...entry, size });
     }
-    Object.values(listings).forEach((listing) => listing.entries?.forEach(merge));
-    results.forEach(merge);
+    Object.values(contents).forEach((listing) => listing.forEach(merge));
+    indexedEntries.forEach(merge);
     return [...all.values()];
-  }, [results, listings]);
+  }, [indexedEntries, contents]);
   const tree = useMemo(() => buildSearchTree(entries), [entries]);
   const isOpen = (node: SearchTreeNode) =>
     !collapsed.has(node.url) && (opened.has(node.url) || (autoExpand && node.children.length > 0));
   async function load(node: SearchTreeNode, refresh = false) {
-    if (pending.current.has(node.url) || (!refresh && listings[node.url]?.entries)) return;
+    if (pending.current.has(node.url) || (!refresh && contents[node.url])) return;
     const version = generation.current;
     pending.current.add(node.url);
     setListings((current) => ({ ...current, [node.url]: { ...current[node.url], loading: true, error: undefined } }));
     try {
-      const contents = await invoke<LibraryEntry[]>("list_library_directory", { url: node.url, refresh });
-      if (generation.current === version) setListings((current) => ({ ...current, [node.url]: { entries: contents } }));
+      const entries = await invoke<LibraryEntry[]>("list_library_directory", { url: node.url, refresh });
+      if (generation.current === version) {
+        const normalized = normalizeEntries(entries);
+        setContents((current) => ({ ...current, [node.url]: normalized }));
+        setListings((current) => ({ ...current, [node.url]: {} }));
+      }
     } catch (error) {
       if (generation.current === version)
         setListings((current) => ({
@@ -84,10 +94,11 @@ export function useSearchBrowser(results: LibraryEntry[], autoExpand = true) {
     generation.current++;
     pending.current.clear();
     setListings({});
+    setContents({});
     setOpened(new Set());
     setCollapsed(new Set());
   }
-  return { tree, entries, listings, isOpen, toggle, load, showContents, reset };
+  return { tree, entries, listings, contents, isOpen, toggle, load, showContents, reset };
 }
 
 export function SearchTree({
@@ -246,6 +257,7 @@ export function SearchTree({
       >
         {rows.map(({ node, depth, pos, size, index, item }) => {
           const listing = browser.listings[node.url];
+          const contents = browser.contents[node.url];
           const checkState = selectionStates.get(node.url) ?? false;
           const open = node.directory && browser.isOpen(node);
           const kind = node.directory ? null : previewKind(node.url);
@@ -315,7 +327,7 @@ export function SearchTree({
                 <div className="tree-actions">
                   {refreshing ? (
                     <Spinner size={14} aria-label="Refreshing folder contents" className="tree-refresh-spinner" />
-                  ) : node.directory && listing?.entries ? (
+                  ) : node.directory && contents ? (
                     <IconButton
                       label={`Refresh ${node.name}`}
                       tooltip="Refresh folder"
@@ -365,29 +377,28 @@ export function SearchTree({
                   </IconButton>
                 </div>
               </div>
-              {open &&
-                (loadingEmpty || listing?.error || (listing?.entries?.length === 0 && node.children.length === 0)) && (
-                  <div
-                    className="tree-feedback"
-                    style={{ paddingInlineStart: `calc(${30 + Math.min(depth - 1, 8) * 18}px + var(--tree-gap))` }}
-                  >
-                    {listing.loading ? (
-                      <span role="status">
-                        <Spinner size={14} />
-                        Loading folder contents
-                      </span>
-                    ) : listing.error ? (
-                      <>
-                        <span role="alert">{listing.error}</span>
-                        <Button variant="link" disabled={disabled} onClick={() => void browser.load(node, true)}>
-                          Retry
-                        </Button>
-                      </>
-                    ) : (
-                      <span>Folder is empty</span>
-                    )}
-                  </div>
-                )}
+              {open && (loadingEmpty || listing?.error || (contents?.length === 0 && node.children.length === 0)) && (
+                <div
+                  className="tree-feedback"
+                  style={{ paddingInlineStart: `calc(${30 + Math.min(depth - 1, 8) * 18}px + var(--tree-gap))` }}
+                >
+                  {listing?.loading ? (
+                    <span role="status">
+                      <Spinner size={14} />
+                      Loading folder contents
+                    </span>
+                  ) : listing?.error ? (
+                    <>
+                      <span role="alert">{listing.error}</span>
+                      <Button variant="link" disabled={disabled} onClick={() => void browser.load(node, true)}>
+                        Retry
+                      </Button>
+                    </>
+                  ) : (
+                    <span>Folder is empty</span>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
