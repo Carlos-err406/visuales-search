@@ -4,7 +4,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
@@ -330,6 +331,91 @@ describe("packaged Node sidecar", () => {
       await rpc.request("settings.save", { settings: initial.settings });
     }
   });
+  it("reorders shared CLI and desktop workers and starts only the chosen next transfer", async () => {
+    const cli = (...args) =>
+      promisify(execFile)(process.execPath, [path.resolve("dist/cli.js"), ...args], {
+        env: { ...process.env, HOME: home, USERPROFILE: home },
+        timeout: 20000,
+      });
+    const blocker = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const exited = once(blocker, "exit");
+    const taskFile = path.join(home, ".visuales-cli-cache", "download", "tasks.json");
+    // A live blocker keeps the queue parked while independent clients reorder it.
+    const store = JSON.parse(await fs.readFile(taskFile, "utf8").catch(() => '{"version":1,"tasks":[]}'));
+    const blockerId = "queue-test-blocker";
+    store.tasks.push({
+      id: blockerId,
+      url: "http://example.test/queue-blocker",
+      output: home,
+      options: {
+        output: home,
+        timeout: "Infinity",
+        resume: true,
+        concurrent: 5,
+        connections: 3,
+        maxRetries: 3,
+        exclude: [],
+        compact: false,
+      },
+      status: "running",
+      pid: blocker.pid,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      overallProgress: undefined,
+      lastProgress: undefined,
+    });
+    await fs.mkdir(path.dirname(taskFile), { recursive: true });
+    await fs.writeFile(taskFile, JSON.stringify(store));
+    const ids = [blockerId];
+    try {
+      const a = await rpc.request("download.start", {
+        urls: [`${slowUrl}/queue-a.bin`],
+        output: path.join(home, "queue-a"),
+        queue: true,
+      });
+      ids.push(a.id);
+      const cliUrl = `${slowUrl}/queue-cli.bin`;
+      await cli("download", cliUrl, "--output", path.join(home, "queue-cli"), "--queue", "--detach");
+      const b = (await rpc.request("tasks.list")).find((task) => task.url === cliUrl);
+      assert.equal(b.status, "queued");
+      ids.push(b.id);
+      const c = await rpc.request("download.start", {
+        urls: [`${slowUrl}/queue-c.bin`],
+        output: path.join(home, "queue-c"),
+        queue: true,
+      });
+      ids.push(c.id);
+      await cli("tasks", "next", b.id);
+      let queue = await rpc.request("tasks.move", { id: c.id, position: "up" });
+      assert.deepEqual(
+        queue.map((task) => task.id),
+        [b.id, c.id, a.id]
+      );
+      queue = await rpc.request("tasks.move", { id: a.id, position: "next" });
+      assert.deepEqual(
+        queue.map((task) => task.id),
+        [a.id, b.id, c.id]
+      );
+      await cli("tasks", "next", b.id);
+      await assert.rejects(rpc.request("tasks.move", { id: a.id, position: 0 }), /position/);
+      await rpc.request("tasks.cancel", { id: blockerId });
+      await exited;
+      await waitForTask(b.id, "running");
+      const snapshot = await rpc.request("tasks.list");
+      assert.equal(snapshot.find((t) => t.id === a.id).status, "queued");
+      assert.equal(snapshot.find((t) => t.id === c.id).status, "queued");
+      await waitForTask(b.id, "completed");
+      const cliFiles = await rpc.request("tasks.files", { id: b.id });
+      assert.equal(cliFiles.files[0].path, "queue-cli.bin");
+      assert.equal(cliFiles.files[0].status, "completed", "CLI runs record the same per-file history");
+      await waitForTask(a.id, "running");
+      assert.equal((await rpc.request("tasks.list")).find((t) => t.id === c.id).status, "queued");
+    } finally {
+      for (const id of ids) await rpc.request("tasks.cancel", { id });
+      blocker.kill();
+      await exited;
+    }
+  });
   it("waits for pending starts before taking the updater's idle snapshot", async () => {
     const starting = rpc.request("download.start", {
       urls: [`${slowUrl}/update-barrier.bin`],
@@ -468,6 +554,11 @@ describe("packaged Node sidecar", () => {
       await waitForTask(task.id, "completed");
       assert.deepEqual(await fs.readFile(path.join(folder, "episode.bin")), FILE_BODY);
       assert.deepEqual(await fs.readFile(path.join(folder, "Extras", "episode.bin")), FILE_BODY);
+      const details = await rpc.request("tasks.files", { id: task.id });
+      assert.deepEqual(details.files.map((file) => file.path).sort(), ["Extras/episode.bin", "episode.bin"]);
+      assert.ok(
+        details.files.every((file) => file.status === "completed" && file.downloadedBytes === FILE_BODY.length)
+      );
       await assert.rejects(fs.access(path.join(output, "episode.bin")));
     }
   });
@@ -483,6 +574,13 @@ describe("packaged Node sidecar", () => {
     for (const folder of ["First", "Second"]) {
       assert.deepEqual(await fs.readFile(path.join(output, folder, "episode.bin")), FILE_BODY);
     }
+    const details = await rpc.request("tasks.files", { id: task.id });
+    assert.deepEqual(details.files.map((file) => file.path).sort(), [
+      "First/Extras/episode.bin",
+      "First/episode.bin",
+      "Second/Extras/episode.bin",
+      "Second/episode.bin",
+    ]);
     await assert.rejects(fs.access(path.join(output, "episode.bin")));
   });
 
@@ -606,6 +704,10 @@ describe("packaged Node sidecar", () => {
     });
     const result = await waitForTask(failed.id, "failed");
     assert.ok(result.lastError);
+    const details = await rpc.request("tasks.files", { id: failed.id });
+    assert.equal(details.files[0].status, "failed");
+    assert.ok(details.files[0].error);
+    await assert.rejects(rpc.request("tasks.files", { id: "../../missing-task" }), /not found/);
     await assert.rejects(fs.access(path.join(home, "blocked", "blocked.bin")));
   });
 

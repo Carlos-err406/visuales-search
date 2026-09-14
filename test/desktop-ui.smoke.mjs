@@ -11,6 +11,8 @@ import { testSearchStatuses } from "./desktop-search-status.smoke.mjs";
 import { testSettingsExclusions } from "./desktop-settings-exclusions.smoke.mjs";
 import { testSettingsHelp } from "./desktop-help.smoke.mjs";
 import { testTrayPopup } from "./desktop-tray.smoke.mjs";
+import { testQueueManagement } from "./desktop-queue.smoke.mjs";
+import { testTransferInspector } from "./desktop-inspector.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -90,6 +92,8 @@ try {
         exclude: [],
       },
       calls: [],
+      fileDetails: {},
+      detailsDelay: 0,
       fail:
         updateScenario === "offline"
           ? "check_app_update"
@@ -152,6 +156,12 @@ try {
       },
       async invoke(command, args) {
         state.calls.push({ command, args });
+        if (command === "get_download_files") {
+          const snapshot = structuredClone(state.fileDetails[args.id] ?? null);
+          await new Promise((resolve) => setTimeout(resolve, state.detailsDelay));
+          if (state.fail === command) throw new Error(`Test failure: ${command}`);
+          return snapshot;
+        }
         if (command === "list_download_tasks") {
           state.activeLists++;
           await new Promise((resolve) => setTimeout(resolve, state.listDelay));
@@ -245,6 +255,20 @@ try {
         if (command === "start_download") return { id: "new-task" };
         if (command === "open_output_folder") return null;
         const task = state.tasks.find((item) => item.id === args.id);
+        if (command === "move_queued_download") {
+          if (state.moveDelay) await new Promise((resolve) => setTimeout(resolve, state.moveDelay));
+          const queue = state.tasks
+            .filter((item) => item.status === "queued")
+            .sort((a, b) => a.queueOrder - b.queueOrder);
+          const from = queue.indexOf(task);
+          const to = args.position === "next" ? 0 : args.position === "up" ? from - 1 : from + 1;
+          queue.splice(from, 1);
+          queue.splice(to, 0, task);
+          queue.forEach((item, index) => {
+            item.queueOrder = index;
+          });
+          return queue;
+        }
         if (command === "resume_download_task") task.status = "running";
         else if (command === "cancel_download_task") task.status = "interrupted";
         else if (command === "delete_download_task") state.tasks = state.tasks.filter((item) => item.id !== args.id);
@@ -404,14 +428,14 @@ try {
   await page.waitForFunction(() => document.querySelector(".results-list")?.getAttribute("aria-busy") === "false");
   await page.locator(".result-row").first().waitFor();
   assert.equal(await page.locator(".result-row").count(), 45);
-  const checkboxes = page.locator('.result-row [role="checkbox"]');
-  await checkboxes.nth(0).check();
-  await checkboxes.nth(3).click({ modifiers: ["Shift"] });
-  assert.equal(await page.locator('.result-row [role="checkbox"][aria-checked="true"]').count(), 4, "shift selection");
+  const searchRows = page.locator(".result-row");
+  await searchRows.nth(0).click({ modifiers: ["Meta"] });
+  await searchRows.nth(3).click({ modifiers: ["Shift"] });
+  assert.equal(await page.locator('.result-row[aria-selected="true"]').count(), 4, "shift selection");
   async function checkSelectionAccents() {
     const rows = await page.locator(".result-row").evaluateAll((elements) =>
       elements.map((el) => ({
-        checked: el.querySelector('[role="checkbox"]').getAttribute("aria-checked") === "true",
+        checked: el.getAttribute("aria-selected") === "true",
         shadow: window.getComputedStyle(el).boxShadow,
       }))
     );
@@ -424,11 +448,11 @@ try {
   await checkSelectionAccents();
   await search.focus();
   await checkSelectionAccents();
-  await checkboxes.nth(4).focus();
+  await searchRows.nth(4).focus();
   await checkSelectionAccents();
-  await checkboxes.nth(3).uncheck();
+  await searchRows.nth(3).click({ modifiers: ["Control"] });
   await checkSelectionAccents();
-  await checkboxes.nth(3).check();
+  await searchRows.nth(3).click({ modifiers: ["Control"] });
   await checkSelectionAccents();
   await page.screenshot({ path: `${screenshots}/selection-accents.png` });
   assert.equal(await page.getByLabel("Download destination").inputValue(), "/Users/carlos/Downloads/Visuales");
@@ -449,21 +473,9 @@ try {
     "/Users/carlos/Downloads/Visuales",
     "saving defaults preserves an explicit destination"
   );
-  assert.equal(await page.getByRole("checkbox", { name: "Select all results" }).getAttribute("aria-checked"), "mixed");
-  const checkboxStyles = await page.getByRole("checkbox").evaluateAll((inputs) =>
-    inputs.map((input) => {
-      const style = window.getComputedStyle(input);
-      return { radius: style.borderRadius, width: style.width, height: style.height };
-    })
-  );
-  for (const style of checkboxStyles) {
-    assert.deepEqual(style, { radius: "1px", width: "15px", height: "15px" });
-  }
-  assert.equal(await checkboxes.nth(0).locator('[data-slot="checkbox-indicator"]').isVisible(), true);
-  assert.equal(await checkboxes.nth(4).locator('[data-slot="checkbox-indicator"]').isVisible(), false);
-  assert.equal(await page.getByRole("checkbox", { name: "Select all results" }).locator(".lucide-minus").count(), 1);
-  await checkboxes.nth(0).focus();
-  await page.screenshot({ path: `${screenshots}/checkbox-states.png` });
+  assert.equal(await page.locator('#panel-search [role="checkbox"]').count(), 0);
+  await searchRows.nth(0).focus();
+  await page.screenshot({ path: `${screenshots}/search-selection.png` });
   await page.getByLabel("Choose output folder").hover();
   await page.getByRole("tooltip").waitFor();
   assert.match(await page.getByRole("tooltip").textContent(), /Pick the parent folder/);
@@ -516,7 +528,7 @@ try {
   assert.equal(completedColors.status, completedColors.primary, "completed status uses the primary color");
   await page.getByRole("tab", { name: "Search", exact: true }).click();
   assert.equal(await search.inputValue(), "planet earth");
-  assert.equal(await page.locator('.result-row [role="checkbox"][aria-checked="true"]').count(), 4);
+  assert.equal(await page.locator('.result-row[aria-selected="true"]').count(), 4);
   assert.equal(await page.locator(".results-list").evaluate((el) => el.scrollTop), 500);
 
   async function checkLayout(name) {
@@ -728,21 +740,23 @@ try {
   assert.equal(queued.args.urls.length, 4);
   assert.equal(queued.args.output, "/Users/carlos/Downloads/Chosen");
   assert.equal(await page.locator(".selection-bar").count(), 0);
-  await page.waitForFunction(
-    () => document.querySelector('.result-row [role="checkbox"]').getAttribute("aria-disabled") !== "true"
-  );
-  await checkboxes.nth(0).focus();
+  await page.waitForFunction(() => document.querySelector(".result-row").getAttribute("aria-disabled") !== "true");
+  await searchRows.nth(0).focus();
   await page.keyboard.press("Space");
-  assert.equal(await checkboxes.nth(0).isChecked(), true, "keyboard selection");
+  assert.equal(await searchRows.nth(0).getAttribute("aria-selected"), "true", "keyboard selection");
   await page.getByText("Transfer added to queue").waitFor({ state: "detached", timeout: 6000 });
   assert.ok(Date.now() - confirmationShownAt >= 3000, "confirmation stays visible before expiring");
-  assert.equal(await checkboxes.nth(0).isChecked(), true, "expiring confirmation retains new selection");
+  assert.equal(
+    await searchRows.nth(0).getAttribute("aria-selected"),
+    "true",
+    "expiring confirmation retains new selection"
+  );
   await page.evaluate(() => {
     window.testBridge.fail = "start_download";
   });
   await page.getByRole("button", { name: "Download", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Test failure: start_download" }).waitFor();
-  assert.equal(await checkboxes.nth(0).isChecked(), true, "failure retains selection");
+  assert.equal(await searchRows.nth(0).getAttribute("aria-selected"), "true", "failure retains selection");
   await page.evaluate(() => {
     window.testBridge.fail = "";
   });
@@ -754,10 +768,12 @@ try {
     ),
     false
   );
-  await page.getByRole("checkbox", { name: "Select all results" }).check();
-  assert.equal(await page.locator('.result-row [role="checkbox"][aria-checked="true"]').count(), 45);
+  await page.waitForFunction(() => document.querySelector(".result-row")?.getAttribute("aria-disabled") !== "true");
+  await searchRows.first().focus();
+  await page.keyboard.press("ControlOrMeta+a");
+  assert.equal(await page.locator('.result-row[aria-selected="true"]').count(), 45);
   await page.getByLabel("Clear selection").click();
-  assert.equal(await page.locator('.result-row [role="checkbox"][aria-checked="true"]').count(), 0);
+  assert.equal(await page.locator('.result-row[aria-selected="true"]').count(), 0);
   await page.getByRole("tab", { name: "Search", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   assert.equal(await page.getByRole("tab", { name: /Downloads/ }).getAttribute("aria-selected"), "true");
@@ -1137,6 +1153,7 @@ try {
   await testSettingsExclusions({ page, screenshots, checkLayout });
   await testSettingsHelp({ page, screenshots, checkLayout });
   await testTrayPopup({ browser, screenshots });
+  await testQueueManagement({ page, screenshots, checkLayout });
   await page.goto(`${process.env.DESKTOP_URL || "http://127.0.0.1:1420"}/?downloadTask=task-1`);
   await page.waitForFunction(() =>
     document.querySelector('[role="tab"][aria-selected="true"]')?.textContent.includes("Downloads")
@@ -1177,6 +1194,7 @@ try {
   } finally {
     await preview.close();
   }
+  await testTransferInspector({ page, screenshots });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {

@@ -9,8 +9,7 @@ import {
 } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
-import { File, FileImage, FileText, Folder, FolderOpen, RefreshCw } from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Download, File, FileImage, FileText, Folder, FolderOpen, ListPlus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { IconButton } from "./icon-button";
@@ -98,6 +97,11 @@ export function SearchTree({
   disabled,
   tasks,
   statusesUnavailable,
+  transfersBlocked,
+  submittingUrl,
+  submitting,
+  output,
+  onTransfer,
 }: {
   browser: ReturnType<typeof useSearchBrowser>;
   selectionStates: ReadonlyMap<string, TreeCheckState>;
@@ -105,6 +109,11 @@ export function SearchTree({
   disabled: boolean;
   tasks: Task[];
   statusesUnavailable: boolean;
+  transfersBlocked: boolean;
+  submittingUrl: string | null;
+  submitting: "download" | "queue" | null;
+  output: string;
+  onTransfer: (url: string, queue: boolean) => void;
 }) {
   const downloadStatus = useMemo(() => createSearchDownloadStatusIndex(tasks), [tasks]);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
@@ -174,12 +183,12 @@ export function SearchTree({
     }
   }
   function select(node: SearchTreeNode, checked: boolean, range = false) {
-    if (disabled || !node.entry) return;
-    const targets = visible.filter(({ node }) => node.entry).map(({ node }) => node.url);
+    if (disabled) return;
+    const targets = visible.map(({ node }) => node.url);
     const start = range && anchor.current ? targets.indexOf(anchor.current) : -1;
     const end = targets.indexOf(node.url);
     const urls = start >= 0 ? targets.slice(Math.min(start, end), Math.max(start, end) + 1) : [node.url];
-    setSelected((current) => changeTreeSelection(browser.tree, current, new Set(urls), checked));
+    setSelected((current) => changeTreeSelection(browser.tree, current, new Set(urls), checked, true));
     anchor.current = node.url;
   }
   function openPreview(node: SearchTreeNode) {
@@ -187,6 +196,11 @@ export function SearchTree({
   }
   function onKey(event: KeyboardEvent, node: SearchTreeNode, index: number) {
     if (event.target !== event.currentTarget || disabled) return;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      setSelected(new Set(browser.entries.map((entry) => entry.encodedUrl)));
+      return;
+    }
     switch (event.key) {
       case "ArrowDown":
         focus(visible[Math.min(index + 1, visible.length - 1)].node.url);
@@ -267,48 +281,27 @@ export function SearchTree({
                 aria-expanded={node.directory ? open : undefined}
                 aria-disabled={disabled || undefined}
                 aria-busy={listing?.loading || undefined}
-                aria-selected={node.entry ? checkState === true : undefined}
+                aria-selected={checkState === true}
+                data-selection={checkState === "indeterminate" ? "partial" : undefined}
                 aria-label={node.name}
                 data-url={node.url}
                 tabIndex={node.url === focusUrl ? 0 : -1}
-                className={`tree-row ${node.entry ? "result-row" : "tree-group"} ${node.entry && checkState === true ? "selected" : ""}`}
+                className={`tree-row ${node.entry ? "result-row" : "tree-group"} ${checkState === true ? "selected" : ""}`}
                 onFocus={() => setFocused(node.url)}
                 onKeyDown={(event) => onKey(event, node, index)}
                 onClick={(event) => {
-                  if (disabled || (event.target as HTMLElement).closest('button, input, [role="checkbox"]')) return;
+                  if (disabled || (event.target as HTMLElement).closest("button, input")) return;
                   focus(node.url, true);
-                  if (node.directory) browser.toggle(node);
+                  if (event.metaKey || event.ctrlKey || event.shiftKey)
+                    select(node, event.shiftKey || checkState !== true, event.shiftKey);
+                  else if (node.directory) browser.toggle(node);
                   else if (kind) openPreview(node);
                 }}
               >
-                {node.entry ? (
-                  <Checkbox
-                    aria-label={`Select ${node.name}`}
-                    checked={checkState === true}
-                    indeterminate={checkState === "indeterminate"}
-                    disabled={disabled}
-                    onCheckedChange={(checked, details) =>
-                      select(node, checked, "shiftKey" in details.event && Boolean(details.event.shiftKey))
-                    }
-                  />
-                ) : (
-                  <span className="tree-selection-space" />
-                )}
                 <span className="tree-content" style={{ paddingInlineStart: `${Math.min(depth - 1, 8) * 18}px` }}>
                   <Symbol size={18} className="file-symbol" aria-hidden="true" />
                   <span className="file-copy">
-                    {kind ? (
-                      <button
-                        type="button"
-                        className="file-title preview-link"
-                        disabled={disabled}
-                        onClick={() => openPreview(node)}
-                      >
-                        {node.name}
-                      </button>
-                    ) : (
-                      <span className="file-title">{node.name}</span>
-                    )}
+                    <span className="file-title">{node.name}</span>
                   </span>
                 </span>
                 <span className="tree-metadata">
@@ -319,26 +312,64 @@ export function SearchTree({
                   )}
                   {bytes !== undefined && <span className="secondary tree-size">{formatBytes(bytes)}</span>}
                 </span>
-                {refreshing ? (
-                  <Spinner size={14} aria-label="Refreshing folder contents" className="tree-refresh-spinner" />
-                ) : node.directory && listing?.entries ? (
+                <div className="tree-actions">
+                  {refreshing ? (
+                    <Spinner size={14} aria-label="Refreshing folder contents" className="tree-refresh-spinner" />
+                  ) : node.directory && listing?.entries ? (
+                    <IconButton
+                      label={`Refresh ${node.name}`}
+                      tooltip="Refresh folder"
+                      disabled={disabled || listing?.loading}
+                      onClick={() => {
+                        browser.showContents(node, true);
+                      }}
+                    >
+                      {listing?.loading ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                    </IconButton>
+                  ) : null}
                   <IconButton
-                    label={`Refresh ${node.name}`}
-                    tooltip="Refresh folder"
-                    disabled={disabled || listing?.loading}
-                    onClick={() => {
-                      browser.showContents(node, true);
-                    }}
+                    label={`Queue ${node.name}`}
+                    tooltip="Add to queue"
+                    description={`Save to ${output}. Starts after active transfers finish.`}
+                    disabled={disabled || transfersBlocked}
+                    disabledReason={
+                      transfersBlocked
+                        ? "Transfers are unavailable. Check the destination and app update status."
+                        : "Wait for the current request to finish."
+                    }
+                    onClick={() => onTransfer(node.url, true)}
                   >
-                    {listing?.loading ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                    {submittingUrl === node.url && submitting === "queue" ? (
+                      <Spinner size={16} />
+                    ) : (
+                      <ListPlus size={16} />
+                    )}
                   </IconButton>
-                ) : null}
+                  <IconButton
+                    label={`Download ${node.name}`}
+                    tooltip="Download now"
+                    description={`Save to ${output}.`}
+                    disabled={disabled || transfersBlocked}
+                    disabledReason={
+                      transfersBlocked
+                        ? "Transfers are unavailable. Check the destination and app update status."
+                        : "Wait for the current request to finish."
+                    }
+                    onClick={() => onTransfer(node.url, false)}
+                  >
+                    {submittingUrl === node.url && submitting === "download" ? (
+                      <Spinner size={16} />
+                    ) : (
+                      <Download size={16} />
+                    )}
+                  </IconButton>
+                </div>
               </div>
               {open &&
                 (loadingEmpty || listing?.error || (listing?.entries?.length === 0 && node.children.length === 0)) && (
                   <div
                     className="tree-feedback"
-                    style={{ paddingInlineStart: `calc(${48 + Math.min(depth - 1, 8) * 18}px + 2 * var(--tree-gap))` }}
+                    style={{ paddingInlineStart: `calc(${30 + Math.min(depth - 1, 8) * 18}px + var(--tree-gap))` }}
                   >
                     {listing.loading ? (
                       <span role="status">

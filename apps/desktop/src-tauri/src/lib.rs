@@ -75,6 +75,11 @@ async fn list_download_tasks(
 }
 
 #[tauri::command]
+async fn get_download_files(app: tauri::AppHandle, id: String) -> Result<Value, String> {
+    sidecar::request(&app, "tasks.files", json!({ "id": id })).await
+}
+
+#[tauri::command]
 async fn get_desktop_settings(app: tauri::AppHandle) -> Result<Value, String> {
     sidecar::request(
         &app,
@@ -109,6 +114,24 @@ async fn start_download(
         &app,
         "download.start",
         json!({ "urls": urls, "output": output, "queue": queue.unwrap_or(false), "defaultOutput": default_output_dir()? }),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn move_queued_download(
+    app: tauri::AppHandle,
+    id: String,
+    position: Value,
+) -> Result<Value, String> {
+    let updates = app.state::<updates::UpdateState>();
+    let _guard = updates.transfers.read().await;
+    updates.ensure_downloads_allowed()?;
+    app.state::<quit::QuitState>().ensure_downloads_allowed()?;
+    sidecar::request(
+        &app,
+        "tasks.move",
+        json!({ "id": id, "position": position }),
     )
     .await
 }
@@ -159,12 +182,14 @@ pub fn run() {
             save_desktop_settings,
             folders::open_output_folder,
             list_download_tasks,
+            get_download_files,
             tray::tray_snapshot,
             tray::dismiss_tray,
             tray::open_downloads,
             tray::take_download_navigation,
             tray::quit_from_tray,
             start_download,
+            move_queued_download,
             cancel_download_task,
             delete_download_task,
             resume_download_task,

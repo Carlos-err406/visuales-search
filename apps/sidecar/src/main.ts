@@ -15,6 +15,8 @@ import {
   deleteDownloadTask,
   updateDownloadTaskProgress,
   waitForQueueSlot,
+  moveQueuedDownloadTask,
+  type QueueMove,
   setLogger,
   type DownloadOptions,
   type DownloadProgress,
@@ -24,6 +26,7 @@ import { downloadDefaults } from "@visuales/core/download/defaults";
 import { summarizeTransfers, transferName } from "@visuales/core/download/transfer-summary";
 import { loadDesktopSettings, saveDesktopSettings, resolveDesktopOutput } from "@visuales/core/desktop-settings";
 import { listLibraryDirectory, previewLibraryFile } from "@visuales/core/library";
+import { recordDownloadFiles, readDownloadFileDetails } from "@visuales/core/download/file-details";
 
 const PROTOCOL_VERSION = 1;
 setLogger({ log: (...values) => console.error(...values), error: (...values) => console.error(...values) });
@@ -46,10 +49,11 @@ async function runWorker(config: WorkerConfig) {
   try {
     if (queue) {
       if (!(await waitForQueueSlot(taskId))) return;
-      await startDownloadTaskWithPid(urls, options, process.pid);
     }
-    if (urls.length === 1) await downloadUrl(urls[0], options, onProgress);
-    else await downloadUrls(createDownloadTargets(urls, options.output), options, onProgress);
+    await recordDownloadFiles(taskId, options.output, async () => {
+      if (urls.length === 1) await downloadUrl(urls[0], options, onProgress);
+      else await downloadUrls(createDownloadTargets(urls, options.output), options, onProgress);
+    });
     await progressWrites;
     await completeDownloadTask(taskId);
   } catch (error) {
@@ -204,6 +208,11 @@ async function runServer() {
         const tasks = await listDownloadTasks();
         return { tasks, summary: summarizeTransfers(tasks) };
       }
+      case "tasks.files": {
+        const task = await findDownloadTask(string(params.id, "id"));
+        if (!task) throw new Error("Download task not found");
+        return readDownloadFileDetails(task.id);
+      }
       case "notifications.take": {
         // Read before draining: failed settings reads must not bypass disabled preferences.
         const { settings } = await loadDesktopSettings();
@@ -257,6 +266,11 @@ async function runServer() {
           params.queue === true
         );
       }
+      case "tasks.move": {
+        const queue = await moveQueuedDownloadTask(string(params.id, "id"), params.position as QueueMove);
+        changed();
+        return queue;
+      }
       case "tasks.resume": {
         const task = await findDownloadTask(string(params.id, "id"));
         if (!task) throw new Error("Download task not found");
@@ -307,9 +321,15 @@ async function runServer() {
       const params = request.params ?? {};
       if (typeof params !== "object" || params === null || Array.isArray(params)) throw new Error("Invalid params");
       if (shuttingDown) throw new Error("Sidecar is shutting down");
-      const readOnly = ["hello", "search", "tasks.list", "tasks.snapshot", "library.list", "library.preview"].includes(
-        request.method
-      );
+      const readOnly = [
+        "hello",
+        "search",
+        "tasks.list",
+        "tasks.snapshot",
+        "tasks.files",
+        "library.list",
+        "library.preview",
+      ].includes(request.method);
       const result = readOnly
         ? dispatch(request.method, params)
         : mutations.then(() => dispatch(request.method, params));

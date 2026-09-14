@@ -1,5 +1,25 @@
 import { Command } from "commander";
 import colors from "ansi-colors";
+import { listDownloadTasks, moveQueuedDownloadTask, orderedQueue } from "@visuales/core";
+import { transferName } from "@visuales/core/download/transfer-summary";
+
+async function queueCommand(): Promise<void> {
+  const queue = orderedQueue(await listDownloadTasks());
+  if (!queue.length) console.log("No queued downloads.");
+  for (const [index, task] of queue.entries()) console.log(`${index + 1}\t${task.id}\t${transferName(task)}`);
+}
+
+async function moveCommand(task: string, position: string): Promise<void> {
+  try {
+    if (position !== "next" && !/^[1-9]\d*$/.test(position))
+      throw new Error("Queue position must be a positive integer");
+    await moveQueuedDownloadTask(task, position === "next" ? "next" : Number(position));
+    await queueCommand();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
 import { cancelCommand, deleteCommand, resumeCommand } from "../download/index.js";
 import {
   clearAndPrintDownloadTasks,
@@ -52,6 +72,19 @@ export function setupTasksCommand(program: Command): void {
     .option("-a, --all", "Show completed and failed task history")
     .option("--clear", "Clear saved download task history")
     .action(listTasksCommand);
+
+  tasks.command("queue").description("Show waiting downloads in execution order").action(queueCommand);
+  tasks
+    .command("move")
+    .description("Move a queued download to a one-based queue position")
+    .argument("<task>", "Task id or URL")
+    .argument("<position>", "New queue position (1 is next)")
+    .action(moveCommand);
+  tasks
+    .command("next")
+    .description("Move a queued download to the front without interrupting active downloads")
+    .argument("<task>", "Task id or URL")
+    .action((task: string) => moveCommand(task, "next"));
 
   tasks
     .command("resume")

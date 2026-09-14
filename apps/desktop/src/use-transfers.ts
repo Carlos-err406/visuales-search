@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Task } from "./task-view";
+import type { QueueMove } from "@visuales/core/download/queue-order";
+
+export type TransferCommand =
+  | "resume_download_task"
+  | "cancel_download_task"
+  | "delete_download_task"
+  | "move_queued_download";
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
 
@@ -80,12 +87,12 @@ export function useTransfers(paused = false) {
     };
   }, [refresh]);
 
-  const act = async (command: "resume_download_task" | "cancel_download_task" | "delete_download_task", id: string) => {
+  const act = async (command: TransferCommand, id: string, position?: QueueMove) => {
     if (busy.current.has(id)) return;
     busy.current.add(id);
     setPending(new Set(busy.current));
     try {
-      await invoke(command, { id });
+      await invoke(command, { id, ...(position === undefined ? {} : { position }) });
       await refresh(true);
     } finally {
       busy.current.delete(id);

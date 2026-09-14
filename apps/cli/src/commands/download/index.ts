@@ -2,6 +2,7 @@ import { Command } from "commander";
 import colors from "ansi-colors";
 import { createDownloadTargets, decodePathSegment } from "@visuales/core/download/targets";
 import { downloadDefaults } from "@visuales/core/download/defaults";
+import { recordDownloadFiles } from "@visuales/core/download/file-details";
 import { downloadUrl, downloadUrls, stopProgress } from "./downloader.js";
 import { DownloadOptions } from "./types.js";
 import { CONFIG } from "../../lib/types.js";
@@ -144,7 +145,7 @@ export async function downloadCommand(urls: string | string[], options: Download
     CONFIG.CACHE_DIR
   );
 
-  let task = queue
+  const task = queue
     ? await enqueueDownloadTask(resolvedUrls, downloadOptions)
     : await startDownloadTask(resolvedUrls, downloadOptions);
   const removeInterruptHandler = registerInterruptHandler(task.id);
@@ -160,19 +161,22 @@ export async function downloadCommand(urls: string | string[], options: Download
         console.log(colors.yellow(`Task ${task.id} was canceled before it started.`));
         return;
       }
-      task = await startDownloadTask(resolvedUrls, downloadOptions);
       console.log(colors.gray(`Task ${task.id} starting.`));
     }
 
-    if (isBatch) {
-      await downloadUrls(createDownloadTargets(resolvedUrls, downloadOptions.output), downloadOptions, (progress) => {
-        void updateDownloadTaskProgress(task.id, progress);
-      });
-    } else {
-      await downloadUrl(resolvedUrls[0], downloadOptions, (progress) => {
-        void updateDownloadTaskProgress(task.id, progress);
-      });
-    }
+    let progressWrites = Promise.resolve();
+    await recordDownloadFiles(task.id, output, async () => {
+      const onProgress = (progress: Parameters<typeof updateDownloadTaskProgress>[1]) => {
+        progressWrites = progressWrites.then(() => updateDownloadTaskProgress(task.id, progress));
+        void progressWrites.catch(() => {});
+      };
+      try {
+        if (isBatch) await downloadUrls(createDownloadTargets(resolvedUrls, output), downloadOptions, onProgress);
+        else await downloadUrl(resolvedUrls[0], downloadOptions, onProgress);
+      } finally {
+        await progressWrites;
+      }
+    });
     await stopProgress();
     await completeDownloadTask(task.id);
     console.log(colors.bold.green("\n[SUCCESS] All downloads finished successfully!"));

@@ -41,8 +41,8 @@ export async function testSearchStatuses({ page, screenshots, checkLayout }) {
   await row("notes.txt").getByText("Downloading 25%", { exact: true }).waitFor();
   assert.equal(await row("Movies").locator(".tree-download-status").count(), 0);
   assert.equal(await row("Other").locator(".tree-download-status").count(), 0);
-  await row("notes.txt").getByRole("checkbox").click();
-  const selected = await row("notes.txt").getByRole("checkbox").getAttribute("aria-checked");
+  await row("notes.txt").click({ modifiers: ["Meta"] });
+  const selected = await row("notes.txt").getAttribute("aria-selected");
   await row("Example").evaluate((element) => {
     window.statusRow = element;
   });
@@ -55,7 +55,7 @@ export async function testSearchStatuses({ page, screenshots, checkLayout }) {
   await row("Example").getByText("Completed", { exact: true }).waitFor();
   assert.equal(await row("Movies").locator(".tree-download-status").count(), 0);
   assert.equal(await row("notes.txt").locator(".tree-download-status").count(), 0);
-  assert.equal(await row("notes.txt").getByRole("checkbox").getAttribute("aria-checked"), selected);
+  assert.equal(await row("notes.txt").getAttribute("aria-selected"), selected);
   assert.equal(await row("Example").getAttribute("aria-expanded"), "true");
   assert.equal(
     await row("Example").evaluate((element) => element === window.statusRow),
