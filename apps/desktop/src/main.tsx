@@ -6,7 +6,6 @@ import { TrayPopup } from "./tray-popup";
 import { open } from "@tauri-apps/plugin-dialog";
 import { IconButton, IconTooltipProvider } from "./icon-button";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { InputGroup, InputGroupInput, InputGroupAddon } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -21,6 +20,7 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   AlertCircle,
   ArrowDownToLine,
+  ArrowUpToLine,
   Check,
   ChevronDown,
   ChevronUp,
@@ -47,7 +47,11 @@ import {
   taskSpeedBytes,
   type Task,
 } from "./task-view";
-import { isDesktop, useTransfers } from "./use-transfers";
+import { isDesktop, useTransfers, type TransferCommand } from "./use-transfers";
+import { useQueueReorderAnimation } from "./use-queue-reorder-animation";
+import { TransferInspector } from "./transfer-inspector";
+import { hasOpenOverlay } from "./overlay-state";
+import { orderedQueue, compareTransferOrder, type QueueMove } from "@visuales/core/download/queue-order";
 import { useAppUpdates } from "./use-app-updates";
 import { AppUpdatesPanel } from "./app-updates";
 import { useDesktopSettings } from "./use-desktop-settings";
@@ -58,35 +62,14 @@ import { distinctDownloadUrls, treeSelectionStates } from "@visuales/core/search
 import appIcon from "../app-icon.svg?no-inline";
 
 type View = "search" | "downloads" | "settings";
-type Filter = "all" | "active" | "attention" | "completed";
+type Filter = "all" | "active" | "queued" | "attention" | "completed";
 const statusFilters: { value: Filter; label: string }[] = [
   { value: "all", label: "All statuses" },
   { value: "active", label: "Active & queued" },
+  { value: "queued", label: "Queued" },
   { value: "attention", label: "Needs attention" },
   { value: "completed", label: "Completed" },
 ];
-
-function SelectAll({
-  count,
-  total,
-  disabled,
-  onChange,
-}: {
-  count: number;
-  total: number;
-  disabled: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <Checkbox
-      aria-label="Select all results"
-      indeterminate={count > 0 && count < total}
-      checked={total > 0 && count === total}
-      disabled={disabled || !total}
-      onCheckedChange={onChange}
-    />
-  );
-}
 
 function TaskRow({
   task,
@@ -95,44 +78,113 @@ function TaskRow({
   error,
   onAction,
   onOpen,
+  queuePosition,
+  queueTotal,
+  inspected,
+  onInspect,
 }: {
   task: Task;
   pending: boolean;
   actionsBlocked: boolean;
   error?: string;
-  onAction: (command: "resume_download_task" | "cancel_download_task" | "delete_download_task", id: string) => void;
+  onAction: (command: TransferCommand, id: string, position?: QueueMove) => void;
   onOpen: () => void;
+  queuePosition: number;
+  queueTotal: number;
+  inspected: boolean;
+  onInspect: () => void;
 }) {
   const percent = taskProgress(task);
   const name = taskName(task);
   return (
     <>
-      <TableRow className={`transfer-row ${task.status}`}>
+      <TableRow
+        className={`transfer-row ${task.status}`}
+        data-transfer-id={task.id}
+        data-transfer-status={task.status}
+        data-inspected={inspected || undefined}
+        onClick={(event) => {
+          if ((event.target as HTMLElement).closest("button, a, input, [role=button]")) return;
+          onInspect();
+        }}
+      >
         <TableCell className="transfer-name">
           <div className="file-symbol">
             <ArrowDownToLine size={17} aria-hidden="true" />
           </div>
           <div className="file-copy">
-            <span className="file-title" title={name}>
+            <Button
+              variant="link"
+              className="file-title inspect-transfer"
+              aria-label={`Details for ${name}`}
+              aria-expanded={inspected}
+              onClick={onInspect}
+            >
               {name}
-            </span>
+            </Button>
             <span className="secondary truncate" title={`${task.output} · ${task.id}`}>
               {task.output} <span className="task-id">· {task.id}</span>
             </span>
           </div>
         </TableCell>
         <TableCell className="transfer-progress">
-          <div className="progress-label">
-            <span>
-              {task.status === "queued" ? "Waiting" : percent === null ? "Size unknown" : `${Math.floor(percent)}%`}
-            </span>
-            <span className="secondary">{taskSize(task)}</span>
-          </div>
-          <Progress
-            aria-label={`Progress for ${name}`}
-            max={100}
-            value={percent === null && task.status === "running" ? null : (percent ?? 0)}
-          />
+          {task.status === "queued" ? (
+            <div className="queue-order">
+              <span className="queue-position">
+                Queue {queuePosition} of {queueTotal}
+              </span>
+              <div className="queue-controls" role="group" aria-label={`Queue order for ${name}`}>
+                <IconButton
+                  label={`Start next: ${name}`}
+                  tooltip="Start next"
+                  description="Move to the front of the queue. Active downloads are not interrupted."
+                  disabled={pending || actionsBlocked || queuePosition <= 1}
+                  disabledReason={
+                    queuePosition <= 1 ? "Already first in the queue." : "Wait until transfer changes are available."
+                  }
+                  onClick={() => onAction("move_queued_download", task.id, "next")}
+                >
+                  <ArrowUpToLine size={15} />
+                </IconButton>
+                <IconButton
+                  label={`Move up: ${name}`}
+                  tooltip="Move up in queue"
+                  disabled={pending || actionsBlocked || queuePosition <= 1}
+                  disabledReason={
+                    queuePosition <= 1 ? "Already first in the queue." : "Wait until transfer changes are available."
+                  }
+                  onClick={() => onAction("move_queued_download", task.id, "up")}
+                >
+                  <ChevronUp size={15} />
+                </IconButton>
+                <IconButton
+                  label={`Move down: ${name}`}
+                  tooltip="Move down in queue"
+                  disabled={pending || actionsBlocked || queuePosition >= queueTotal}
+                  disabledReason={
+                    queuePosition >= queueTotal
+                      ? "Already last in the queue."
+                      : "Wait until transfer changes are available."
+                  }
+                  onClick={() => onAction("move_queued_download", task.id, "down")}
+                >
+                  <ChevronDown size={15} />
+                </IconButton>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="progress-label">
+                <span>{percent === null ? "Size unknown" : `${Math.floor(percent)}%`}</span>
+                <span className="secondary">{taskSize(task)}</span>
+              </div>
+              <Progress
+                aria-label={`Progress for ${name}`}
+                max={100}
+                value={percent === null && task.status === "running" ? null : (percent ?? 0)}
+              />
+            </>
+          )}
         </TableCell>
         <TableCell className="transfer-speed">{taskSpeed(task)}</TableCell>
         <TableCell className="transfer-status">
@@ -250,6 +302,7 @@ function App() {
   const [output, setOutput] = useState("~/Downloads/Visuales");
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState<"download" | "queue" | null>(null);
+  const [submittingUrl, setSubmittingUrl] = useState<string | null>(null);
   const [searchError, setSearchError] = useState("");
   const [selectionError, setSelectionError] = useState("");
   const [message, setMessage] = useState("");
@@ -257,12 +310,17 @@ function App() {
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [taskQuery, setTaskQuery] = useState("");
+  const [inspectedId, setInspectedId] = useState<string | null>(null);
   const updates = useAppUpdates();
   const settings = useDesktopSettings();
   const { tasks, refresh, refreshManually, refreshing, connectionError, pending, act } = useTransfers(
     updates.blocksTransfers
   );
   const outputEdited = useRef(false);
+  const inspectedTask = tasks.find((task) => task.id === inspectedId);
+  useEffect(() => {
+    if (inspectedId && !inspectedTask) setInspectedId(null);
+  }, [inspectedId, inspectedTask]);
   const starting = useRef(false);
   const searchingRef = useRef(false);
   const searchRequest = useRef(0);
@@ -271,6 +329,28 @@ function App() {
   const searchInput = useRef<HTMLInputElement>(null);
   const searchList = useRef<HTMLDivElement>(null);
   const downloadsList = useRef<HTMLDivElement>(null);
+  const downloadAnchor = useRef<{ id: string; top: number } | null>(null);
+  function rememberDownloadAnchor(id?: string) {
+    const list = downloadsList.current;
+    if (!list) return;
+    const top = list.getBoundingClientRect().top;
+    const rows = [...list.querySelectorAll<HTMLElement>("[data-transfer-id]")];
+    const row = id
+      ? rows.find((row) => row.dataset.transferId === id)
+      : rows.find((row) => row.getBoundingClientRect().bottom > top);
+    if (row) downloadAnchor.current = { id: row.dataset.transferId!, top: row.getBoundingClientRect().top - top };
+  }
+  useLayoutEffect(() => {
+    const anchor = downloadAnchor.current;
+    const list = downloadsList.current;
+    downloadAnchor.current = null;
+    if (!anchor || !list) return;
+    const row = [...list.querySelectorAll<HTMLElement>("[data-transfer-id]")].find(
+      (row) => row.dataset.transferId === anchor.id
+    );
+    if (row) list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.top;
+  }, [inspectedId, view]);
+  useQueueReorderAnimation(downloadsList, JSON.stringify([view, filter, taskQuery]));
   const scrollPositions = useRef({ search: 0, downloads: 0 });
 
   useEffect(() => {
@@ -332,16 +412,25 @@ function App() {
   const queuedCount = tasks.filter((task) => task.status === "queued").length;
   const failedCount = tasks.filter((task) => task.status === "failed").length;
   const totalSpeed = activeTasks.reduce((total, task) => total + (taskSpeedBytes(task) ?? 0), 0);
+  const queuePositions = useMemo(
+    () => new Map(orderedQueue(tasks).map((task, index) => [task.id, index + 1])),
+    [tasks]
+  );
   const visibleTasks = useMemo(
     () =>
-      tasks.filter((task) => {
-        const matches =
-          filter === "all" ||
-          (filter === "active" && isActive(task)) ||
-          (filter === "attention" && ["failed", "interrupted"].includes(task.status)) ||
-          (filter === "completed" && task.status === "completed");
-        return matches && `${taskName(task)} ${task.output} ${task.id}`.toLowerCase().includes(taskQuery.toLowerCase());
-      }),
+      tasks
+        .filter((task) => {
+          const matches =
+            filter === "all" ||
+            (filter === "active" && isActive(task)) ||
+            (filter === "queued" && task.status === "queued") ||
+            (filter === "attention" && ["failed", "interrupted"].includes(task.status)) ||
+            (filter === "completed" && task.status === "completed");
+          return (
+            matches && `${taskName(task)} ${task.output} ${task.id}`.toLowerCase().includes(taskQuery.toLowerCase())
+          );
+        })
+        .sort(compareTransferOrder),
     [tasks, filter, taskQuery]
   );
 
@@ -424,7 +513,7 @@ function App() {
   function clearSelection() {
     setSelected(new Set());
     setSelectionError("");
-    searchList.current?.querySelector<HTMLElement>('[role="checkbox"]')?.focus({ preventScroll: true });
+    searchList.current?.querySelector<HTMLElement>('[role="treeitem"][tabindex="0"]')?.focus({ preventScroll: true });
   }
 
   async function chooseOutput() {
@@ -441,19 +530,27 @@ function App() {
     }
   }
 
-  async function startDownload(queue: boolean) {
-    if (!selected.size || !output.trim() || starting.current || searchingRef.current || updates.blocksTransfers) return;
+  async function startDownload(queue: boolean, url?: string) {
+    if (
+      (!url && !selected.size) ||
+      !output.trim() ||
+      starting.current ||
+      searchingRef.current ||
+      updates.blocksTransfers
+    )
+      return;
     starting.current = true;
     setSubmitting(queue ? "queue" : "download");
+    setSubmittingUrl(url ?? null);
     setSelectionError("");
     setMessage("");
     try {
       await invoke("start_download", {
-        urls: distinctDownloadUrls(selected),
+        urls: url ? [url] : distinctDownloadUrls(selected),
         output: outputEdited.current ? output.trim() : undefined,
         queue,
       });
-      clearSelection();
+      if (!url) clearSelection();
       setMessage(queue ? "Transfer added to queue" : "Transfer started");
       await refresh(true);
     } catch (error) {
@@ -461,16 +558,14 @@ function App() {
     } finally {
       starting.current = false;
       setSubmitting(null);
+      setSubmittingUrl(null);
     }
   }
 
-  async function taskAction(
-    command: "resume_download_task" | "cancel_download_task" | "delete_download_task",
-    id: string
-  ) {
+  async function taskAction(command: TransferCommand, id: string, position?: QueueMove) {
     setTaskErrors((current) => ({ ...current, [id]: "" }));
     try {
-      await act(command, id);
+      await act(command, id, position);
     } catch (error) {
       setTaskErrors((current) => ({ ...current, [id]: String(error) }));
     }
@@ -492,10 +587,18 @@ function App() {
     <TaskRow
       key={task.id}
       task={task}
+      inspected={task.id === inspectedId}
+      onInspect={() => {
+        rememberDownloadAnchor(task.id);
+        setInspectedId(task.id);
+        switchView("downloads");
+      }}
+      queuePosition={queuePositions.get(task.id) ?? 0}
+      queueTotal={queuedCount}
       pending={pending.has(task.id)}
       actionsBlocked={updates.blocksTransfers}
       error={taskErrors[task.id]}
-      onAction={(command, id) => void taskAction(command, id)}
+      onAction={(command, id, position) => void taskAction(command, id, position)}
       onOpen={() => void openOutputFolder(task.output, task.id)}
     />
   );
@@ -566,6 +669,14 @@ function App() {
         keepMounted
         hidden={view !== "search"}
         id="panel-search"
+        onKeyDownCapture={(event) => {
+          if (event.key !== "Escape" || event.nativeEvent.isComposing || !selected.size || submitting) return;
+          // Dismiss an overlay first, without also clearing the staged downloads beneath it.
+          if (hasOpenOverlay()) return;
+          event.preventDefault();
+          event.stopPropagation();
+          clearSelection();
+        }}
         className="workspace-panel search-panel"
       >
         <h2 className="sr-only">Search library</h2>
@@ -630,26 +741,14 @@ function App() {
         )}
         {searchedQuery !== null && results.length > 0 && (
           <div className="results-toolbar">
-            <Label className="select-all">
-              <SelectAll
-                count={selectedCount}
-                total={searchBrowser.entries.length}
-                disabled={searching || Boolean(submitting)}
-                onChange={() => {
-                  setSelected(
-                    selectedCount === searchBrowser.entries.length
-                      ? new Set()
-                      : new Set(searchBrowser.entries.map((result) => result.encodedUrl))
-                  );
-                }}
-              />
+            <div className="results-count">
               <span>
                 {results.length} {searchedQuery === "" ? "items" : "results"}
                 {searchBrowser.entries.length > results.length
                   ? ` · ${searchBrowser.entries.length - results.length} browsed`
                   : ""}
               </span>
-            </Label>
+            </div>
             <span className="secondary truncate" role="status">
               {searchedQuery === "" ? "Library" : query.trim() !== searchedQuery ? `for "${searchedQuery}"` : ""}
             </span>
@@ -660,6 +759,12 @@ function App() {
               </Alert>
             )}
           </div>
+        )}
+        {selectionError && selected.size === 0 && (
+          <Alert variant="destructive">
+            <AlertCircle size={14} />
+            <AlertDescription>{selectionError}</AlertDescription>
+          </Alert>
         )}
         <div
           className={`list-scroll results-list ${results.length ? "" : "is-empty"}`}
@@ -676,6 +781,11 @@ function App() {
               selectionStates={selectionStates}
               setSelected={setSelected}
               disabled={searching || Boolean(submitting)}
+              transfersBlocked={updates.blocksTransfers || !output.trim()}
+              submittingUrl={submittingUrl}
+              submitting={submitting}
+              output={output}
+              onTransfer={(url, queue) => void startDownload(queue, url)}
             />
           ) : (
             <Empty className="empty-state">
@@ -887,37 +997,59 @@ function App() {
             <RefreshCw size={16} className={refreshing ? "spin" : ""} />
           </IconButton>
         </div>
-        <div className="list-scroll downloads-list" ref={downloadsList}>
-          {visibleTasks.length > 0 ? (
-            <Table aria-label="Downloads">
-              <TransferTableHead />
-              <TableBody>{visibleTasks.map(row)}</TableBody>
-            </Table>
-          ) : (
-            <Empty className="empty-state">
-              <EmptyHeader>
-                <EmptyMedia>
-                  <ArrowDownToLine size={32} strokeWidth={1.3} />
-                </EmptyMedia>
-                <EmptyTitle>{tasks.length ? "No matching transfers" : "No downloads yet"}</EmptyTitle>
-              </EmptyHeader>
-              {tasks.length ? (
-                <Button
-                  variant="link"
-                  className="text-button"
-                  onClick={() => {
-                    setFilter("all");
-                    setTaskQuery("");
-                  }}
-                >
-                  Clear filters
-                </Button>
-              ) : (
-                <Button variant="link" className="text-button" onClick={() => switchView("search")}>
-                  Search library
-                </Button>
-              )}
-            </Empty>
+        <div className={`downloads-content ${inspectedTask && view === "downloads" ? "has-inspector" : ""}`}>
+          <div className="list-scroll downloads-list" ref={downloadsList}>
+            {visibleTasks.length > 0 ? (
+              <Table aria-label="Downloads">
+                <TransferTableHead />
+                <TableBody>{visibleTasks.map(row)}</TableBody>
+              </Table>
+            ) : (
+              <Empty className="empty-state">
+                <EmptyHeader>
+                  <EmptyMedia>
+                    <ArrowDownToLine size={32} strokeWidth={1.3} />
+                  </EmptyMedia>
+                  <EmptyTitle>{tasks.length ? "No matching transfers" : "No downloads yet"}</EmptyTitle>
+                </EmptyHeader>
+                {tasks.length ? (
+                  <Button
+                    variant="link"
+                    className="text-button"
+                    onClick={() => {
+                      setFilter("all");
+                      setTaskQuery("");
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ) : (
+                  <Button variant="link" className="text-button" onClick={() => switchView("search")}>
+                    Search library
+                  </Button>
+                )}
+              </Empty>
+            )}
+          </div>
+          {inspectedTask && view === "downloads" && (
+            <TransferInspector
+              task={inspectedTask}
+              pending={pending.has(inspectedTask.id)}
+              blocked={updates.blocksTransfers}
+              error={taskErrors[inspectedTask.id]}
+              onClose={() => {
+                rememberDownloadAnchor();
+                setInspectedId(null);
+                const trigger = [
+                  ...(downloadsList.current?.querySelectorAll<HTMLButtonElement>(".inspect-transfer") ?? []),
+                ].find(
+                  (button) => button.closest("[data-transfer-id]")?.getAttribute("data-transfer-id") === inspectedId
+                );
+                trigger?.focus({ preventScroll: true });
+              }}
+              onOpen={() => void openOutputFolder(inspectedTask.output, inspectedTask.id)}
+              onAction={(command, id) => void taskAction(command, id)}
+            />
           )}
         </div>
         <footer className="downloads-footer">

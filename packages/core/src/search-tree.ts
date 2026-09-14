@@ -114,7 +114,9 @@ export function changeTreeSelection(
   tree: SearchTreeNode[],
   selected: ReadonlySet<string>,
   targets: ReadonlySet<string>,
-  checked: boolean
+  checked: boolean,
+  // Browsing views can stage a whole inferred ancestor folder, not just indexed results.
+  includeGroups = false
 ): Set<string> {
   const next = new Set<string>();
   function visit(node: SearchTreeNode, inherited: boolean, insideTarget: boolean): boolean {
@@ -126,7 +128,8 @@ export function changeTreeSelection(
     }
     // Unchecking a descendant splits selected ancestors into the remaining known
     // targets. Keeping a whole-folder target would download the excluded child.
-    if (node.entry && (targeted ? checked : wasSelected) && (checked || !containsTarget)) next.add(node.url);
+    if ((node.entry || includeGroups) && (targeted ? checked : wasSelected) && (checked || !containsTarget))
+      next.add(node.url);
     return containsTarget;
   }
   tree.forEach((node) => visit(node, false, false));

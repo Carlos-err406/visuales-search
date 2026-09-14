@@ -1,4 +1,5 @@
 import type { DownloadTaskRecord } from "./tasks.js";
+import { compareTransferOrder } from "./queue-order.js";
 
 export function transferName(task: DownloadTaskRecord): string {
   let name = task.url;
@@ -58,7 +59,7 @@ export function summarizeTransfer(task: DownloadTaskRecord, now = Date.now()) {
 export function summarizeTransfers(tasks: DownloadTaskRecord[], now = Date.now()) {
   const active = tasks
     .filter((task) => task.status === "running" || task.status === "queued")
-    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    .sort(compareTransferOrder);
   const running = active.filter((task) => task.status === "running");
   const speeds = running.map((task) => transferSpeed(task, now));
   return {

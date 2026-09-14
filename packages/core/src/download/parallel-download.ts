@@ -195,13 +195,21 @@ export async function downloadInParallel(request: FetchDownloadRequest): Promise
   }
   const initialBytes = completed.reduce((sum, bytes) => sum + bytes, 0);
   const started = Date.now();
+  let activeConnections = 0;
   const report = () => {
     const downloadedBytes = completed.reduce((sum, bytes) => sum + bytes, 0);
     request.onProgress?.({
       downloadedBytes,
       totalBytes: metadata.size,
       percentage: (downloadedBytes / metadata.size) * 100,
-      speedBytes: (downloadedBytes - initialBytes) / Math.max((Date.now() - started) / 1000, 0.001),
+      speedBytes: activeConnections
+        ? (downloadedBytes - initialBytes) / Math.max((Date.now() - started) / 1000, 0.001)
+        : 0,
+      connections: {
+        active: activeConnections,
+        chunksCompleted: completed.filter((bytes, index) => bytes === lengths[index]).length,
+        chunksTotal: count,
+      },
     });
   };
   const abort = new AbortController();
@@ -222,6 +230,7 @@ export async function downloadInParallel(request: FetchDownloadRequest): Promise
             headers: createDownloadHeaders({ Range: `bytes=${start}-${end}`, "If-Range": metadata.validator }),
             signal: signal(request, abort.signal),
           });
+          let activeResponse = false;
           try {
             checkRetryableStatus(response);
             const receivedRange = range(response);
@@ -242,6 +251,9 @@ export async function downloadInParallel(request: FetchDownloadRequest): Promise
             if (contentLength !== null && Number(contentLength) !== end - start + 1)
               throw new UnsafeRangeError("Server returned an inconsistent range length");
             if (!response.body) throw new UnsafeRangeError("Missing range response body");
+            activeResponse = true;
+            activeConnections++;
+            report();
             const file = await fs.open(path.join(directory, String(index)), "a");
             try {
               for await (const buffer of response.body) {
@@ -260,6 +272,10 @@ export async function downloadInParallel(request: FetchDownloadRequest): Promise
             }
           } finally {
             await response.body?.cancel().catch(() => {});
+            if (activeResponse) {
+              activeConnections--;
+              report();
+            }
           }
         }, workerSignal);
       }

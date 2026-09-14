@@ -169,6 +169,23 @@ visuales tasks cancel <task-id-or-url> [more-task-ids-or-urls...]
 
 `resume`, `status`, and `cancel` accept multiple task ids or URLs.
 
+### Queue Management
+
+Queue a download behind active transfers, then inspect or change the waiting order:
+
+```bash
+visuales download "https://visuales.uclv.cu/Series/Ingles/Supernatural/S05/" --queue --detach
+visuales tasks queue
+visuales tasks move <task-id-or-url> 3
+visuales tasks next <task-id-or-url>
+```
+
+Positions are one-based: position 1 starts next. `next` moves an existing queued task to the front; it never interrupts active downloads or resumes a stopped task. With no active downloads, the first waiter starts on its next poll (within about three seconds). Invalid positions and nonqueued targets fail without changing the order.
+
+Desktop Downloads has a Queued filter and Start next / Move up / Move down controls in each waiting row. Positions refer to the whole shared queue, even when the list is filtered. CLI and desktop persist the same order in the task store. New or requeued transfers join the end; running downloads keep their settings and are never reordered. Queues without a saved custom order retain FIFO behavior.
+
+Workers already running an older CLI version keep that version's scheduling behavior. Interrupt and requeue those waiting workers using the updated CLI before relying on custom ordering; partial files are preserved.
+
 Each download stores its source URL, output path, options, and last progress in `~/.visuales-cli-cache/download/tasks.json`.
 Interrupted tasks also store why they stopped when the CLI can determine it, such as a user cancellation, interrupt signal, or unexpected process exit.
 By default, partial multi-connection chunks are preserved so interrupted downloads can resume. Use `--resume false` to discard existing chunk state and start a download cleanly.

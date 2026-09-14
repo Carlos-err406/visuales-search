@@ -91,6 +91,14 @@ export async function testTrayPopup({ browser, screenshots }) {
   try {
     await page.goto(`${process.env.DESKTOP_URL || "http://127.0.0.1:1420"}/?tray`);
     await page.waitForFunction(() => document.querySelectorAll(".tray-transfer").length === 3);
+    await page.evaluate(() => {
+      window.trayTest.summary.transfers.push({ id: "history", name: "Previously completed", status: "completed" });
+    });
+    await page.getByRole("article", { name: "Previously completed", exact: true }).waitFor();
+    await page.evaluate(() => {
+      window.trayTest.summary.transfers = window.trayTest.summary.transfers.filter((task) => task.id !== "history");
+    });
+    await page.getByRole("article", { name: "Previously completed", exact: true }).waitFor({ state: "detached" });
     assert.equal(await page.locator(".tray-summary").count(), 0, "no separate status toolbar");
     const headerBounds = await page.locator(".tray-header").boundingBox();
     const listBounds = await page.locator(".tray-transfers").boundingBox();
@@ -146,7 +154,7 @@ export async function testTrayPopup({ browser, screenshots }) {
     );
     const filter = page.getByRole("combobox", { name: "Transfer status" });
     await filter.hover();
-    await page.getByRole("tooltip").filter({ hasText: "Showing: Active" }).waitFor();
+    await page.getByRole("tooltip").filter({ hasText: "Showing: All statuses" }).waitFor();
     assert.equal(await filter.locator(".tray-filter-indicator").count(), 0);
     const choose = async (label) => {
       await filter.click();
@@ -163,7 +171,7 @@ export async function testTrayPopup({ browser, screenshots }) {
       "Escape closes filter before popup"
     );
     await choose("All statuses");
-    assert.equal(await filter.locator(".tray-filter-indicator").count(), 1);
+    assert.equal(await filter.locator(".tray-filter-indicator").count(), 0);
     await page.evaluate(() => {
       window.trayTest.holdAction = true;
     });
@@ -229,7 +237,7 @@ export async function testTrayPopup({ browser, screenshots }) {
     await choose("Running");
     await page.waitForFunction(() => document.querySelectorAll(".tray-transfer").length === 2);
     await choose("Active");
-    assert.equal(await filter.locator(".tray-filter-indicator").count(), 0);
+    assert.equal(await filter.locator(".tray-filter-indicator").count(), 1);
     await page.getByRole("button", { name: "Open Downloads" }).click();
     assert.ok(await page.evaluate(() => window.trayTest.calls.some((call) => call.command === "open_downloads")));
     await page.keyboard.press("Escape");

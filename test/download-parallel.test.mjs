@@ -169,6 +169,11 @@ test("parallel fetch uses multiple bounded connections and assembles byte-exact 
   assert.ok(state.requests.filter((r) => r.range && !r.probe).every((r) => r.ifRange === '"revision-1"'));
   for (let i = 1; i < progress.length; i++) assert.ok(progress[i].downloadedBytes >= progress[i - 1].downloadedBytes);
   assert.equal(progress.at(-1).downloadedBytes, BODY.length);
+  assert.equal(Math.max(...progress.map((p) => p.connections.active)), 4);
+  assert.equal(progress[0].connections.active, 0);
+  assert.deepEqual(progress.at(-1).connections, { active: 0, chunksCompleted: 5, chunksTotal: 5 });
+  assert.ok(progress.every((p) => p.connections.active >= 0 && p.connections.active <= 4));
+  assert.ok(progress.every((p) => Number.isFinite(p.speedBytes) && p.speedBytes >= 0));
   await clearParallelParts(request.tempPath);
   assert.deepEqual(await fs.readdir(path.dirname(request.tempPath)), ["file.bin"]);
 });
@@ -177,7 +182,10 @@ test("small files and one connection use the established single-stream path", as
   for (const size of [1024, BODY.length]) {
     const { request, state } = await fixture(t, "normal", size);
     if (size === BODY.length) request.options.connections = 1;
-    await downloadWithFetch(request);
+    const progress = [];
+    await downloadWithFetch({ ...request, onProgress: (p) => progress.push(p) });
+    assert.ok(progress.some((p) => p.connections?.active === 1));
+    assert.deepEqual(progress.at(-1).connections, { active: 0 });
     assert.equal(
       state.requests.some((r) => r.range),
       false

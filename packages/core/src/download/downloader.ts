@@ -11,6 +11,7 @@ import pLimit from "p-limit";
 import { DownloadOptions, DownloadProgress, type DownloadActiveFileProgress } from "./types.js";
 import { formatSize, parseSize } from "./utils.js";
 import { createIgnoreMatcher } from "./ignore-rules.js";
+import { reportDownloadFile } from "./file-details.js";
 import {
   DIRECTORY_LISTING_PARSER_VERSION,
   dirListingCache,
@@ -345,6 +346,54 @@ export async function downloadFile(
   if (downloadedUrls?.has(url)) return;
   downloadedUrls?.add(url);
 
+  const filename = getDecodedUrlBasename(url);
+  reportDownloadFile(url, options.output, filename, { status: "downloading", error: undefined });
+  try {
+    await downloadFileContents(
+      url,
+      options,
+      (progress) => {
+        reportDownloadFile(url, options.output, filename, {
+          downloadedBytes: progress.downloadedSize,
+          totalBytes: progress.totalSize > 0 ? progress.totalSize : null,
+          speedBytes: progress.speedBytes,
+          progressUpdatedAt: Date.now(),
+          connections: progress.connections,
+        });
+        onProgress?.(progress);
+      },
+      expectedSize,
+      slot,
+      slotBar
+    );
+    const size = await getFileSize(path.join(options.output, filename));
+    reportDownloadFile(url, options.output, filename, {
+      status: "completed",
+      downloadedBytes: size ?? 0,
+      totalBytes: size,
+      estimated: false,
+      speedBytes: 0,
+      connections: undefined,
+    });
+  } catch (error) {
+    reportDownloadFile(url, options.output, filename, {
+      status: "failed",
+      speedBytes: 0,
+      connections: undefined,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+async function downloadFileContents(
+  url: string,
+  options: DownloadOptions,
+  onProgress: (progress: DownloadProgress) => void,
+  expectedSize: number | undefined,
+  slot: number,
+  slotBar?: ReturnType<typeof createDownloadBar>
+): Promise<void> {
   await fs.mkdir(options.output, { recursive: true });
 
   const filename = getDecodedUrlBasename(url);
@@ -472,6 +521,7 @@ export async function downloadFile(
             progress: progress.percentage,
             speed: `${(progress.speedBytes / 1024 / 1024).toFixed(2)} MB/s`,
             speedBytes: progress.speedBytes,
+            connections: progress.connections,
             totalSize: progress.totalBytes,
             downloadedSize: progress.downloadedBytes,
           });
@@ -515,6 +565,7 @@ export async function downloadFile(
           }
 
           await promoteDownloadedFile(tempPath, finalPath);
+          reportDownloadFile(url, options.output, filename, { verified: verification.verified });
 
           if (bars) {
             const sizeToLog = verification.size || expectedFileSize.size || lastProgress.downloadedBytes;
@@ -725,6 +776,7 @@ export async function downloadFile(
             }
 
             await promoteDownloadedFile(tempPath, finalPath);
+            reportDownloadFile(url, options.output, filename, { verified: verification.verified });
 
             if (bars) {
               const sizeToLog = verification.size || expectedFileSize.size || downloadedTotal;
@@ -897,6 +949,11 @@ async function summarizeDirectoryDownload(
     const relativeFilePath = path.posix.join(relativePath, filename);
     if (isExcluded(relativeFilePath)) continue;
 
+    reportDownloadFile(file.url, options.output, filename, {
+      totalBytes: file.size > 0 ? file.size : null,
+      estimated: !file.exact,
+    });
+
     summary.fileCount++;
     if (file.size > 0) {
       summary.hasSizeInfo = true;
@@ -910,7 +967,12 @@ async function summarizeDirectoryDownload(
       .filter((dirUrl) => !isExcluded(path.posix.join(relativePath, getDecodedUrlBasename(dirUrl)) + "/"))
       .map(async (dirUrl) => {
         const dirName = getDecodedUrlBasename(dirUrl);
-        return summarizeDirectoryDownload(dirUrl, options, undefined, path.posix.join(relativePath, dirName));
+        return summarizeDirectoryDownload(
+          dirUrl,
+          { ...options, output: path.join(options.output, dirName) },
+          undefined,
+          path.posix.join(relativePath, dirName)
+        );
       })
   );
 
@@ -936,6 +998,10 @@ async function summarizeFileDownload(url: string, options: DownloadOptions): Pro
   const cachedFileSize = getCachedFileSizeInfo(url);
   const size = expectedFileSize.size || cachedFileSize.size;
   const exact = expectedFileSize.size ? expectedFileSize.exact : cachedFileSize.exact;
+  reportDownloadFile(url, options.output, getDecodedUrlBasename(url), {
+    totalBytes: size > 0 ? size : null,
+    estimated: !exact,
+  });
 
   return {
     fileCount: 1,
@@ -1142,7 +1208,11 @@ async function downloadMany(
             continue;
           }
 
-          const targetSummary = await summarizeDirectoryDownload(target.url, options, listing);
+          const targetSummary = await summarizeDirectoryDownload(
+            target.url,
+            { ...options, output: target.output },
+            listing
+          );
           addSummary(summary, targetSummary);
           directoryTargets.push({ target, listing, summary: targetSummary });
         } catch (err: unknown) {
@@ -1152,7 +1222,7 @@ async function downloadMany(
           });
         }
       } else {
-        const targetSummary = await summarizeFileDownload(target.url, options);
+        const targetSummary = await summarizeFileDownload(target.url, { ...options, output: target.output });
         addSummary(summary, targetSummary);
         fileTargets.push({ target, summary: targetSummary });
       }

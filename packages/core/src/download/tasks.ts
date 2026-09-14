@@ -4,8 +4,11 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { ensureDownloadCacheDirectory } from "../lib/cache.js";
 import { CONFIG } from "../lib/types.js";
+import { removeDownloadFileDetails } from "./file-details.js";
 import { getProcessRows, type ProcessRow } from "../lib/process-list.js";
 import type { DownloadOptions, DownloadProgress } from "./types.js";
+import { queueRank, compareQueueRank, orderedQueue, type QueueRank, type QueueMove } from "./queue-order.js";
+export { queueRank, compareQueueRank, orderedQueue, type QueueMove } from "./queue-order.js";
 
 export type DownloadTaskStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
 export type DownloadTaskInterruptedCause = "canceled" | "process-exited" | "signal" | "unknown";
@@ -23,6 +26,7 @@ export interface DownloadTaskRecord {
   createdAt: number;
   updatedAt: number;
   queuedAt?: number;
+  queueOrder?: number;
   startedAt?: number;
   completedAt?: number;
   interruptedAt?: number;
@@ -323,6 +327,7 @@ async function deleteDownloadTaskUnlocked(idOrUrl: string): Promise<DownloadTask
   await saveTaskStore(store);
   lastProgressWrite.delete(task.id);
   await removeTaskLogFile(task);
+  await removeDownloadFileDetails(task.id);
 
   return task;
 }
@@ -345,8 +350,7 @@ export async function startDownloadTask(
 
 /**
  * Registers a task as `queued` so it shows up in `visuales tasks` while it parks. The worker
- * later calls {@link waitForQueueSlot} and, once its turn comes, {@link startDownloadTask} to
- * flip it to `running`.
+ * later calls {@link waitForQueueSlot}, which atomically claims its turn and marks it running.
  */
 export async function enqueueDownloadTask(
   urls: string | string[],
@@ -395,6 +399,11 @@ async function registerTask(
     // Keep the position from when it first joined the queue; only stamp a fresh time when it
     // was not already waiting (a re-download of the same target, or the worker re-registering).
     queuedAt: isQueued ? (existing?.status === "queued" ? (existing.queuedAt ?? now) : now) : undefined,
+    queueOrder: isQueued
+      ? existing?.status === "queued"
+        ? queueRank(existing)[0]
+        : Math.max(now, ...store.tasks.filter((task) => task.status === "queued").map((task) => queueRank(task)[0] + 1))
+      : undefined,
     startedAt: isQueued ? existing?.startedAt : now,
     interruptedAt: undefined,
     interruptedCause: undefined,
@@ -413,14 +422,42 @@ async function registerTask(
   return record;
 }
 
-type QueueRank = [number, string];
-
-export function queueRank(task: DownloadTaskRecord): QueueRank {
-  return [task.queuedAt ?? task.createdAt ?? 0, task.id];
-}
-
-export function compareQueueRank(a: QueueRank, b: QueueRank): number {
-  return a[0] - b[0] || a[1].localeCompare(b[1]);
+/** Move against the latest shared queue, never against a stale client snapshot. */
+export async function moveQueuedDownloadTask(idOrUrl: string, move: QueueMove): Promise<DownloadTaskRecord[]> {
+  if (
+    !(
+      move === "up" ||
+      move === "down" ||
+      move === "next" ||
+      (typeof move === "number" && Number.isSafeInteger(move) && move > 0)
+    )
+  ) {
+    throw new Error("Queue position must be a positive integer, up, down, or next");
+  }
+  return withTaskLock(async () => {
+    const tasks = await listDownloadTasksUnlocked();
+    const task = tasks.find((item) => item.id === idOrUrl || item.url === idOrUrl || item.urls?.includes(idOrUrl));
+    if (!task) throw new Error("Download task not found");
+    if (task.status !== "queued") throw new Error("Only queued downloads can be reordered");
+    const queue = orderedQueue(tasks);
+    const from = queue.findIndex((item) => item.id === task.id);
+    const to =
+      move === "next"
+        ? 0
+        : move === "up"
+          ? Math.max(0, from - 1)
+          : move === "down"
+            ? Math.min(queue.length - 1, from + 1)
+            : move - 1;
+    if (to >= queue.length) throw new Error(`Queue position must be between 1 and ${queue.length}`);
+    queue.splice(from, 1);
+    queue.splice(to, 0, task);
+    queue.forEach((item, index) => {
+      item.queueOrder = index;
+    });
+    await saveTaskStore({ version: 1, tasks });
+    return queue;
+  });
 }
 
 export interface QueuePosition {
@@ -430,8 +467,8 @@ export interface QueuePosition {
 
 /**
  * A queued task may start once nothing is `running` and it is the frontmost waiter (earliest
- * `queuedAt`, ties broken by id). Ordering by rank means at most one queued task clears the gate
- * at a time, which serializes the queue without a lock. Pure so it can be unit-tested directly.
+ * persisted order, falling back to `queuedAt`, ties broken by id). Callers must hold the task
+ * lock through the running transition. Pure so it can be unit-tested directly.
  */
 export function isQueuedTaskReady(tasks: DownloadTaskRecord[], taskId: string): boolean {
   const me = tasks.find((task) => task.id === taskId);
@@ -469,16 +506,35 @@ export async function waitForQueueSlot(
   ownerPid: number = process.pid
 ): Promise<boolean> {
   for (;;) {
-    const tasks = await listDownloadTasks();
-    const me = tasks.find((task) => task.id === taskId);
-    if (!me || me.status !== "queued") return false;
-    if (me.pid && me.pid !== ownerPid) return false;
-    if (isQueuedTaskReady(tasks, taskId)) return true;
-
-    onWait?.(getQueuePosition(tasks, taskId));
-    await updateTask(taskId, {});
+    const result = await claimQueuedDownloadTask(taskId, ownerPid);
+    if (result === "acquired") return true;
+    if (result === "canceled") return false;
+    if (onWait) onWait(getQueuePosition(await listDownloadTasks(), taskId));
     await sleep(QUEUE_POLL_INTERVAL_MS);
   }
+}
+
+/** Readiness and claiming share the reorder lock, so a moved waiter cannot also pass the gate. */
+export async function claimQueuedDownloadTask(
+  taskId: string,
+  ownerPid: number = process.pid
+): Promise<"acquired" | "waiting" | "canceled"> {
+  return withTaskLock(async () => {
+    const tasks = await listDownloadTasksUnlocked();
+    const me = tasks.find((task) => task.id === taskId);
+    if (!me || me.status !== "queued" || (me.pid && me.pid !== ownerPid)) return "canceled";
+    if (!isQueuedTaskReady(tasks, taskId)) return "waiting";
+    await updateTaskUnlocked(taskId, {
+      status: "running",
+      pid: ownerPid,
+      startedAt: Date.now(),
+      queuedAt: undefined,
+      queueOrder: undefined,
+      interruptedAt: undefined,
+      interruptedCause: undefined,
+    });
+    return "acquired";
+  });
 }
 
 export async function completeDownloadTask(id: string): Promise<void> {

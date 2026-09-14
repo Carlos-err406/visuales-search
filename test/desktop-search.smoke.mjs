@@ -5,15 +5,14 @@ async function checkTreeAlignment(page) {
   const rows = await page.getByRole("treeitem").evaluateAll((elements) =>
     elements.map((row) => ({
       depth: Number(row.getAttribute("aria-level")),
-      checkbox: row.querySelector('[role="checkbox"]')?.getBoundingClientRect().x,
+      actions: row.querySelector(".tree-actions").getBoundingClientRect().right,
       icon: row.querySelector(".file-symbol").getBoundingClientRect().x,
       name: row.querySelector(".file-title").getBoundingClientRect().x,
     }))
   );
-  const checkboxes = rows.filter((row) => row.checkbox !== undefined);
-  assert.ok(checkboxes.length > 1);
-  for (const row of checkboxes) {
-    assert.equal(row.checkbox, checkboxes[0].checkbox, "checkboxes share a fixed selection gutter at every depth");
+  assert.equal(await page.getByRole("tree").getByRole("checkbox").count(), 0);
+  for (const row of rows) {
+    assert.equal(row.actions, rows[0].actions, "actions remain right aligned at every depth");
   }
   for (const row of rows) {
     assert.equal(row.icon - rows[0].icon, (row.depth - rows[0].depth) * 18, "only folder/file content is indented");
@@ -52,18 +51,48 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
   await page.getByRole("treeitem", { name: "Example", exact: true }).waitFor();
   const example = page.getByRole("treeitem", { name: "Example", exact: true });
   const extras = page.getByRole("treeitem", { name: "Extras", exact: true });
+  assert.equal(await page.locator(".selection-bar").count(), 0);
+  const lastTransfer = () =>
+    page.evaluate(() => window.testBridge.calls.filter((call) => call.command === "start_download").at(-1).args);
+  await page.getByRole("button", { name: "Download Example", exact: true }).click();
+  await page.getByText("Transfer started", { exact: true }).waitFor();
+  assert.deepEqual((await lastTransfer()).urls, ["https://visuales.uclv.cu/Movies/Example/"]);
+  assert.equal((await lastTransfer()).queue, false);
+  assert.equal(await example.getAttribute("aria-expanded"), "true", "row action does not toggle folder");
+  assert.equal(await page.locator(".selection-bar").count(), 0, "individual actions do not stage items");
+  await page.getByRole("button", { name: "Queue notes.txt", exact: true }).click();
+  await page.getByText("Transfer added to queue", { exact: true }).waitFor();
+  assert.deepEqual((await lastTransfer()).urls, ["https://visuales.uclv.cu/Movies/Example/notes.txt"]);
+  assert.equal((await lastTransfer()).queue, true);
+  assert.equal(await page.getByRole("dialog").count(), 0, "row action does not preview file");
+  await page.evaluate(() => {
+    window.testBridge.fail = "start_download";
+  });
+  await page.getByRole("button", { name: "Download Other", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Test failure: start_download" }).waitFor();
+  assert.equal(await page.locator(".selection-bar").count(), 0, "direct action errors remain visible without a footer");
+  await page.evaluate(() => {
+    window.testBridge.fail = "";
+  });
   assert.equal(await page.getByRole("tree").locator(".lucide-chevron-down, .lucide-chevron-right").count(), 0);
   assert.equal(await example.locator(".lucide-folder-open").count(), 1);
   assert.equal(await example.locator(".tree-size").count(), 0, "folders do not show sizes");
   assert.equal(await page.getByRole("button", { name: /^List contents of / }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "Refresh Example", exact: true }).count(), 0);
   assert.equal(await page.getByRole("treeitem", { name: "notes.txt", exact: true }).getAttribute("aria-level"), "3");
-  await page.getByRole("checkbox", { name: "Select notes.txt", exact: true }).click();
-  assert.equal(await page.getByRole("dialog").count(), 0, "checkbox selection does not preview");
+  await page.getByRole("treeitem", { name: "notes.txt", exact: true }).click({ modifiers: ["Meta"] });
+  assert.equal(await page.getByRole("dialog").count(), 0, "modifier selection does not preview");
+  await page.getByRole("button", { name: "Queue Other", exact: true }).click();
+  await page.getByText("Transfer added to queue", { exact: true }).waitFor();
+  assert.equal(
+    await page.getByRole("treeitem", { name: "notes.txt", exact: true }).getAttribute("aria-selected"),
+    "true",
+    "individual actions preserve staged items"
+  );
+  assert.equal(await page.locator(".selection-bar").count(), 1);
   await example.click();
   assert.equal(await example.getAttribute("aria-expanded"), "false");
   assert.equal(await example.locator(".lucide-folder").count(), 1);
-  assert.equal(await page.getByRole("checkbox", { name: "Select notes.txt", exact: true }).count(), 0);
   assert.equal(await page.getByRole("treeitem", { name: "notes.txt", exact: true }).count(), 0);
   await page.evaluate(() => {
     window.testBridge.holdListing = true;
@@ -96,7 +125,7 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
     "listing merges matching children"
   );
   assert.equal(
-    await page.getByRole("checkbox", { name: "Select notes.txt", exact: true }).getAttribute("aria-checked"),
+    await page.getByRole("treeitem", { name: "notes.txt", exact: true }).getAttribute("aria-selected"),
     "true"
   );
   const count = await page.evaluate(
@@ -110,18 +139,13 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
     ),
     count
   );
-  await page.getByRole("checkbox", { name: "Select Example", exact: true }).click();
-  assert.equal(await example.getAttribute("aria-expanded"), "true", "checkbox selection does not collapse folders");
+  await example.click({ modifiers: ["Meta"] });
+  assert.equal(await example.getAttribute("aria-expanded"), "true", "modifier selection does not collapse folders");
   for (const name of ["Example", "Extras", "cover.png", "notes.txt"]) {
-    assert.equal(
-      await page.getByRole("checkbox", { name: `Select ${name}`, exact: true }).getAttribute("aria-checked"),
-      "true"
-    );
+    assert.equal(await page.getByRole("treeitem", { name, exact: true }).getAttribute("aria-selected"), "true");
   }
-  await page.getByRole("checkbox", { name: "Select cover.png", exact: true }).uncheck();
-  const parentCheckbox = page.getByRole("checkbox", { name: "Select Example", exact: true });
-  assert.equal(await parentCheckbox.getAttribute("aria-checked"), "mixed");
-  assert.equal(await parentCheckbox.locator(".lucide-minus").isVisible(), true);
+  await page.getByRole("treeitem", { name: "cover.png", exact: true }).click({ modifiers: ["Meta"] });
+  assert.equal(await example.getAttribute("data-selection"), "partial");
   await page.screenshot({ path: `${screenshots}/search-partial-selection.png` });
   await page.getByRole("button", { name: "Queue", exact: true }).click();
   await page.waitForFunction(() =>
@@ -141,8 +165,8 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
     ["https://visuales.uclv.cu/Movies/Example/Extras/", "https://visuales.uclv.cu/Movies/Example/notes.txt"],
     "excluded file must not be included by a whole-folder download"
   );
-  await parentCheckbox.click();
-  assert.equal(await parentCheckbox.getAttribute("aria-checked"), "true");
+  await example.click({ modifiers: ["Meta"] });
+  assert.equal(await example.getAttribute("aria-selected"), "true");
   await page.getByRole("button", { name: "Queue", exact: true }).click();
   await page.waitForFunction(
     () =>
@@ -155,7 +179,30 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
     ),
     ["https://visuales.uclv.cu/Movies/Example/"]
   );
-  const note = page.getByRole("button", { name: "notes.txt", exact: true });
+  const note = page.getByRole("treeitem", { name: "notes.txt", exact: true });
+  await note.click({ modifiers: ["Meta"] });
+  await note.click();
+  await page.getByRole("dialog").locator("pre").waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  assert.equal(await note.getAttribute("aria-selected"), "true", "closing a preview preserves selection");
+  await page.getByRole("button", { name: "Download notes.txt", exact: true }).hover();
+  await page.getByRole("tooltip").waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("tooltip").waitFor({ state: "hidden" });
+  assert.equal(await note.getAttribute("aria-selected"), "true", "dismissing a tooltip preserves selection");
+  await page.mouse.move(0, 0);
+  await note.focus();
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".selection-bar").count(), 0, "Escape clears staging and hides the footer");
+  assert.equal(await note.getAttribute("aria-selected"), "false");
+  assert.equal(await note.evaluate((el) => el === document.activeElement), true, "Escape retains row focus");
+  assert.equal(await example.getAttribute("aria-expanded"), "true", "Escape does not collapse folders");
+  assert.equal(await page.getByRole("searchbox", { name: "Search library" }).inputValue(), "Example");
+  await page.keyboard.press("Space");
+  await page.getByRole("textbox", { name: "Download destination", exact: true }).focus();
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".selection-bar").count(), 0, "Escape also clears staging from the footer");
   await note.click();
   await page.getByRole("dialog").locator("pre").waitFor();
   assert.equal(await page.evaluate(() => window.remoteExecuted), undefined, "remote text stays inert");
@@ -185,7 +232,7 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
   await page.getByRole("button", { name: "Refresh preview", exact: true }).click();
   await page.getByText(/Fetched/).waitFor();
   await page.getByRole("button", { name: "Close preview", exact: true }).click();
-  await page.getByRole("button", { name: "cover.png", exact: true }).click();
+  await page.getByRole("treeitem", { name: "cover.png", exact: true }).click();
   await page.getByRole("dialog").getByRole("img").waitFor();
   await page.waitForFunction(() => document.querySelector(".preview-body img")?.naturalWidth > 0);
   await page.screenshot({ path: `${screenshots}/search-image-preview.png` });

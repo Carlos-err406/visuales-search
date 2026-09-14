@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { DownloadOptions } from "./types.js";
+import { DownloadOptions, type DownloadConnectionProgress } from "./types.js";
 import {
   checkRetryableStatus,
   createDownloadHeaders,
@@ -17,6 +17,7 @@ export interface FetchDownloadProgress {
   speedBytes: number;
   percentage: number;
   totalBytes: number;
+  connections?: DownloadConnectionProgress;
 }
 
 export interface FetchDownloadRequest {
@@ -96,8 +97,17 @@ async function downloadSequentially(request: FetchDownloadRequest): Promise<Fetc
     const file = await fs.open(tempPath, shouldAppend ? "a" : "w");
     const startedAt = Date.now();
     let downloadedBytes = startingBytes;
+    const report = (active: number) =>
+      onProgress?.({
+        downloadedBytes,
+        speedBytes: active ? (downloadedBytes - startingBytes) / Math.max((Date.now() - startedAt) / 1000, 0.001) : 0,
+        percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
+        totalBytes,
+        connections: { active },
+      });
 
     try {
+      report(1);
       for await (const chunk of response.body) {
         const buffer = Buffer.from(chunk);
         let offset = 0;
@@ -107,19 +117,11 @@ async function downloadSequentially(request: FetchDownloadRequest): Promise<Fetc
           offset += bytesWritten;
         }
         downloadedBytes += buffer.length;
-        const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
-        const speedBytes = (downloadedBytes - startingBytes) / elapsedSeconds;
-        const percentage = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
-
-        onProgress?.({
-          downloadedBytes,
-          speedBytes,
-          percentage,
-          totalBytes,
-        });
+        report(1);
       }
     } finally {
       await file.close();
+      report(0);
     }
 
     return {

@@ -35,10 +35,7 @@ export async function testLibraryIndex({ page, screenshots, checkLayout }) {
   await last.waitFor();
   await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Album 2999");
   await page.keyboard.press("Space");
-  assert.equal(
-    await page.getByRole("checkbox", { name: "Select Album 2999", exact: true }).getAttribute("aria-checked"),
-    "true"
-  );
+  assert.equal(await last.getAttribute("aria-selected"), "true");
   await page.waitForFunction(() => {
     const row = document.querySelector('[role="treeitem"][aria-label="Album 2999"]')?.getBoundingClientRect();
     const viewport = document.querySelector(".results-list")?.getBoundingClientRect();
@@ -50,17 +47,17 @@ export async function testLibraryIndex({ page, screenshots, checkLayout }) {
   await page.getByRole("tab", { name: /Downloads/ }).click();
   await page.getByRole("tab", { name: "Search", exact: true }).click();
   await page.getByRole("treeitem", { name: "Album 0000", exact: true }).waitFor();
-  assert.equal(
-    await page.getByRole("checkbox", { name: "Select Library", exact: true }).getAttribute("aria-checked"),
-    "mixed"
-  );
+  assert.equal(await library.getAttribute("data-selection"), "partial");
   // Filtering still uses the shared engine, and clearing discards that selection.
   const search = page.getByRole("searchbox", { name: "Search library" });
   await search.fill("planet");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await page.locator(".result-row").first().waitFor();
   await page.waitForFunction(() => document.querySelector(".results-toolbar")?.textContent.includes("45 results"));
-  await page.locator(".result-row [role=checkbox]").first().check();
+  await page
+    .locator(".result-row")
+    .first()
+    .click({ modifiers: ["Meta"] });
   await page.evaluate(() => {
     window.testBridge.fail = "search_content";
   });

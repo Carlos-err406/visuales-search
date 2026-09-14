@@ -75,6 +75,20 @@ The editor now uses ordered gitignore-style rules: `*.jpg` followed by `!poster.
 
 Prepared for v3.0.0 alongside clickable Settings help popovers. Help opens on click, tap, or keyboard activation and closes with Escape, its close button, or an outside click. Only one help panel can be open. The major version reflects removal of the CLI `--exclude` flag; use `--ignore` instead. Stored tasks and preferences remain compatible. Menu bar progress is not included.
 
+## Implemented: Queue Management
+
+[015: Shared queue management](../.context/compound-engineering/todos/015-complete-p2-queue-management.md) is implemented locally, not released. Core persists custom queue order separately from enqueue times and atomically claims waiting work under the same lock used for reordering. New/requeued tasks append; untouched legacy queues retain FIFO order.
+
+CLI offers `tasks queue`, `tasks move <task> <position>`, and `tasks next <task>`. Desktop Downloads adds a Queued filter, global positions, and compact Start next / Move up / Move down controls. Tray order matches. Start next promotes a waiting task without interrupting active transfers. Existing older CLI workers need to be interrupted/requeued using the updated CLI to adopt the new scheduling behavior.
+
+## Implemented Locally: Transfer Inspector
+
+Downloads now opens transfer details in a non-modal, Sheet-style right inspector. The list stays usable, another transfer replaces the details, Escape or Close dismisses it, and the resize preference is remembered. Small windows use a stacked layout. Files show recorded status, bytes, active progress, verification uncertainty, and errors without a nested table.
+
+Files are grouped into collapsible Downloading, Pending, Needs attention, and Finished sections. Active files also show speed, active payload response streams, and completed/total chunks when using parallel ranges. The connection count is not the configured limit or idle socket count. Stale and terminal telemetry is hidden; older workers can supply speed through their existing task summaries without invented connection details.
+
+CLI and desktop runs record the same shared-core per-file history under the unified download cache, separate from task summaries. Details are loaded only for the inspected task; large file lists are virtualized. Existing historical tasks are not guessed or re-scanned: their inspector reports when no per-file history is available. No release has been made for this feature.
+
 ## Later
 
 Desktop download notifications are included in the 3.2.0 release work; see [behavior and platform verification](desktop-notifications.md). This is separately authorized from tray progress.

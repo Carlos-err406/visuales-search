@@ -47,11 +47,24 @@ test("tray summary includes CLI and desktop work with stable ordering and byte p
   assert.equal(result.speedBytes, 2048);
   assert.deepEqual(
     result.transfers.map((entry) => entry.id),
-    ["a", "queued", "z"]
+    ["a", "z", "queued"]
   );
   assert.equal(result.transfers[0].progress, 25);
-  assert.equal(result.transfers[1].progress, null);
+  assert.equal(result.transfers[2].progress, null);
   assert.equal(input[0].id, "z", "does not reorder task store");
+});
+
+test("tray summary follows saved queue order and active progress writes do not move rows", () => {
+  const input = [
+    { ...task("running-first"), createdAt: 10, updatedAt: 200 },
+    { ...task("running-last"), createdAt: 20, updatedAt: 100 },
+    { ...task("queue-last", "queued"), queuedAt: 1, queueOrder: 2 },
+    { ...task("queue-first", "queued"), queuedAt: 2, queueOrder: 1 },
+  ];
+  const ids = () => summarizeTransfers(input, now).transfers.map((entry) => entry.id);
+  assert.deepEqual(ids(), ["running-first", "running-last", "queue-first", "queue-last"]);
+  input[1].updatedAt = 300;
+  assert.deepEqual(ids(), ["running-first", "running-last", "queue-first", "queue-last"]);
 });
 
 test("tray never substitutes file counts or one file's progress for unknown folder bytes", () => {

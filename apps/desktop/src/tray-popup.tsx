@@ -20,7 +20,7 @@ type TaskAction = "open_output_folder" | "cancel_download_task" | "resume_downlo
 export function TrayPopup() {
   useAppearance();
   const [tasks, setTasks] = useState<Task[] | null>(null);
-  const [filter, setFilter] = useState<TrayFilter>("active");
+  const [filter, setFilter] = useState<TrayFilter>("all");
   const [filterOpen, setFilterOpen] = useState(false);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -143,7 +143,7 @@ export function TrayPopup() {
               }
             >
               <ListFilter size={17} />
-              {filter !== "active" && <span className="tray-filter-indicator" aria-hidden="true" />}
+              {filter !== "all" && <span className="tray-filter-indicator" aria-hidden="true" />}
             </SelectPrimitive.Trigger>
             <SelectContent
               className="tray-filter-options"

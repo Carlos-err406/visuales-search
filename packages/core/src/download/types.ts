@@ -25,9 +25,17 @@ export interface DownloadProgress {
   progress: number;
   speed: string;
   speedBytes?: number;
+  connections?: DownloadConnectionProgress;
   totalSize: number;
   downloadedSize: number;
   overall?: DownloadOverallProgress;
+}
+
+/** Active payload response streams, not the configured limit or idle pooled sockets. */
+export interface DownloadConnectionProgress {
+  active: number;
+  chunksCompleted?: number;
+  chunksTotal?: number;
 }
 
 export interface DownloadOverallProgress {

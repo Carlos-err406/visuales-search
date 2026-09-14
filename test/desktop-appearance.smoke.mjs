@@ -177,9 +177,11 @@ export async function testAppearance({ page, screenshots, checkLayout }) {
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".results-list")?.getAttribute("aria-busy") === "false");
   await page.locator(".result-row").first().waitFor();
-  await page.locator('.result-row [role="checkbox"]').first().click();
-  const checked = page.locator('.result-row.selected [data-slot="checkbox"]');
-  assert.equal(await checked.evaluate((el) => window.getComputedStyle(el).color), "rgb(16, 38, 40)");
+  await page
+    .locator(".result-row")
+    .first()
+    .click({ modifiers: ["Meta"] });
+  assert.equal(await page.locator(".result-row.selected").count(), 1);
   for (const viewport of [
     { width: 1240, height: 820 },
     { width: 760, height: 620 },

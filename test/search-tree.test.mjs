@@ -77,6 +77,18 @@ test("checking a folder selects its nested children and emits one download targe
   assert.equal(changeTreeSelection(tree, selected, new Set([folder]), false).size, 0);
 });
 
+test("browsing can stage an inferred folder and split it when a descendant is removed", () => {
+  const tree = selectionTree();
+  const group = tree[0].url;
+  const selected = changeTreeSelection(tree, new Set(), new Set([group]), true, true);
+  assert.deepEqual(distinctDownloadUrls(selected), [group]);
+  assert.equal(treeSelectionStates(tree, selected).get(track), true);
+  const partial = changeTreeSelection(tree, selected, new Set([folder]), false, true);
+  assert.deepEqual(distinctDownloadUrls(partial), [other]);
+  assert.equal(treeSelectionStates(tree, partial).get(group), "indeterminate");
+  assert.equal(changeTreeSelection(tree, selected, new Set([group]), false, true).size, 0);
+});
+
 test("partial selection is indeterminate at every ancestor and complete children check the parent", () => {
   const tree = selectionTree();
   const selected = new Set([track]);
