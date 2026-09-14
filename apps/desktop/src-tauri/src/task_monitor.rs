@@ -44,6 +44,10 @@ pub struct TaskMonitor {
 }
 
 impl TaskMonitor {
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
+    }
+
     pub fn invalidate(&self) {
         self.cache.revision.fetch_add(1, Ordering::SeqCst);
         self.wake.notify_one();
@@ -97,6 +101,9 @@ pub fn start(app: &tauri::AppHandle) {
                 break;
             }
             crate::tray::update_status(&app, value.as_ref().ok());
+            if value.is_ok() {
+                crate::notifications::poll(&app).await;
+            }
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {},
                 _ = monitor.wake.notified() => {},

@@ -7,6 +7,8 @@ export interface DesktopSettings {
   connections: number;
   maxRetries: number;
   exclude: string[];
+  notifyCompleted: boolean;
+  notifyFailed: boolean;
 }
 
 export interface DesktopSettingsSnapshot {

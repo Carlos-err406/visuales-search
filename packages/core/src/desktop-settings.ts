@@ -25,8 +25,11 @@ export function resolveDesktopOutput(value: unknown): string {
 export function validateDesktopSettings(value: unknown): DesktopSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid desktop settings");
   const settings = value as Record<string, unknown>;
-  const keys = ["output", "exclude", ...Object.keys(desktopSettingsLimits)];
+  const keys = ["output", "exclude", "notifyCompleted", "notifyFailed", ...Object.keys(desktopSettingsLimits)];
   if (Object.keys(settings).some((key) => !keys.includes(key))) throw new Error("Unknown desktop setting");
+  for (const key of ["notifyCompleted", "notifyFailed"]) {
+    if (settings[key] !== undefined && typeof settings[key] !== "boolean") throw new Error(`${key} must be a boolean`);
+  }
   for (const [key, { min, max }] of Object.entries(desktopSettingsLimits)) {
     const number = settings[key];
     if (typeof number !== "number" || !Number.isInteger(number) || number < min || number > max)
@@ -38,6 +41,8 @@ export function validateDesktopSettings(value: unknown): DesktopSettings {
     connections: settings.connections as number,
     maxRetries: settings.maxRetries as number,
     exclude: normalizeDesktopExclusions(settings.exclude),
+    notifyCompleted: (settings.notifyCompleted as boolean | undefined) ?? true,
+    notifyFailed: (settings.notifyFailed as boolean | undefined) ?? true,
   };
 }
 

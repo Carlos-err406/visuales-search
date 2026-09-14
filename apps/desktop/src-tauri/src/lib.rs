@@ -1,4 +1,5 @@
 mod folders;
+mod notifications;
 mod quit;
 mod relaunch;
 mod sidecar;
@@ -145,6 +146,8 @@ pub fn run() {
                 eprintln!("Tray unavailable; use the Downloads view: {error}");
             }
             task_monitor::start(app.handle());
+            #[cfg(debug_assertions)]
+            notifications::preview_on_launch(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
