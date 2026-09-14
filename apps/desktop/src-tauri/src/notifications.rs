@@ -148,7 +148,7 @@ fn show(app: &tauri::AppHandle, notice: &Notice) -> Result<(), String> {
         // Bound listener lifetime even when a notification server never reports dismissal.
         tauri::async_runtime::spawn(async move {
             let action = handle.wait_for_action_async(|action| {
-                if matches!(action, notify_rust::ActionResponse::Custom(action) if action == "default") && available(&app) {
+                if opens_download(action) && available(&app) {
                     let target = app.clone();
                     let _ = app.run_on_main_thread(move || {
                         if let Err(error) = crate::tray::open_downloads(target, Some(id)) {
@@ -169,9 +169,26 @@ fn show(app: &tauri::AppHandle, notice: &Notice) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn opens_download(action: &notify_rust::ActionResponse<'_>) -> bool {
+    matches!(action, notify_rust::ActionResponse::Custom("default"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_default_notification_action_opens_download() {
+        use notify_rust::{ActionResponse, CloseReason};
+
+        assert!(opens_download(&ActionResponse::Custom("default")));
+        assert!(!opens_download(&ActionResponse::Custom("other")));
+        assert!(!opens_download(&ActionResponse::Closed(
+            CloseReason::Dismissed
+        )));
+    }
 
     #[test]
     fn only_fresh_background_terminal_events_are_eligible() {
