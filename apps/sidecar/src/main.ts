@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
 import {
   searchContent,
   downloadUrl,
@@ -20,6 +21,9 @@ import {
   setLogger,
   type DownloadOptions,
   type DownloadProgress,
+  claimDownloadFileRetry,
+  runDownloadFileRetry,
+  reviewDownload,
 } from "@visuales/core";
 import { createDownloadTargets } from "@visuales/core/download/targets";
 import { downloadDefaults } from "@visuales/core/download/defaults";
@@ -40,7 +44,7 @@ import { recordDownloadFiles, readDownloadFileDetails } from "@visuales/core/dow
 const PROTOCOL_VERSION = 1;
 setLogger({ log: (...values) => console.error(...values), error: (...values) => console.error(...values) });
 
-type WorkerConfig = { taskId: string; urls: string[]; options: DownloadOptions; queue: boolean };
+type WorkerConfig = { taskId: string; urls: string[]; options: DownloadOptions; queue: boolean; retry?: boolean };
 type WorkerMessage = { type: "ready" } | { type: "finished"; taskId: string; status: "completed" | "failed" };
 type TransferNotice = { taskId: string; name: string; status: "completed" | "failed"; at: number };
 
@@ -59,12 +63,18 @@ async function runWorker(config: WorkerConfig) {
     if (queue) {
       if (!(await waitForQueueSlot(taskId))) return;
     }
-    await recordDownloadFiles(taskId, options.output, async () => {
-      if (urls.length === 1) await downloadUrl(urls[0], options, onProgress);
-      else await downloadUrls(createDownloadTargets(urls, options.output), options, onProgress);
-    });
-    await progressWrites;
-    await completeDownloadTask(taskId);
+    if (config.retry) {
+      const task = await findDownloadTask(taskId);
+      if (!task) throw new Error("Download task not found");
+      await runDownloadFileRetry(task);
+    } else {
+      await recordDownloadFiles(taskId, options.output, async () => {
+        if (urls.length === 1) await downloadUrl(urls[0], options, onProgress);
+        else await downloadUrls(createDownloadTargets(urls, options.output), options, onProgress);
+      });
+      await progressWrites;
+      await completeDownloadTask(taskId);
+    }
   } catch (error) {
     await progressWrites.catch(() => {});
     await failDownloadTask(taskId, error);
@@ -102,6 +112,7 @@ if (process.argv.includes("--worker")) {
 async function runServer() {
   const workers = new Map<string, { child: ChildProcess; closed: Promise<void>; silence: () => void }>();
   const notices: TransferNotice[] = [];
+  const reviews = new Map<string, { urls: string[]; options: DownloadOptions; expires: number }>();
   const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
   let shuttingDown = false;
   const send = (value: unknown) => {
@@ -109,10 +120,13 @@ async function runServer() {
   };
   const changed = () => send({ jsonrpc: "2.0", method: "tasks.changed", params: {} });
 
-  async function start(urls: string[], options: DownloadOptions, queue = false) {
+  async function start(urls: string[], options: DownloadOptions, queue = false, retry?: { paths?: string[] }) {
     const taskId = createDownloadTaskId(urls, options.output);
     const existing = await findDownloadTask(taskId);
-    if (existing?.status === "running" || existing?.status === "queued") return existing;
+    if (existing?.status === "running" || existing?.status === "queued") {
+      if (retry) throw new Error("Wait for this transfer to stop before retrying its files.");
+      return existing;
+    }
     if (workers.has(taskId)) throw new Error("This task is still stopping. Try again shortly.");
     const child = spawn(process.execPath, [process.argv[1], "--worker", "download", ...urls], {
       stdio: ["ignore", "ignore", "pipe", "ipc"],
@@ -156,7 +170,9 @@ async function runServer() {
           finish(message.type === "ready" ? undefined : new Error("Invalid worker handshake"));
         });
       });
-      const task = await startDownloadTaskWithPid(urls, options, child.pid!, undefined, queue ? "queued" : "running");
+      const task = retry
+        ? await claimDownloadFileRetry(taskId, retry.paths, child.pid!)
+        : await startDownloadTaskWithPid(urls, options, child.pid!, undefined, queue ? "queued" : "running");
       taskRegistered = true;
       child.on("message", (message: WorkerMessage) => {
         if (
@@ -174,7 +190,7 @@ async function runServer() {
         changed();
       });
       await new Promise<void>((resolve, reject) => {
-        child.send({ taskId, urls, options, queue } satisfies WorkerConfig, (error) =>
+        child.send({ taskId, urls, options, queue, retry: !!retry } satisfies WorkerConfig, (error) =>
           error ? reject(error) : resolve()
         );
       });
@@ -264,7 +280,17 @@ async function runServer() {
         }
         return summary;
       }
+      case "download.review":
       case "download.start": {
+        if (method === "download.start" && params.reviewId != null) {
+          const id = string(params.reviewId, "reviewId");
+          const reviewed = reviews.get(id);
+          if (!reviewed || reviewed.expires < Date.now())
+            throw new Error("This review expired. Review the download again.");
+          const task = await start(reviewed.urls, reviewed.options, params.queue === true);
+          reviews.delete(id);
+          return task;
+        }
         const urls = strings(params.urls, "urls");
         for (const url of urls) {
           if (!["http:", "https:"].includes(new URL(url).protocol))
@@ -277,26 +303,34 @@ async function runServer() {
         // Desktop destinations are parent folders. Store the resolved single target
         // once so resume keeps both new and legacy tasks at their original paths.
         const output = urls.length === 1 ? createDownloadTargets(urls, destination)[0].output : destination;
-        return start(
-          urls,
-          {
-            output,
-            resume: downloadDefaults.resume,
-            maxRetries: settings.maxRetries,
-            timeout: downloadDefaults.timeout,
-            concurrent: settings.concurrent,
-            connections: settings.connections,
-            compact: downloadDefaults.compact,
-            exclude: settings.exclude,
-          },
-          params.queue === true
-        );
+        const options = {
+          output,
+          resume: downloadDefaults.resume,
+          maxRetries: settings.maxRetries,
+          timeout: downloadDefaults.timeout,
+          concurrent: settings.concurrent,
+          connections: settings.connections,
+          compact: downloadDefaults.compact,
+          exclude: settings.exclude,
+        };
+        if (method === "download.review") {
+          const review = await reviewDownload(
+            urls.length === 1 ? [{ url: urls[0], output, relativePath: "" }] : createDownloadTargets(urls, output),
+            options
+          );
+          const reviewId = randomUUID();
+          if (reviews.size >= 20) reviews.delete(reviews.keys().next().value!);
+          reviews.set(reviewId, { urls, options, expires: Date.now() + 10 * 60 * 1000 });
+          return { ...review, reviewId };
+        }
+        return start(urls, options, params.queue === true);
       }
       case "tasks.move": {
         const queue = await moveQueuedDownloadTask(string(params.id, "id"), params.position as QueueMove);
         changed();
         return queue;
       }
+      case "tasks.retry":
       case "tasks.resume": {
         const task = await findDownloadTask(string(params.id, "id"));
         if (!task) throw new Error("Download task not found");
@@ -308,7 +342,10 @@ async function runServer() {
             resume: true,
             timeout: task.options.timeout === "Infinity" ? Infinity : task.options.timeout,
           },
-          params.queue === true
+          params.queue === true,
+          method === "tasks.retry"
+            ? { paths: params.paths == null ? undefined : strings(params.paths, "paths") }
+            : undefined
         );
       }
       case "tasks.cancel":
@@ -353,6 +390,7 @@ async function runServer() {
         "tasks.list",
         "tasks.snapshot",
         "tasks.files",
+        "download.review",
         "library.list",
         "library.preview",
         "library.preview.cached",

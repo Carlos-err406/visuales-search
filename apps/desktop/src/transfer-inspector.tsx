@@ -55,7 +55,17 @@ function fileTelemetry(file: DownloadFileDetail, task: Task): string[] {
   return fresh(last?.updatedAt) && last?.url === file.url && last.speed ? [last.speed] : [];
 }
 
-function FileList({ files, task }: { files: DownloadFileDetail[]; task: Task }) {
+function FileList({
+  files,
+  task,
+  retryDisabled,
+  onRetry,
+}: {
+  files: DownloadFileDetail[];
+  task: Task;
+  retryDisabled: boolean;
+  onRetry: (paths?: string[]) => void;
+}) {
   const scroll = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ finished: task.status !== "completed" });
   const rows = useMemo(() => {
@@ -150,6 +160,20 @@ function FileList({ files, task }: { files: DownloadFileDetail[]; task: Task }) 
                   <File size={15} />
                 )}
                 <span>{file.path}</span>
+                {file.status === "failed" && (
+                  <IconButton
+                    label={`Retry ${file.path}`}
+                    description={
+                      isActive(task)
+                        ? "Available when this transfer stops."
+                        : "Retry only this file, keeping partial data."
+                    }
+                    disabled={retryDisabled}
+                    onClick={() => onRetry([file.path])}
+                  >
+                    <RefreshCw size={15} />
+                  </IconButton>
+                )}
               </div>
               <div className="inspector-file-meta">
                 <span>{status}</span>
@@ -185,6 +209,7 @@ export function TransferInspector({
   onClose,
   onOpen,
   onAction,
+  onRetry,
 }: {
   task: Task;
   pending: boolean;
@@ -193,6 +218,7 @@ export function TransferInspector({
   onClose: () => void;
   onOpen: () => void;
   onAction: (command: TransferCommand, id: string) => void;
+  onRetry: (paths?: string[]) => void;
 }) {
   const [width, setWidth] = useState(savedWidth);
   const [details, setDetails] = useState<{ id: string; data: DownloadFileDetails | null } | null>(null);
@@ -230,7 +256,7 @@ export function TransferInspector({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [task.id, task.status, retry]);
+  }, [task.id, task.status, retry, pending]);
 
   useEffect(() => {
     try {
@@ -353,6 +379,11 @@ export function TransferInspector({
       </section>
       <div className="inspector-files-heading">
         <h3>Files</h3>
+        {data?.files.some((file) => file.status === "failed") && (
+          <Button variant="ghost" disabled={pending || blocked || isActive(task)} onClick={() => onRetry()}>
+            <RefreshCw size={14} /> Retry failed
+          </Button>
+        )}
         <span className="secondary">{data?.files.length ?? ""}</span>
       </div>
       {loadError && (
@@ -382,7 +413,15 @@ export function TransferInspector({
           {task.status === "running" ? "Discovering files..." : "No files were recorded."}
         </p>
       )}
-      {data && data.files.length > 0 && <FileList key={task.id} files={data.files} task={task} />}
+      {data && data.files.length > 0 && (
+        <FileList
+          key={task.id}
+          files={data.files}
+          task={task}
+          retryDisabled={pending || blocked || isActive(task)}
+          onRetry={onRetry}
+        />
+      )}
     </aside>
   );
 }

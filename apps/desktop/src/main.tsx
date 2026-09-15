@@ -21,6 +21,7 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   Check,
+  ClipboardList,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -50,6 +51,7 @@ import {
 import { isDesktop, useTransfers, type TransferCommand } from "./use-transfers";
 import { useQueueReorderAnimation } from "./use-queue-reorder-animation";
 import { TransferInspector } from "./transfer-inspector";
+import { DownloadReview } from "./download-review";
 import { hasOpenOverlay } from "./overlay-state";
 import "./library-windows.css";
 const LibraryWindow = lazy(() => import("./library-window").then((module) => ({ default: module.LibraryWindow })));
@@ -305,6 +307,7 @@ function App({ root }: { root?: string }) {
   const [submittingUrl, setSubmittingUrl] = useState<string | null>(null);
   const [searchError, setSearchError] = useState("");
   const [selectionError, setSelectionError] = useState("");
+  const [reviewUrls, setReviewUrls] = useState<string[] | null>(null);
   const [message, setMessage] = useState("");
   const [taskErrors, setTaskErrors] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState(false);
@@ -602,10 +605,10 @@ function App({ root }: { root?: string }) {
     }
   }
 
-  async function taskAction(command: TransferCommand, id: string, position?: QueueMove) {
+  async function taskAction(command: TransferCommand, id: string, position?: QueueMove, paths?: string[]) {
     setTaskErrors((current) => ({ ...current, [id]: "" }));
     try {
-      await act(command, id, position);
+      await act(command, id, position, paths);
     } catch (error) {
       setTaskErrors((current) => ({ ...current, [id]: String(error) }));
     }
@@ -645,6 +648,20 @@ function App({ root }: { root?: string }) {
 
   return (
     <Tabs value={view} onValueChange={(value) => switchView(value as View)} render={<main />} className="app-shell">
+      {reviewUrls && (
+        <DownloadReview
+          urls={reviewUrls}
+          output={outputEdited.current ? output.trim() : undefined}
+          blocked={updates.blocksTransfers}
+          onClose={() => setReviewUrls(null)}
+          onStarted={(queue) => {
+            setReviewUrls(null);
+            clearSelection();
+            setMessage(queue ? "Transfer added to queue" : "Transfer started");
+            void refresh(true);
+          }}
+        />
+      )}
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark">
@@ -827,6 +844,7 @@ function App({ root }: { root?: string }) {
               submitting={submitting}
               output={output}
               onTransfer={(url, queue) => void startDownload(queue, url)}
+              onReview={(urls) => setReviewUrls(distinctDownloadUrls(new Set(urls)))}
             />
           ) : (
             <Empty className="empty-state">
@@ -907,6 +925,13 @@ function App({ root }: { root?: string }) {
               </InputGroup>
             </div>
             <div className="selection-actions">
+              <IconButton
+                label="Review download"
+                disabled={!output.trim() || Boolean(submitting) || searching || updates.blocksTransfers}
+                onClick={() => setReviewUrls(distinctDownloadUrls(selected))}
+              >
+                <ClipboardList size={17} />
+              </IconButton>
               <Button
                 variant="outline"
                 disabled={!output.trim() || Boolean(submitting) || searching || updates.blocksTransfers}
@@ -1099,6 +1124,7 @@ function App({ root }: { root?: string }) {
               }}
               onOpen={() => void openOutputFolder(inspectedTask.output, inspectedTask.id)}
               onAction={(command, id) => void taskAction(command, id)}
+              onRetry={(paths) => void taskAction("retry_download_files", inspectedTask.id, undefined, paths)}
             />
           )}
         </div>

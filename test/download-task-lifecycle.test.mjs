@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
 
 let home;
 let tasksFile;
@@ -87,6 +88,64 @@ after(async () => {
 });
 
 describe("download task lifecycle", () => {
+  it("retries transient task-store replacement locks without dropping the previous history", async (t) => {
+    const originalRename = fs.rename;
+    for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+      let attempts = 0;
+      const before = JSON.parse(await fs.readFile(tasksFile, "utf8").catch(() => '{"tasks":[]}'));
+      const stub = t.mock.method(fs, "rename", async (source, destination) => {
+        if (destination === tasksFile && ++attempts <= 2) {
+          const current = JSON.parse(await fs.readFile(tasksFile, "utf8").catch(() => '{"tasks":[]}'));
+          assert.deepEqual(current, before);
+          throw Object.assign(new Error("Temporarily locked"), { code });
+        }
+        return originalRename(source, destination);
+      });
+      syncBuiltinESMExports();
+      try {
+        const task = await tasks.startDownloadTaskWithPid(`http://example/locked-${code}/`, options(), process.pid);
+        assert.equal(attempts, 3);
+        assert.ok(JSON.parse(await fs.readFile(tasksFile, "utf8")).tasks.some((item) => item.id === task.id));
+      } finally {
+        stub.mock.restore();
+        syncBuiltinESMExports();
+      }
+    }
+  });
+
+  it("bounds replacement retries, preserves history and cleans up failed temporary writes", async (t) => {
+    const originalRename = fs.rename;
+    const before = await fs.readFile(tasksFile, "utf8");
+    for (const [code, expectedAttempts] of [
+      ["EPERM", 6],
+      ["ENOSPC", 1],
+    ]) {
+      let attempts = 0;
+      const stub = t.mock.method(fs, "rename", async (source, destination) => {
+        if (destination === tasksFile) {
+          attempts++;
+          throw Object.assign(new Error("Cannot replace"), { code });
+        }
+        return originalRename(source, destination);
+      });
+      syncBuiltinESMExports();
+      try {
+        await assert.rejects(tasks.startDownloadTaskWithPid(`http://example/failed-${code}/`, options(), process.pid), {
+          code,
+        });
+        assert.equal(attempts, expectedAttempts);
+        assert.equal(await fs.readFile(tasksFile, "utf8"), before);
+        assert.equal(
+          (await fs.readdir(path.dirname(tasksFile))).some((name) => name.endsWith(".tmp")),
+          false
+        );
+      } finally {
+        stub.mock.restore();
+        syncBuiltinESMExports();
+      }
+    }
+  });
+
   it("persists rapid completion events even inside the progress throttle interval", async () => {
     const task = await tasks.startDownloadTaskWithPid("http://example/rapid/", options(), process.pid);
     await tasks.updateDownloadTaskProgress(task.id, progress());

@@ -63,8 +63,20 @@ export function reportDownloadFile(
 }
 
 /** One writer per running task; snapshots stay separate from the frequently polled task summaries. */
-export async function recordDownloadFiles<T>(taskId: string, output: string, operation: () => Promise<T>): Promise<T> {
-  const recorder: Recorder = { output, files: new Map(), dirty: true };
+export async function recordDownloadFiles<T>(
+  taskId: string,
+  output: string,
+  operation: () => Promise<T>,
+  options: {
+    initialFiles?: DownloadFileDetail[];
+    onSnapshot?: (files: DownloadFileDetail[]) => Promise<void>;
+  } = {}
+): Promise<T> {
+  const recorder: Recorder = {
+    output,
+    files: new Map(options.initialFiles?.map((file) => [`${file.url}\n${file.path}`, { ...file }])),
+    dirty: true,
+  };
   const destination = detailsPath(taskId);
   await fs.mkdir(path.dirname(destination), { recursive: true });
   let writes = Promise.resolve();
@@ -77,6 +89,7 @@ export async function recordDownloadFiles<T>(taskId: string, output: string, ope
       try {
         await fs.writeFile(temporary, JSON.stringify(snapshot), "utf8");
         await fs.rename(temporary, destination);
+        await options.onSnapshot?.(snapshot.files);
       } finally {
         await fs.rm(temporary, { force: true });
       }

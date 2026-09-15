@@ -9,6 +9,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import {
   Copy,
+  ClipboardList,
   Download,
   ExternalLink,
   FolderOpen,
@@ -27,6 +28,7 @@ export function LibraryContextMenu({
   disabled,
   transfersBlocked,
   onTransfer,
+  onReview,
   onRefresh,
   onError,
 }: {
@@ -37,6 +39,7 @@ export function LibraryContextMenu({
   disabled: boolean;
   transfersBlocked: boolean;
   onTransfer: (urls: string[], queue: boolean) => void;
+  onReview: (urls: string[]) => void;
   onRefresh: () => void;
   onError: (message: string) => void;
 }) {
@@ -93,6 +96,10 @@ export function LibraryContextMenu({
         <ContextMenuItem disabled={disabled || transfersBlocked} onClick={() => onTransfer(selection, true)}>
           <ListPlus size={16} />
           {multiple ? `Queue ${selection.length} Items` : "Add to Queue"}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem disabled={disabled || transfersBlocked} onClick={() => onReview(selection)}>
+          <ClipboardList size={16} /> Review Download
         </ContextMenuItem>
         <ContextMenuSeparator />
         {!multiple && directory && (

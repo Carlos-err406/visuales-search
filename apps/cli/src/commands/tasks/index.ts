@@ -20,7 +20,9 @@ async function moveCommand(task: string, position: string): Promise<void> {
     process.exitCode = 1;
   }
 }
-import { cancelCommand, deleteCommand, resumeCommand } from "../download/index.js";
+import { cancelCommand, deleteCommand, resumeCommand, retryFilesCommand } from "../download/index.js";
+import { findDownloadTask } from "@visuales/core";
+import { readDownloadFileDetails } from "@visuales/core/download/file-details";
 import {
   clearAndPrintDownloadTasks,
   printDownloadTasks,
@@ -74,6 +76,34 @@ export function setupTasksCommand(program: Command): void {
     .action(listTasksCommand);
 
   tasks.command("queue").description("Show waiting downloads in execution order").action(queueCommand);
+  tasks
+    .command("retry")
+    .description("Retry recorded failed files on the original stopped task (all failed files by default)")
+    .argument("<task>", "Task id or URL")
+    .option(
+      "--file <path>",
+      "Task-relative file path to retry (repeatable)",
+      (value: string, previous: string[]) => [...previous, value],
+      []
+    )
+    .action((id: string, options: { file: string[] }) =>
+      retryFilesCommand(id, options.file.length ? options.file : undefined)
+    );
+  tasks
+    .command("files")
+    .description("List recorded file paths and statuses for a transfer")
+    .argument("<task>", "Task id or URL")
+    .option("--json", "Print file details as JSON")
+    .action(async (id: string, options: { json?: boolean }) => {
+      const task = await findDownloadTask(id);
+      if (!task) throw new Error("Download task not found");
+      const details = await readDownloadFileDetails(task.id);
+      if (options.json) console.log(JSON.stringify(details));
+      else if (!details) console.log("No file details were recorded for this transfer.");
+      else
+        for (const file of details.files)
+          console.log(`${file.status}\t${file.path}${file.error ? `\t${file.error}` : ""}`);
+    });
   tasks
     .command("move")
     .description("Move a queued download to a one-based queue position")

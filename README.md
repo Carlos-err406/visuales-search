@@ -81,6 +81,26 @@ Useful download options:
 - `--timeout`: request timeout in seconds. Default: `Infinity`.
 - `--detach, -d`: start the download in the background and return immediately.
 
+### Review Before Downloading
+
+Use `visuales download "<url>" --dry-run` to list included files, ignored files/subtrees, full download size, and available disk space without starting a task. Add `--json` for structured output. Review uses the same destinations and ordered ignore rules as downloading; explicitly selected files are still included.
+
+Sizes marked `~` are estimates. Unknown sizes remain unknown, and skipped directories are shown as entire subtrees without scanning them. Space warnings compare the full download with available capacity, without assuming existing files can be reused. Capacity can change before a queued download starts.
+
+Desktop offers **Review Download** in Search's context menu and selection footer. Immediate Download and Queue remain available. A review keeps its destination and transfer settings for ten minutes; refresh an expired review before starting.
+
+### Retry Failed Files
+
+```bash
+visuales tasks files <task-id>
+visuales tasks retry <task-id> --file "Season 1/episode.mp4"
+visuales tasks retry <task-id>
+```
+
+Repeat `--file` to retry several recorded paths; omit it to retry all failed files. Retries use the original task ID, saved settings, destinations, and partial data. Other file records and aggregate progress are preserved. The task must be stopped first. Ordinary `tasks resume` still resumes the entire transfer.
+
+In the desktop transfer inspector, use a failed file's Retry button or **Retry failed** above the file list. Both are disabled while the transfer is running or queued.
+
 ### Ignore Rules
 
 **Upgrading to v3:** `--exclude` has been removed. Replace it with `--ignore` in commands and scripts. Existing task records remain readable and retain their saved rules when resumed. Matching now follows the ordered rules below.

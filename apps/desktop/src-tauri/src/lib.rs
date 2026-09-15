@@ -104,11 +104,39 @@ async fn save_desktop_settings(app: tauri::AppHandle, settings: Value) -> Result
 }
 
 #[tauri::command]
+async fn review_download(
+    app: tauri::AppHandle,
+    urls: Vec<String>,
+    output: Option<String>,
+) -> Result<Value, String> {
+    sidecar::request(
+        &app,
+        "download.review",
+        json!({ "urls": urls, "output": output, "defaultOutput": default_output_dir()? }),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn retry_download_files(
+    app: tauri::AppHandle,
+    id: String,
+    paths: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let updates = app.state::<updates::UpdateState>();
+    let _guard = updates.transfers.read().await;
+    updates.ensure_downloads_allowed()?;
+    app.state::<quit::QuitState>().ensure_downloads_allowed()?;
+    sidecar::request(&app, "tasks.retry", json!({ "id": id, "paths": paths })).await
+}
+
+#[tauri::command]
 async fn start_download(
     app: tauri::AppHandle,
     urls: Vec<String>,
     output: Option<String>,
     queue: Option<bool>,
+    review_id: Option<String>,
 ) -> Result<Value, String> {
     let updates = app.state::<updates::UpdateState>();
     let _guard = updates.transfers.read().await;
@@ -117,7 +145,7 @@ async fn start_download(
     sidecar::request(
         &app,
         "download.start",
-        json!({ "urls": urls, "output": output, "queue": queue.unwrap_or(false), "defaultOutput": default_output_dir()? }),
+        json!({ "urls": urls, "output": output, "queue": queue.unwrap_or(false), "reviewId": review_id, "defaultOutput": default_output_dir()? }),
     )
     .await
 }
@@ -205,6 +233,8 @@ pub fn run() {
             tray::take_download_navigation,
             tray::quit_from_tray,
             start_download,
+            review_download,
+            retry_download_files,
             move_queued_download,
             cancel_download_task,
             delete_download_task,

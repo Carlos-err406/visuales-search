@@ -163,7 +163,76 @@ after(async () => {
 });
 
 describe("packaged Node sidecar", () => {
+  it("reviews without starting and uses the reviewed settings even if defaults change", async () => {
+    const initial = await rpc.request("settings.get");
+    const output = path.join(home, "reviewed-output");
+    const urls = [server.url("normal", "reviewed.bin")];
+    try {
+      await rpc.request("settings.save", {
+        settings: { ...initial.settings, output, connections: 2, exclude: ["*.jpg"] },
+      });
+      const before = await rpc.request("tasks.list");
+      const review = await rpc.request("download.review", { urls });
+      assert.equal(review.includedFiles, 1);
+      assert.equal(review.knownBytes, FILE_BODY.length);
+      assert.equal(review.output, output);
+      assert.equal((await rpc.request("tasks.list")).length, before.length);
+      await assert.rejects(fs.stat(output), { code: "ENOENT" });
+      await rpc.request("settings.save", {
+        settings: { ...initial.settings, output: path.join(home, "changed-output"), connections: 4 },
+      });
+      const task = await rpc.request("download.start", { reviewId: review.reviewId, queue: false });
+      assert.equal(task.output, output);
+      assert.equal(task.options.connections, 2);
+      assert.deepEqual(task.options.exclude, ["*.jpg"]);
+      await waitForTask(task.id, "completed");
+      assert.deepEqual(await fs.readFile(path.join(output, "reviewed.bin")), FILE_BODY);
+      await assert.rejects(rpc.request("download.start", { reviewId: review.reviewId }), /expired/);
+    } finally {
+      await rpc.request("settings.save", { settings: initial.settings });
+    }
+  });
+
+  it("retries failed files on the same task through a packaged worker", async () => {
+    const initial = await rpc.request("settings.get");
+    const originalOutput = path.join(home, "rpc-file-retry");
+    const url = server.url("normal", "retry.bin");
+    try {
+      const task = await rpc.request("download.start", { urls: [url], output: originalOutput });
+      await waitForTask(task.id, "completed");
+      // Simulate a recorded failure after the worker has exited; preserve the original task ID.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const storePath = path.join(home, ".visuales-cli-cache/download/tasks.json");
+      const store = JSON.parse(await fs.readFile(storePath, "utf8"));
+      const saved = store.tasks.find((entry) => entry.id === task.id);
+      saved.status = "failed";
+      saved.lastError = "Fixture failure";
+      await fs.writeFile(storePath, JSON.stringify(store));
+      const detailsPath = path.join(
+        home,
+        ".visuales-cli-cache/download/file-details",
+        `${createHash("sha256").update(task.id).digest("hex")}.json`
+      );
+      const details = JSON.parse(await fs.readFile(detailsPath, "utf8"));
+      details.files[0].status = "failed";
+      details.files[0].error = "Fixture failure";
+      await fs.writeFile(detailsPath, JSON.stringify(details));
+      const retried = await rpc.request("tasks.retry", { id: task.id, paths: ["retry.bin"] });
+      assert.equal(retried.id, task.id);
+      assert.equal(retried.output, originalOutput);
+      const finished = await waitForTask(task.id, "completed");
+      assert.equal(finished.overallProgress.downloadedBytes, FILE_BODY.length);
+      const final = await rpc.request("tasks.files", { id: task.id });
+      assert.equal(final.files[0].status, "completed");
+      assert.equal(final.files[0].error, undefined);
+      await assert.rejects(rpc.request("tasks.retry", { id: task.id }), /already complete/);
+    } finally {
+      await rpc.request("settings.save", { settings: initial.settings });
+    }
+  });
+
   it("serves cached directory listings and file previews through the packaged RPC adapter", async () => {
+    const tasksBefore = await rpc.request("tasks.list");
     const root = path.join(home, ".visuales-cli-cache");
     await fs.mkdir(path.join(root, "previews"), { recursive: true });
     const url = "https://visuales.uclv.cu/RpcFixtures/readme.txt";
@@ -209,7 +278,7 @@ describe("packaged Node sidecar", () => {
     await assert.rejects(rpc.request("library.list", { url: "https://example.com/" }), /Only Visuales/);
     const registry = JSON.parse(await fs.readFile(path.join(root, "index.json"), "utf8"));
     assert.ok(registry.entries.some((entry) => entry.id === "previews"));
-    assert.deepEqual(await rpc.request("tasks.list"), [], "browsing never creates a transfer");
+    assert.deepEqual(await rpc.request("tasks.list"), tasksBefore, "browsing never creates a transfer");
   });
 
   it("uses saved connection counts for real parallel downloads in a packaged worker", async () => {

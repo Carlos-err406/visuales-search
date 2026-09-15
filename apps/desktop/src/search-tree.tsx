@@ -137,6 +137,7 @@ export function SearchTree({
   submitting,
   output,
   onTransfer,
+  onReview,
 }: {
   browser: ReturnType<typeof useSearchBrowser>;
   selectionStates: ReadonlyMap<string, TreeCheckState>;
@@ -150,6 +151,7 @@ export function SearchTree({
   submitting: "download" | "queue" | null;
   output: string;
   onTransfer: (url: string | string[], queue: boolean) => void;
+  onReview: (urls: string[]) => void;
 }) {
   const downloadStatus = useMemo(() => createSearchDownloadStatusIndex(tasks), [tasks]);
   const [actionError, setActionError] = useState("");
@@ -326,6 +328,7 @@ export function SearchTree({
                 disabled={disabled}
                 transfersBlocked={transfersBlocked}
                 onTransfer={onTransfer}
+                onReview={onReview}
                 onRefresh={() => browser.showContents(node, true)}
                 onError={setActionError}
               >

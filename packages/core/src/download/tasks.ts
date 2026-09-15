@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { ensureDownloadCacheDirectory } from "../lib/cache.js";
 import { CONFIG } from "../lib/types.js";
-import { removeDownloadFileDetails } from "./file-details.js";
+import { readDownloadFileDetails, removeDownloadFileDetails } from "./file-details.js";
 import { getProcessRows, type ProcessRow } from "../lib/process-list.js";
 import type { DownloadOptions, DownloadProgress } from "./types.js";
 import { queueRank, compareQueueRank, orderedQueue, type QueueRank, type QueueMove } from "./queue-order.js";
@@ -32,6 +32,7 @@ export interface DownloadTaskRecord {
   interruptedAt?: number;
   interruptedCause?: DownloadTaskInterruptedCause;
   lastError?: string;
+  retryPaths?: string[];
   lastProgress?: {
     url?: string;
     fileName: string;
@@ -162,8 +163,22 @@ async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
   const filePath = tasksFilePath();
   const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
 
-  await fs.writeFile(temporaryPath, JSON.stringify(store, null, 2));
-  await fs.rename(temporaryPath, filePath);
+  try {
+    await fs.writeFile(temporaryPath, JSON.stringify(store, null, 2));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(temporaryPath, filePath);
+        break;
+      } catch (error) {
+        // Windows readers or antivirus scans can briefly deny an atomic replacement.
+        if (attempt >= 5 || !["EPERM", "EACCES", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? ""))
+          throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+      }
+    }
+  } finally {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+  }
 }
 
 function normalizeTaskStatus(task: DownloadTaskRecord, processes: () => ProcessRow[]): DownloadTaskRecord {
@@ -286,6 +301,43 @@ export async function findDownloadTask(idOrUrl: string): Promise<DownloadTaskRec
   return tasks.find((task) => task.id === idOrUrl || task.url === idOrUrl || task.urls?.includes(idOrUrl)) ?? null;
 }
 
+/** Claim the original task before launching a selective retry; never share its recorder with another worker. */
+export async function claimDownloadFileRetry(
+  id: string,
+  paths?: string[],
+  pid = process.pid
+): Promise<DownloadTaskRecord> {
+  return withTaskLock(async () => {
+    const tasks = await listDownloadTasksUnlocked();
+    const task = tasks.find((item) => item.id === id || item.url === id || item.urls?.includes(id));
+    if (!task) throw new Error("Download task not found");
+    if (task.status === "running" || task.status === "queued")
+      throw new Error("Wait for this transfer to stop before retrying its files.");
+    const details = await readDownloadFileDetails(task.id);
+    if (!details) throw new Error("No file details were recorded for this transfer.");
+    const selected = paths ?? details.files.filter((file) => file.status === "failed").map((file) => file.path);
+    if (!selected.length) throw new Error("No failed files to retry.");
+    for (const name of selected) {
+      const file = details.files.find((item) => item.path === name);
+      if (!file || file.status !== "failed") throw new Error(`Not a recorded failed file: ${name}`);
+    }
+    const next: DownloadTaskRecord = {
+      ...task,
+      status: "running",
+      pid,
+      retryPaths: [...new Set(selected)],
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      completedAt: undefined,
+      interruptedAt: undefined,
+      interruptedCause: undefined,
+      lastError: undefined,
+    };
+    await saveTaskStore({ version: 1, tasks: tasks.map((item) => (item.id === task.id ? next : item)) });
+    return next;
+  });
+}
+
 export async function clearDownloadTasks(): Promise<number> {
   return withTaskLock(clearDownloadTasksUnlocked);
 }
@@ -383,6 +435,14 @@ async function registerTask(
   const id = createDownloadTaskId(normalizedUrls, options.output);
   const now = Date.now();
   const existing = store.tasks.find((task) => task.id === id);
+  if (
+    existing &&
+    existing.retryPaths?.length &&
+    (existing.status === "running" || existing.status === "queued") &&
+    existing.pid !== pid &&
+    isProcessAlive(existing.pid)
+  )
+    throw new Error("This transfer already has an active worker.");
   const status = initialStatus === "queued" && existing?.status === "running" ? "running" : initialStatus;
   const isQueued = status === "queued";
   const record: DownloadTaskRecord = {
@@ -409,6 +469,7 @@ async function registerTask(
     interruptedCause: undefined,
     completedAt: undefined,
     lastError: undefined,
+    retryPaths: undefined,
     lastProgress: existing?.lastProgress,
   };
 
@@ -549,6 +610,7 @@ export async function completeDownloadTask(id: string): Promise<void> {
     interruptedCause: undefined,
     lastError: undefined,
     overallProgress,
+    retryPaths: undefined,
   });
 }
 
@@ -559,6 +621,7 @@ export async function failDownloadTask(id: string, error: unknown): Promise<void
     interruptedAt: undefined,
     interruptedCause: undefined,
     lastError: error instanceof Error ? error.message : String(error),
+    retryPaths: undefined,
   });
 }
 
@@ -602,12 +665,12 @@ export async function cancelDownloadTask(idOrUrl: string): Promise<DownloadTaskR
   return { ...task, status: "interrupted", pid: undefined, interruptedAt, interruptedCause: "canceled" };
 }
 
-export async function updateDownloadTaskProgress(id: string, progress: DownloadProgress): Promise<void> {
+export async function updateDownloadTaskProgress(id: string, progress: DownloadProgress, force = false): Promise<void> {
   const now = Date.now();
   const lastWrite = lastProgressWrite.get(id) ?? 0;
   // A completion can be the last event before a slow probe or an all-cached run ends.
   // Never leave persisted totals at the previous file because of the telemetry throttle.
-  if (progress.progress < 100 && now - lastWrite < TASK_PROGRESS_WRITE_INTERVAL_MS) return;
+  if (!force && progress.progress < 100 && now - lastWrite < TASK_PROGRESS_WRITE_INTERVAL_MS) return;
 
   lastProgressWrite.set(id, now);
   const task = await findDownloadTask(id);
