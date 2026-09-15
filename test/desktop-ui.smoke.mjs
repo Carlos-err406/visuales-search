@@ -664,7 +664,7 @@ try {
         const row = el.querySelector(".transfer-row");
         el.scrollTop += row.getBoundingClientRect().bottom - el.getBoundingClientRect().top + 1;
       });
-      await page.getByRole("tooltip").waitFor({ state: "detached" });
+      await page.locator(".button-tooltip").waitFor({ state: "hidden" });
       await page.locator(".downloads-list").evaluate((el) => {
         el.scrollTop = 0;
       });

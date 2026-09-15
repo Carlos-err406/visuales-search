@@ -886,6 +886,10 @@ h3 {
   /* The portal must sit above both the preview backdrop and dialog. */
   z-index: 120;
 }
+.tooltip-positioner[data-anchor-hidden] {
+  visibility: hidden;
+  pointer-events: none;
+}
 .popover-positioner {
   z-index: 115;
 }
