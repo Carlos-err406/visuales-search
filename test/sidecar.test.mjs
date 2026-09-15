@@ -192,6 +192,19 @@ describe("packaged Node sidecar", () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].encodedUrl, url);
     assert.deepEqual(await rpc.request("library.preview", { url }), { ...preview, cached: true });
+    assert.deepEqual(await rpc.request("library.preview.cached", { url }), { ...preview, cached: true });
+    assert.equal(await rpc.request("library.preview.status", { url }), "idle");
+    assert.equal(await rpc.request("library.local", { url }), null);
+    assert.deepEqual(await rpc.request("library.resource", { url }), {
+      url,
+      name: new URL(url).pathname.split("/").at(-1),
+      kind: "preview",
+    });
+    await assert.rejects(rpc.request("library.resource", { url: "https://evil.test/test.png" }), /Only Visuales/);
+    await assert.rejects(
+      rpc.request("library.resource", { url: "https://visuales.uclv.cu/video.mkv" }),
+      /not available/
+    );
     await assert.rejects(rpc.request("library.preview", { url: "file:///etc/passwd" }), /Only Visuales/);
     await assert.rejects(rpc.request("library.list", { url: "https://example.com/" }), /Only Visuales/);
     const registry = JSON.parse(await fs.readFile(path.join(root, "index.json"), "utf8"));
@@ -652,6 +665,21 @@ describe("packaged Node sidecar", () => {
     assert.equal(library.results.length, 2, "an empty query returns even entries that did not match");
     assert.equal(library.totalResults, library.results.length);
     assert.ok(library.results.every((entry) => entry.downloadId));
+    const scoped = await rpc.request("search", { terms: [], root: "https://visuales.uclv.cu/RpcFixtures/" });
+    assert.deepEqual(
+      scoped.results.map((entry) => entry.text),
+      ["readme.txt"]
+    );
+    assert.equal(
+      (await rpc.request("search", { terms: ["Other"], root: "https://visuales.uclv.cu/RpcFixtures/" })).totalResults,
+      0
+    );
+    assert.equal(
+      (await rpc.request("search", { terms: ["readme"], root: "https://visuales.uclv.cu/RpcFixtures/" })).totalResults,
+      1
+    );
+    await assert.rejects(rpc.request("search", { terms: [], root: "https://evil.test/" }), /Only Visuales/);
+    await assert.rejects(rpc.request("search", { terms: [], root: 3 }), /Search root/);
     await assert.rejects(rpc.request("search", { terms: [""] }), /nonempty string/);
     await assert.rejects(rpc.request("search", { terms: "" }), /array/);
     await assert.rejects(rpc.request("download.start", { urls: [] }), /nonempty array/);

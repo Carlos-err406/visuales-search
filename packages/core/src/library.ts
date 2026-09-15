@@ -8,10 +8,12 @@ import { getDirectoryListing } from "./download/downloader.js";
 import { createDownloadHeaders } from "./download/http.js";
 import { dirListingCache, loadDiscoveryCache } from "./download/discovery-cache.js";
 import { previewKind, previewLimits, type FilePreview, type LibraryEntry } from "./library-types.js";
+import { canonicalTreeUrl } from "./search-tree.js";
 
 const listings = pLimit(1);
 const previews = pLimit(1);
 const pendingPreviews = new Map<string, Promise<FilePreview>>();
+const previewStates = new Map<string, "waiting" | "loading">();
 
 export function libraryUrl(value: string): URL {
   const url = new URL(value);
@@ -148,37 +150,53 @@ async function prunePreviews(directory: string, incoming: number) {
   }
 }
 
-export async function previewLibraryFile(value: string, refresh = false): Promise<FilePreview> {
-  const url = libraryUrl(value).href;
+export function libraryPreviewStatus(value: string): "waiting" | "loading" | "idle" {
+  return previewStates.get(canonicalTreeUrl(libraryUrl(value).href)) ?? "idle";
+}
+
+export async function cachedLibraryPreview(value: string): Promise<FilePreview | null> {
+  const url = canonicalTreeUrl(libraryUrl(value).href);
   const kind = previewKind(url);
   if (!kind) throw new Error("Preview is not available for this file type");
-  const key = `${url}:${refresh}`;
-  const existing = pendingPreviews.get(key);
-  if (existing) return existing;
-  const operation = previews(async () => {
-    const directory = path.join(CONFIG.CACHE_DIR, "previews");
-    const file = path.join(directory, `${createHash("sha256").update(url).digest("hex")}.json`);
-    if (!refresh) {
-      try {
-        const stat = await fs.stat(file);
-        if (stat.size <= previewLimits.image * 1.5 && Date.now() - stat.mtimeMs < previewLimits.age) {
-          const cached: FilePreview = JSON.parse(await fs.readFile(file, "utf8"));
-          if (
-            cached.url === url &&
-            cached.kind === kind &&
-            typeof cached.content === "string" &&
-            cached.bytes <= previewLimits[kind] &&
-            Date.now() - cached.fetchedAt < previewLimits.age &&
-            (kind === "text" || ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(cached.mime))
-          ) {
-            await registerPreviewCache();
-            return { ...cached, cached: true };
-          }
-        }
-      } catch {
-        /* A missing or damaged cache entry is fetched again. */
+  const file = path.join(CONFIG.CACHE_DIR, "previews", `${createHash("sha256").update(url).digest("hex")}.json`);
+  try {
+    const stat = await fs.stat(file);
+    if (stat.size <= previewLimits.image * 1.5 && Date.now() - stat.mtimeMs < previewLimits.age) {
+      const cached: FilePreview = JSON.parse(await fs.readFile(file, "utf8"));
+      if (
+        cached.url === url &&
+        cached.kind === kind &&
+        typeof cached.content === "string" &&
+        cached.bytes <= previewLimits[kind] &&
+        Date.now() - cached.fetchedAt < previewLimits.age &&
+        (kind === "text" || ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(cached.mime))
+      ) {
+        await registerPreviewCache();
+        return { ...cached, cached: true };
       }
     }
+  } catch {
+    /* A missing or damaged cache entry is fetched again. */
+  }
+  return null;
+}
+
+export async function previewLibraryFile(value: string, refresh = false): Promise<FilePreview> {
+  const url = canonicalTreeUrl(libraryUrl(value).href);
+  const kind = previewKind(url);
+  if (!kind) throw new Error("Preview is not available for this file type");
+  // Cache hits must not wait behind unrelated slow network requests.
+  if (!refresh) {
+    const cached = await cachedLibraryPreview(url);
+    if (cached) return cached;
+  }
+  const existing = pendingPreviews.get(url);
+  if (existing) return existing;
+  previewStates.set(url, "waiting");
+  const operation = previews(async () => {
+    previewStates.set(url, "loading");
+    const directory = path.join(CONFIG.CACHE_DIR, "previews");
+    const file = path.join(directory, `${createHash("sha256").update(url).digest("hex")}.json`);
     const response = await fetchLibrary(url, previewLimits[kind]);
     const data = Buffer.from(await response.arrayBuffer());
     let content: string;
@@ -190,15 +208,11 @@ export async function previewLibraryFile(value: string, refresh = false): Promis
       if (response.headers.get("content-type")?.includes("text/html") && !/\.html?$/.test(new URL(url).pathname)) {
         throw new Error("The library returned an HTML page instead of this text file");
       }
-      try {
-        content = new TextDecoder("utf-8", { fatal: true }).decode(data);
-      } catch {
-        throw new Error("Text preview supports UTF-8 files only");
-      }
+      content = decodePreviewText(data);
       if (
         [...content].some((character) => {
           const code = character.charCodeAt(0);
-          return code < 9 || (code > 13 && code < 32);
+          return code < 9 || (code > 13 && code < 32) || (code >= 127 && code <= 159);
         })
       )
         throw new Error("This file contains binary data");
@@ -218,10 +232,24 @@ export async function previewLibraryFile(value: string, refresh = false): Promis
     }
     return result;
   });
-  pendingPreviews.set(key, operation);
+  pendingPreviews.set(url, operation);
   try {
     return await operation;
   } finally {
-    pendingPreviews.delete(key);
+    pendingPreviews.delete(url);
+    previewStates.delete(url);
+  }
+}
+
+function decodePreviewText(data: Uint8Array): string {
+  // BOMs take precedence; older Spanish synopsis/subtitle files commonly use Windows-1252.
+  const encoding =
+    data[0] === 0xff && data[1] === 0xfe ? "utf-16le" : data[0] === 0xfe && data[1] === 0xff ? "utf-16be" : "utf-8";
+  try {
+    return new TextDecoder(encoding, { fatal: true }).decode(data);
+  } catch {
+    if (encoding !== "utf-8" || (data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf))
+      throw new Error("This text file has invalid Unicode data");
+    return new TextDecoder("windows-1252").decode(data);
   }
 }

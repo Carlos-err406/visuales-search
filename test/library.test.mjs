@@ -11,6 +11,7 @@ let home, server, library, cache;
 const realFetch = globalThis.fetch;
 const originalHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 const calls = new Map();
+const held = new Map();
 const base = "https://visuales.uclv.cu";
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
@@ -24,6 +25,10 @@ before(async () => {
   cache = await import("../packages/core/dist/lib/cache.js");
   server = http.createServer((req, res) => {
     calls.set(req.url, (calls.get(req.url) || 0) + 1);
+    if (req.url.startsWith("/slow")) {
+      held.set(req.url, () => res.end("done"));
+      return;
+    }
     if (req.url === "/redirect.txt") {
       res.writeHead(302, { location: "http://127.0.0.1/private" });
       return res.end();
@@ -47,7 +52,12 @@ before(async () => {
       return res.end("<html>Error</html>");
     }
     if (req.url === "/binary.txt") return res.end(Buffer.from([0, 1, 2]));
-    if (req.url === "/latin.txt") return res.end(Buffer.from([255, 254]));
+    if (req.url === "/latin.txt")
+      return res.end(Buffer.from("Sinopsis: un hamp\u00f3n, una joven y su sue\u00f1o.", "latin1"));
+    if (req.url === "/windows.txt") return res.end(Buffer.from([0x93, 0x43, 0x69, 0x6e, 0x65, 0x94, 0x20, 0x80]));
+    if (req.url === "/utf16.txt") return res.end(Buffer.from("\ufeffSinopsis: acci\u00f3n", "utf16le"));
+    if (req.url === "/utf16be.txt") return res.end(Buffer.from("\ufeffSinopsis: acci\u00f3n", "utf16le").swap16());
+    if (req.url === "/malformed.txt") return res.end(Buffer.from([0xff, 0xfe, 0x41]));
     if (req.url === "/large.txt") {
       res.write("x".repeat(300000));
       return res.end("x".repeat(300000));
@@ -128,6 +138,45 @@ test("stale/corrupt previews are replaced and disk cache is bounded", async () =
   await assert.rejects(fs.stat(oversized), { code: "ENOENT" });
 });
 
+test("cached previews bypass queued fetches; duplicate opens share requests and report phases", async () => {
+  const cached = await library.previewLibraryFile(`${base}/fast.txt`);
+  const first = library.previewLibraryFile(`${base}/slow-one.txt`, true);
+  while (!held.has("/slow-one.txt")) await new Promise((resolve) => setTimeout(resolve, 5));
+  const second = library.previewLibraryFile(`${base}/slow-two.txt`, true);
+  const duplicate = library.previewLibraryFile(`${base}/slow-one.txt`, true);
+  assert.equal(library.libraryPreviewStatus(`${base}/slow-one.txt`), "loading");
+  assert.equal(library.libraryPreviewStatus(`${base}/slow-two.txt`), "waiting");
+  try {
+    const hit = await Promise.race([
+      library.previewLibraryFile(`${base}/fast.txt`),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("cache hit queued behind network")), 1000)),
+    ]);
+    assert.equal(hit.content, cached.content);
+    assert.equal(hit.cached, true);
+  } finally {
+    held.get("/slow-one.txt")();
+    await first;
+    while (!held.has("/slow-two.txt")) await new Promise((resolve) => setTimeout(resolve, 5));
+    held.get("/slow-two.txt")();
+    await Promise.all([second, duplicate]);
+  }
+  assert.equal(calls.get("/slow-one.txt"), 1);
+  assert.equal(library.libraryPreviewStatus(`${base}/slow-one.txt`), "idle");
+});
+
+test("text previews decode legacy Spanish, Windows punctuation and Unicode BOMs", async () => {
+  for (const [file, content] of [
+    ["latin.txt", "Sinopsis: un hamp\u00f3n, una joven y su sue\u00f1o."],
+    ["windows.txt", "\u201cCine\u201d \u20ac"],
+    ["utf16.txt", "Sinopsis: acci\u00f3n"],
+    ["utf16be.txt", "Sinopsis: acci\u00f3n"],
+  ]) {
+    const preview = await library.previewLibraryFile(`${base}/${file}`);
+    assert.equal(preview.content, content);
+    assert.equal((await library.previewLibraryFile(`${base}/${file}`)).cached, true);
+  }
+});
+
 test("previews reject private hosts, credentials, redirects, unsupported files, binary and oversized data", async () => {
   for (const url of [
     "file:///etc/passwd",
@@ -146,7 +195,7 @@ test("previews reject private hosts, credentials, redirects, unsupported files, 
     ["video.mkv", /not available/],
     ["fake.jpg", /not a supported image/],
     ["binary.txt", /binary/],
-    ["latin.txt", /UTF-8/],
+    ["malformed.txt", /invalid Unicode/],
     ["large.txt", /too large/],
     ["length.txt", /too large/],
   ]) {

@@ -56,6 +56,10 @@ Included in v2.0.7. Search work is tracked as four completed implementation item
 
 Preview limits: PNG/JPEG/GIF/WebP up to 4 MB, UTF-8 text up to 512 KB. The unified `previews` cache retains content for 24 hours, evicts oldest entries above 32 MB, and supports explicit refresh and CLI cache management. Text is inert; remote HTML/scripts are never executed. Visuales keeps its themes, typography, and 1px corners. CLI download behavior is unchanged.
 
+## Implemented: Library Windows
+
+Prepared for v3.4.0: detached image/text previews, background loading, main-interface folder windows with branch-scoped search, and Search context menus. Previews share the bounded cache and now support legacy Windows-1252/Latin-1 and BOM-marked UTF-16 text. Downloads use collapsible status groups; the shared engine reconciles resumed progress with actual completed-file sizes. See the [implementation and verification notes](plans/library-windows.md) and [release notes](releases/v3.4.0.md).
+
 ## Completed: Settings Action Layout
 
 Included in v2.0.8: [011: Conditional save/discard footer and header Restore defaults](../.context/compound-engineering/todos/011-complete-p3-settings-action-layout.md). The bottom actions appear only with unsaved changes; Restore defaults is right-aligned in the Settings header and still requires an explicit save. The brief Saved confirmation remains visible in the header. Appearance continues to persist immediately without showing the footer. Browser previews clearly mark transfer settings read-only and cannot create unsavable drafts.

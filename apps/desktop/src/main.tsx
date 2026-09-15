@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupInput, InputGroupAddon } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Table, TableHeader, TableHead, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +22,7 @@ import {
   ArrowUpToLine,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Download,
   FolderOutput,
@@ -51,6 +51,8 @@ import { isDesktop, useTransfers, type TransferCommand } from "./use-transfers";
 import { useQueueReorderAnimation } from "./use-queue-reorder-animation";
 import { TransferInspector } from "./transfer-inspector";
 import { hasOpenOverlay } from "./overlay-state";
+import "./library-windows.css";
+const LibraryWindow = lazy(() => import("./library-window").then((module) => ({ default: module.LibraryWindow })));
 import { orderedQueue, compareTransferOrder, type QueueMove } from "@visuales/core/download/queue-order";
 import { useAppUpdates } from "./use-app-updates";
 import { AppUpdatesPanel } from "./app-updates";
@@ -62,13 +64,11 @@ import { distinctDownloadUrls, treeSelectionStates } from "@visuales/core/search
 import appIcon from "../app-icon.svg?no-inline";
 
 type View = "search" | "downloads" | "settings";
-type Filter = "all" | "active" | "queued" | "attention" | "completed";
-const statusFilters: { value: Filter; label: string }[] = [
-  { value: "all", label: "All statuses" },
-  { value: "active", label: "Active & queued" },
-  { value: "queued", label: "Queued" },
-  { value: "attention", label: "Needs attention" },
-  { value: "completed", label: "Completed" },
+const taskGroups = [
+  { id: "running", label: "Downloading", statuses: ["running"] },
+  { id: "queued", label: "Pending", statuses: ["queued"] },
+  { id: "attention", label: "Needs attention", statuses: ["failed", "interrupted"] },
+  { id: "completed", label: "Finished", statuses: ["completed"] },
 ];
 
 function TaskRow({
@@ -286,13 +286,13 @@ function TransferTableHead() {
   );
 }
 
-function App() {
+function App({ root }: { root?: string }) {
   const appearance = useAppearance();
   const [view, setView] = useState<View>("search");
   const [query, setQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
-  const searchBrowser = useSearchBrowser(results, searchedQuery !== "");
+  const searchBrowser = useSearchBrowser(results, searchedQuery !== "", root);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectionStates = useMemo(
     () => treeSelectionStates(searchBrowser.tree, selected),
@@ -308,7 +308,7 @@ function App() {
   const [message, setMessage] = useState("");
   const [taskErrors, setTaskErrors] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState(false);
-  const [filter, setFilter] = useState<Filter>("all");
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [taskQuery, setTaskQuery] = useState("");
   const [inspectedId, setInspectedId] = useState<string | null>(null);
   const updates = useAppUpdates();
@@ -350,16 +350,16 @@ function App() {
     );
     if (row) list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.top;
   }, [inspectedId, view]);
-  useQueueReorderAnimation(downloadsList, JSON.stringify([view, filter, taskQuery]));
+  useQueueReorderAnimation(downloadsList, JSON.stringify([view, collapsedGroups, taskQuery]));
   const scrollPositions = useRef({ search: 0, downloads: 0 });
 
   useEffect(() => {
-    if (!isDesktop()) return;
+    if (!isDesktop() || root) return;
     let stopped = false;
     const navigate = async () => {
       const id = await invoke<string | null>("take_download_navigation");
       if (stopped || typeof id !== "string") return;
-      setFilter("all");
+      setCollapsedGroups({});
       setTaskQuery(id);
       setView("downloads");
     };
@@ -379,6 +379,53 @@ function App() {
     void loadSearch("");
     return () => {
       searchRequest.current++;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktop() || root) return;
+    let stopped = false;
+    const navigate = async () => {
+      const url = await invoke<string | null>("take_search_navigation");
+      if (stopped || !url) return;
+      const request = ++searchRequest.current;
+      searchingRef.current = true;
+      setSearching(true);
+      setView("search");
+      try {
+        const parent = new URL("..", url.endsWith("/") ? url : new URL(".", url)).href;
+        const directory = url.endsWith("/") ? parent : new URL(".", url).href;
+        const entries = await invoke<SearchResult[]>("list_library_directory", { url: directory, refresh: false });
+        if (stopped || request !== searchRequest.current) return;
+        const target = entries.find((entry) => entry.encodedUrl === url);
+        if (!target) throw new Error("This item is no longer in its folder. Try refreshing the folder.");
+        searchBrowser.reset();
+        setResults([target]);
+        setSearchedQuery(target.text);
+        setQuery(target.text);
+        setSelected(new Set([url]));
+        setSearchError("");
+        requestAnimationFrame(() => {
+          const row = [...(searchList.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(
+            (row) => row.dataset.url === url
+          );
+          row?.scrollIntoView({ block: "center" });
+          row?.focus({ preventScroll: true });
+        });
+      } catch (error) {
+        if (!stopped && request === searchRequest.current) setSearchError(String(error));
+      } finally {
+        if (!stopped && request === searchRequest.current) {
+          searchingRef.current = false;
+          setSearching(false);
+        }
+      }
+    };
+    const stop = listen("show-in-search", () => void navigate().catch(() => {}));
+    void stop.then(navigate).catch(() => {});
+    return () => {
+      stopped = true;
+      void stop.then((unlisten) => unlisten()).catch(() => {});
     };
   }, []);
 
@@ -420,18 +467,10 @@ function App() {
     () =>
       tasks
         .filter((task) => {
-          const matches =
-            filter === "all" ||
-            (filter === "active" && isActive(task)) ||
-            (filter === "queued" && task.status === "queued") ||
-            (filter === "attention" && ["failed", "interrupted"].includes(task.status)) ||
-            (filter === "completed" && task.status === "completed");
-          return (
-            matches && `${taskName(task)} ${task.output} ${task.id}`.toLowerCase().includes(taskQuery.toLowerCase())
-          );
+          return `${taskName(task)} ${task.output} ${task.id}`.toLowerCase().includes(taskQuery.toLowerCase());
         })
         .sort(compareTransferOrder),
-    [tasks, filter, taskQuery]
+    [tasks, taskQuery]
   );
 
   function switchView(next: View) {
@@ -441,7 +480,7 @@ function App() {
   }
 
   function showFailures() {
-    setFilter("attention");
+    setCollapsedGroups({ running: true, queued: true, completed: true, attention: false });
     setTaskQuery("");
     switchView("downloads");
   }
@@ -474,7 +513,7 @@ function App() {
         // parsed index when clearing a query, even if the server goes offline.
         const pending =
           libraryIndex.current ??
-          invoke<{ results: SearchResult[] }>("search_content", { terms: [], noCache: false }).then(
+          invoke<{ results: SearchResult[] }>("search_content", { terms: [], noCache: false, root }).then(
             (result) => result.results
           );
         libraryIndex.current = pending;
@@ -485,7 +524,8 @@ function App() {
           throw error;
         }
       } else {
-        response = (await invoke<{ results: SearchResult[] }>("search_content", { terms, noCache: false })).results;
+        response = (await invoke<{ results: SearchResult[] }>("search_content", { terms, noCache: false, root }))
+          .results;
       }
       if (searchRequest.current !== request) return;
       searchBrowser.reset();
@@ -530,7 +570,7 @@ function App() {
     }
   }
 
-  async function startDownload(queue: boolean, url?: string) {
+  async function startDownload(queue: boolean, url?: string | string[]) {
     if (
       (!url && !selected.size) ||
       !output.trim() ||
@@ -541,12 +581,12 @@ function App() {
       return;
     starting.current = true;
     setSubmitting(queue ? "queue" : "download");
-    setSubmittingUrl(url ?? null);
+    setSubmittingUrl(typeof url === "string" ? url : null);
     setSelectionError("");
     setMessage("");
     try {
       await invoke("start_download", {
-        urls: url ? [url] : distinctDownloadUrls(selected),
+        urls: url ? (Array.isArray(url) ? url : [url]) : distinctDownloadUrls(selected),
         output: outputEdited.current ? output.trim() : undefined,
         queue,
       });
@@ -779,6 +819,7 @@ function App() {
               tasks={tasks}
               statusesUnavailable={Boolean(connectionError)}
               selectionStates={selectionStates}
+              selected={selected}
               setSelected={setSelected}
               disabled={searching || Boolean(submitting)}
               transfersBlocked={updates.blocksTransfers || !output.trim()}
@@ -953,7 +994,7 @@ function App() {
               role="status"
               aria-label={`Showing ${visibleTasks.length} of ${tasks.length} downloads`}
             >
-              {filter === "all" && !taskQuery ? tasks.length : `${visibleTasks.length} of ${tasks.length}`}
+              {!taskQuery ? tasks.length : `${visibleTasks.length} of ${tasks.length}`}
             </span>
           </div>
           <InputGroup className="filter-field">
@@ -968,24 +1009,6 @@ function App() {
               aria-label="Filter downloads"
             />
           </InputGroup>
-          <Select
-            items={statusFilters}
-            value={filter}
-            onValueChange={(value) => {
-              if (value) setFilter(value);
-            }}
-          >
-            <SelectTrigger aria-label="Download status">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false} align="start">
-              {statusFilters.map(({ value, label }) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
           <IconButton
             label="Refresh downloads"
             className="downloads-refresh"
@@ -1002,7 +1025,35 @@ function App() {
             {visibleTasks.length > 0 ? (
               <Table aria-label="Downloads">
                 <TransferTableHead />
-                <TableBody>{visibleTasks.map(row)}</TableBody>
+                {taskGroups.map((group) => {
+                  const items = visibleTasks.filter((task) => group.statuses.includes(task.status));
+                  if (!items.length) return null;
+                  const collapsed = !!collapsedGroups[group.id];
+                  return (
+                    <React.Fragment key={group.id}>
+                      <TableBody>
+                        <TableRow className="download-group">
+                          <TableCell colSpan={5}>
+                            <Button
+                              variant="ghost"
+                              aria-label={`${group.label} downloads (${items.length})`}
+                              aria-expanded={!collapsed}
+                              aria-controls={`download-group-${group.id}`}
+                              onClick={() => setCollapsedGroups((current) => ({ ...current, [group.id]: !collapsed }))}
+                            >
+                              <ChevronRight size={14} className={collapsed ? "" : "group-expanded"} />
+                              <span>{group.label}</span>
+                              <span className="secondary">{items.length}</span>
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      </TableBody>
+                      <TableBody id={`download-group-${group.id}`} hidden={collapsed}>
+                        {!collapsed && items.map(row)}
+                      </TableBody>
+                    </React.Fragment>
+                  );
+                })}
               </Table>
             ) : (
               <Empty className="empty-state">
@@ -1017,7 +1068,6 @@ function App() {
                     variant="link"
                     className="text-button"
                     onClick={() => {
-                      setFilter("all");
                       setTaskQuery("");
                     }}
                   >
@@ -1081,7 +1131,17 @@ function App() {
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <IconTooltipProvider>
-      {new URLSearchParams(window.location.search).has("tray") ? <TrayPopup /> : <App />}
+      {new URLSearchParams(window.location.search).has("tray") ? (
+        <TrayPopup />
+      ) : new URLSearchParams(window.location.search).has("library-window") ? (
+        <Suspense fallback={<Spinner aria-label="Opening window" />}>
+          <LibraryWindow
+            renderFolder={(resource) => <App key={`${resource.url}:${resource.revision}`} root={resource.url} />}
+          />
+        </Suspense>
+      ) : (
+        <App />
+      )}
     </IconTooltipProvider>
   </React.StrictMode>
 );

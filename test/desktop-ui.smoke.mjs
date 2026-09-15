@@ -5,6 +5,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { testAppearance } from "./desktop-appearance.smoke.mjs";
 import { testSearchBrowsing } from "./desktop-search.smoke.mjs";
+import { testLibraryWindows } from "./desktop-library-windows.smoke.mjs";
 import { testLibraryIndex } from "./desktop-library.smoke.mjs";
 import { testTreeExpansion } from "./desktop-tree-expansion.smoke.mjs";
 import { testSearchStatuses } from "./desktop-search-status.smoke.mjs";
@@ -157,6 +158,9 @@ try {
       },
       async invoke(command, args) {
         state.calls.push({ command, args });
+        if (command === "open_library_window") return "library-1";
+        if (command === "take_search_navigation") return null;
+        if (command === "has_downloaded_library_file") return false;
         if (command === "get_download_files") {
           const snapshot = structuredClone(state.fileDetails[args.id] ?? null);
           await new Promise((resolve) => setTimeout(resolve, state.detailsDelay));
@@ -453,9 +457,9 @@ try {
   await checkSelectionAccents();
   await searchRows.nth(4).focus();
   await checkSelectionAccents();
-  await searchRows.nth(3).click({ modifiers: ["Control"] });
+  await searchRows.nth(3).click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
   await checkSelectionAccents();
-  await searchRows.nth(3).click({ modifiers: ["Control"] });
+  await searchRows.nth(3).click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
   await checkSelectionAccents();
   await page.screenshot({ path: `${screenshots}/selection-accents.png` });
   assert.equal(await page.getByLabel("Download destination").inputValue(), "/Users/carlos/Downloads/Visuales");
@@ -780,34 +784,28 @@ try {
   await page.getByRole("tab", { name: "Search", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   assert.equal(await page.getByRole("tab", { name: /Downloads/ }).getAttribute("aria-selected"), "true");
-  await page.getByRole("combobox", { name: "Download status" }).click();
-  await page.screenshot({ path: `${screenshots}/status-select.png` });
-  assert.equal(
-    await page.locator('[data-slot="select-content"]').evaluate((el) => window.getComputedStyle(el).borderRadius),
-    "1px"
-  );
-  await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "option");
-  await page.keyboard.press("End");
-  await page.waitForFunction(() => document.activeElement?.textContent === "Completed");
+  assert.equal(await page.getByRole("combobox", { name: "Download status" }).count(), 0);
+  assert.deepEqual(await page.locator(".download-group button span:first-of-type").allTextContents(), [
+    "Downloading",
+    "Pending",
+    "Needs attention",
+    "Finished",
+  ]);
+  const finishedGroup = page.getByRole("button", { name: "Finished downloads (1)", exact: true });
+  await finishedGroup.focus();
   await page.keyboard.press("Enter");
-  await page.getByRole("listbox").waitFor({ state: "detached" });
-  assert.equal(await page.locator("#panel-downloads .transfer-row").count(), 1, "keyboard status filter");
-  assert.equal(await page.locator(".download-count").textContent(), "1 of 6");
-  assert.equal(
-    await page.getByRole("combobox", { name: "Download status" }).evaluate((el) => el === document.activeElement),
-    true,
-    "select returns focus to its trigger"
-  );
-  await page.getByRole("combobox", { name: "Download status" }).click();
-  await page.getByRole("option", { name: "Needs attention" }).click();
-  assert.equal(await page.locator("#panel-downloads .transfer-row").count(), 2);
-  assert.equal(await page.locator(".download-count").textContent(), "2 of 6");
+  assert.equal(await finishedGroup.getAttribute("aria-expanded"), "false");
+  assert.equal(await page.locator("#panel-downloads .transfer-row").count(), 5);
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#panel-downloads .transfer-row").count(), 6);
+  await page.screenshot({ path: `${screenshots}/status-groups.png` });
   await page.getByLabel("Filter downloads").fill("Cosmos");
   assert.equal(await page.locator("#panel-downloads .transfer-row").count(), 1);
   await page.getByRole("button", { name: "Resume Cosmos", exact: true }).click();
-  await page.getByText("No matching transfers").waitFor();
-  assert.equal(await page.locator(".download-count").textContent(), "0 of 6");
-  await page.getByRole("button", { name: "Clear filters" }).click();
+  await page.getByRole("button", { name: "Cancel Cosmos", exact: true }).waitFor();
+  assert.equal(await page.locator("#download-group-running .file-title").textContent(), "Cosmos");
+  assert.equal(await page.locator(".download-count").textContent(), "1 of 6");
+  await page.getByLabel("Filter downloads").fill("");
   await page.getByLabel("Open output folder for Cosmos", { exact: true }).click();
   assert.equal(
     await page.evaluate(
@@ -1151,6 +1149,7 @@ try {
   await page.getByLabel("Concurrent files", { exact: true }).waitFor();
   await testAppearance({ page, screenshots, checkLayout });
   await testSearchBrowsing({ page, screenshots, checkLayout });
+  await testLibraryWindows({ browser, screenshots });
   await testLibraryIndex({ page, screenshots, checkLayout });
   await testSearchStatuses({ page, screenshots, checkLayout });
   await testSettingsExclusions({ page, screenshots, checkLayout });

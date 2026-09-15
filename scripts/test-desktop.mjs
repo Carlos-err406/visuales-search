@@ -2,7 +2,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer } from "vite";
 
-const server = await createServer({ root: "apps/desktop", server: { host: "127.0.0.1", port: 0, strictPort: true } });
+// Core rebuilds in a concurrent dev session must not reload pages midway through a regression test.
+const server = await createServer({
+  root: "apps/desktop",
+  server: { host: "127.0.0.1", port: 0, strictPort: true, watch: null, hmr: false },
+});
 try {
   await server.listen();
   const { stdout, stderr } = await promisify(execFile)(process.execPath, ["test/desktop-ui.smoke.mjs"], {

@@ -1,4 +1,5 @@
 mod folders;
+mod library_windows;
 mod notifications;
 mod quit;
 mod relaunch;
@@ -9,7 +10,7 @@ mod updates;
 mod windows;
 
 use serde_json::{json, Value};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 fn default_output_dir() -> Result<String, String> {
@@ -24,11 +25,12 @@ async fn search_content(
     app: tauri::AppHandle,
     terms: Vec<String>,
     no_cache: bool,
+    root: Option<String>,
 ) -> Result<Value, String> {
     sidecar::request(
         &app,
         "search",
-        json!({ "terms": terms, "noCache": no_cache }),
+        json!({ "terms": terms, "noCache": no_cache, "root": root }),
     )
     .await
 }
@@ -91,12 +93,14 @@ async fn get_desktop_settings(app: tauri::AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 async fn save_desktop_settings(app: tauri::AppHandle, settings: Value) -> Result<Value, String> {
-    sidecar::request(
+    let next = sidecar::request(
         &app,
         "settings.save",
         json!({ "settings": settings, "defaultOutput": default_output_dir()? }),
     )
-    .await
+    .await?;
+    let _ = app.emit("settings-changed", ());
+    Ok(next)
 }
 
 #[tauri::command]
@@ -165,6 +169,7 @@ pub fn run() {
         .manage(quit::QuitState::default())
         .manage(task_monitor::TaskMonitor::default())
         .manage(tray::TrayState::default())
+        .manage(library_windows::LibraryWindows::default())
         .setup(|app| {
             if let Err(error) = tray::setup(app.handle()) {
                 eprintln!("Tray unavailable; use the Downloads view: {error}");
@@ -178,6 +183,16 @@ pub fn run() {
             search_content,
             list_library_directory,
             preview_library_file,
+            library_windows::open_library_window,
+            library_windows::navigate_preview,
+            library_windows::library_window_context,
+            library_windows::close_library_window,
+            library_windows::show_in_search,
+            library_windows::take_search_navigation,
+            library_windows::cached_library_preview,
+            library_windows::library_preview_status,
+            library_windows::has_downloaded_library_file,
+            library_windows::reveal_library_file,
             default_output_dir,
             get_desktop_settings,
             save_desktop_settings,

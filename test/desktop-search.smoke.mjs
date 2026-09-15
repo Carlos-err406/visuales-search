@@ -1,4 +1,4 @@
-/* global window, document, getComputedStyle */
+/* global window, document */
 import assert from "node:assert/strict";
 
 async function checkTreeAlignment(page) {
@@ -182,10 +182,13 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
   const note = page.getByRole("treeitem", { name: "notes.txt", exact: true });
   await note.click({ modifiers: ["Meta"] });
   await note.click();
-  await page.getByRole("dialog").locator("pre").waitFor();
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-  assert.equal(await note.getAttribute("aria-selected"), "true", "closing a preview preserves selection");
+  await page.waitForFunction(() =>
+    window.testBridge.calls.some(
+      (call) => call.command === "open_library_window" && call.args.url.endsWith("notes.txt")
+    )
+  );
+  assert.equal(await page.getByRole("dialog").count(), 0, "previews open outside Search");
+  assert.equal(await note.getAttribute("aria-selected"), "true", "opening a preview preserves selection");
   await page.getByRole("button", { name: "Download notes.txt", exact: true }).hover();
   await page.getByRole("tooltip").waitFor();
   await page.keyboard.press("Escape");
@@ -204,38 +207,37 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
   await page.keyboard.press("Escape");
   assert.equal(await page.locator(".selection-bar").count(), 0, "Escape also clears staging from the footer");
   await note.click();
-  await page.getByRole("dialog").locator("pre").waitFor();
-  assert.equal(await page.evaluate(() => window.remoteExecuted), undefined, "remote text stays inert");
-  await page.screenshot({ path: `${screenshots}/search-text-preview.png` });
-  await page.getByRole("button", { name: "Refresh preview", exact: true }).hover();
-  const tooltip = page.getByRole("tooltip");
-  await tooltip.filter({ hasText: "Refresh preview" }).waitFor();
-  assert.equal(
-    await tooltip.evaluate((el) => {
-      const positioner = el.closest(".tooltip-positioner");
-      const dialog = document.querySelector('[role="dialog"]');
-      return Number(getComputedStyle(positioner).zIndex) > Number(getComputedStyle(dialog).zIndex);
-    }),
-    true,
-    "tooltip portal stacks above the preview dialog"
-  );
-  await page.screenshot({ path: `${screenshots}/preview-tooltip.png` });
-  await page.getByRole("button", { name: "Close preview", exact: true }).hover();
-  await tooltip.filter({ hasText: "Close preview" }).waitFor();
-  await page.mouse.move(0, 0);
-  await tooltip.waitFor({ state: "hidden" });
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-  assert.equal(await note.evaluate((el) => el === document.activeElement), true, "closing preview restores focus");
-  await note.click();
-  await page.getByText(/Cached/).waitFor();
-  await page.getByRole("button", { name: "Refresh preview", exact: true }).click();
-  await page.getByText(/Fetched/).waitFor();
-  await page.getByRole("button", { name: "Close preview", exact: true }).click();
   await page.getByRole("treeitem", { name: "cover.png", exact: true }).click();
-  await page.getByRole("dialog").getByRole("img").waitFor();
-  await page.waitForFunction(() => document.querySelector(".preview-body img")?.naturalWidth > 0);
-  await page.screenshot({ path: `${screenshots}/search-image-preview.png` });
+  await page.waitForFunction(() =>
+    window.testBridge.calls.some(
+      (call) => call.command === "open_library_window" && call.args.url.endsWith("cover.png")
+    )
+  );
+  // Context menus preserve staging and never trigger a folder's left-click expansion.
+  await example.click({ modifiers: ["Meta"] });
+  const otherMenuRow = page.getByRole("treeitem", { name: "Other", exact: true });
+  await otherMenuRow.click({ modifiers: ["Meta"] });
+  await example.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Download 2 Items", exact: true }).waitFor();
+  await page.getByRole("menuitem", { name: "Queue 2 Items", exact: true }).click();
+  await page.getByText("Transfer added to queue", { exact: true }).waitFor();
+  assert.deepEqual((await lastTransfer()).urls.sort(), [
+    "https://visuales.uclv.cu/Movies/Example/",
+    "https://visuales.uclv.cu/Movies/Other/",
+  ]);
+  assert.equal(await example.getAttribute("aria-expanded"), "true");
+  await page.getByRole("button", { name: "Clear selection", exact: true }).click();
+  await note.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Open Preview in Background", exact: true }).click();
+  await page.waitForFunction(() =>
+    window.testBridge.calls.some((call) => call.command === "open_library_window" && call.args.background === true)
+  );
+  await otherMenuRow.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Open Folder in New Window", exact: true }).click();
+  assert.equal(await otherMenuRow.getAttribute("aria-expanded"), "false");
+  await note.focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menu").waitFor();
   await page.keyboard.press("Escape");
   await page.evaluate(() => {
     window.testBridge.fail = "list_library_directory";
@@ -287,10 +289,6 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
       await checkTreeAlignment(page);
       await checkLayout(`search-tree-${theme.toLowerCase()}-${width}`);
     }
-    await note.click();
-    await page.getByRole("dialog").locator("pre").waitFor();
-    await page.screenshot({ path: `${screenshots}/text-preview-${theme.toLowerCase()}-390.png` });
-    await page.keyboard.press("Escape");
   }
   // A late directory response must not inject files into a replacement search.
   await page.evaluate(() => {
