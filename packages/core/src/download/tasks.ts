@@ -605,7 +605,9 @@ export async function cancelDownloadTask(idOrUrl: string): Promise<DownloadTaskR
 export async function updateDownloadTaskProgress(id: string, progress: DownloadProgress): Promise<void> {
   const now = Date.now();
   const lastWrite = lastProgressWrite.get(id) ?? 0;
-  if (now - lastWrite < TASK_PROGRESS_WRITE_INTERVAL_MS) return;
+  // A completion can be the last event before a slow probe or an all-cached run ends.
+  // Never leave persisted totals at the previous file because of the telemetry throttle.
+  if (progress.progress < 100 && now - lastWrite < TASK_PROGRESS_WRITE_INTERVAL_MS) return;
 
   lastProgressWrite.set(id, now);
   const task = await findDownloadTask(id);

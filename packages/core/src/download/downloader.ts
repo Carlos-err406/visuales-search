@@ -375,6 +375,15 @@ export async function downloadFile(
       speedBytes: 0,
       connections: undefined,
     });
+    onProgress?.({
+      url,
+      fileName: filename,
+      progress: 100,
+      downloadedSize: size ?? 0,
+      totalSize: size ?? 0,
+      speed: "0 B/s",
+      speedBytes: 0,
+    });
   } catch (error) {
     reportDownloadFile(url, options.output, filename, {
       status: "failed",
@@ -1029,8 +1038,7 @@ async function downloadFileWithOverallProgress(
       (progress) => {
         lastDownloadedBytes = progress.downloadedSize;
         if (fileCountProgress) {
-          const expectedBytes = expectedSize || progress.totalSize || progress.downloadedSize;
-          fileCountProgress.activeBytes.set(fileUrl, Math.min(progress.downloadedSize, expectedBytes));
+          fileCountProgress.activeBytes.set(fileUrl, progress.downloadedSize);
           fileCountProgress.activeSpeeds.set(fileUrl, progress.speedBytes ?? 0);
           fileCountProgress.activeFiles.set(fileUrl, {
             url: fileUrl,
@@ -1058,8 +1066,20 @@ async function downloadFileWithOverallProgress(
       fileCountProgress.activeSpeeds.delete(fileUrl);
       fileCountProgress.activeFiles.delete(fileUrl);
       fileCountProgress.completedFiles++;
-      fileCountProgress.completedBytes += expectedSize || lastDownloadedBytes;
+      // Completion includes skipped existing files and any tail repaired by verification.
+      fileCountProgress.completedBytes += lastDownloadedBytes;
+      fileCountProgress.totalBytes += lastDownloadedBytes - (expectedSize ?? 0);
       updateOverallDownloadProgress(fileCountProgress);
+      onProgress?.({
+        url: fileUrl,
+        fileName: getDecodedUrlBasename(fileUrl),
+        progress: 100,
+        downloadedSize: lastDownloadedBytes,
+        totalSize: lastDownloadedBytes,
+        speed: "0 B/s",
+        speedBytes: 0,
+        overall: getOverallDownloadProgress(fileCountProgress),
+      });
     }
 
     return null;

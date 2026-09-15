@@ -87,6 +87,20 @@ after(async () => {
 });
 
 describe("download task lifecycle", () => {
+  it("persists rapid completion events even inside the progress throttle interval", async () => {
+    const task = await tasks.startDownloadTaskWithPid("http://example/rapid/", options(), process.pid);
+    await tasks.updateDownloadTaskProgress(task.id, progress());
+    for (const count of [2, 3]) {
+      const completed = progress(`cached-${count}.mp4`);
+      completed.progress = 100;
+      completed.overall.completedFiles = count;
+      completed.overall.downloadedBytes = count * 100;
+      await tasks.updateDownloadTaskProgress(task.id, completed);
+      const stored = await tasks.findDownloadTask(task.id);
+      assert.equal(stored.overallProgress.completedFiles, count);
+      assert.equal(stored.overallProgress.downloadedBytes, count * 100);
+    }
+  });
   it("does not demote a running detached task when the parent writes the queued record late", async () => {
     const url = "http://example/race.mp4";
     const running = await tasks.startDownloadTaskWithPid(url, options(), process.pid);
