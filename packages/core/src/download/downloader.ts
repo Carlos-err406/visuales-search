@@ -1231,7 +1231,8 @@ async function downloadMany(
           const targetSummary = await summarizeDirectoryDownload(
             target.url,
             { ...options, output: target.output },
-            listing
+            listing,
+            target.relativePath
           );
           addSummary(summary, targetSummary);
           directoryTargets.push({ target, listing, summary: targetSummary });

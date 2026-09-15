@@ -56,6 +56,10 @@ Included in v2.0.7. Search work is tracked as four completed implementation item
 
 Preview limits: PNG/JPEG/GIF/WebP up to 4 MB, UTF-8 text up to 512 KB. The unified `previews` cache retains content for 24 hours, evicts oldest entries above 32 MB, and supports explicit refresh and CLI cache management. Text is inert; remote HTML/scripts are never executed. Visuales keeps its themes, typography, and 1px corners. CLI download behavior is unchanged.
 
+## Implemented: File Retries and Download Review
+
+Prepared for v3.5.0: retry one or all failed files from the transfer inspector, using the shared core and original task history. Retries require a stopped transfer; CLI parity is available through `tasks retry` and `tasks files`. Search context menus and the selection footer offer optional Review Download with included/ignored files, skipped subtrees, approximate/unknown sizes, and advisory capacity warnings. CLI parity uses `download --dry-run [--json]`. Quick Download and Queue actions are unchanged. See [implementation notes](plans/file-retry-download-review.md) and [release notes](releases/v3.5.0.md).
+
 ## Implemented: Library Windows
 
 Prepared for v3.4.0: detached image/text previews, background loading, main-interface folder windows with branch-scoped search, and Search context menus. Previews share the bounded cache and now support legacy Windows-1252/Latin-1 and BOM-marked UTF-16 text. Downloads use collapsible status groups; the shared engine reconciles resumed progress with actual completed-file sizes. See the [implementation and verification notes](plans/library-windows.md) and [release notes](releases/v3.4.0.md).

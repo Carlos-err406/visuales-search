@@ -239,7 +239,10 @@ impl Bridge {
                 .map_err(|_| "Node engine disconnected".to_string())?
         };
         // Searches can take minutes on the upstream Apache server.
-        let timeout = if method == "search" || method.starts_with("library.") {
+        let timeout = if method == "search"
+            || method == "download.review"
+            || method.starts_with("library.")
+        {
             300
         } else {
             30

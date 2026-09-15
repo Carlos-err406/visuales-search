@@ -14,6 +14,7 @@ import { testSettingsHelp } from "./desktop-help.smoke.mjs";
 import { testTrayPopup } from "./desktop-tray.smoke.mjs";
 import { testQueueManagement } from "./desktop-queue.smoke.mjs";
 import { testTransferInspector } from "./desktop-inspector.smoke.mjs";
+import { testRetryAndReview } from "./desktop-retry-review.smoke.mjs";
 import { testSearchCache } from "./desktop-search-cache.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
@@ -258,6 +259,20 @@ try {
         }
         if (command === "plugin:dialog|open") return "/Users/carlos/Downloads/Chosen";
         if (command === "start_download") return { id: "new-task" };
+        if (command === "review_download") return structuredClone(state.review);
+        if (command === "retry_download_files") {
+          const files = state.fileDetails[args.id].files;
+          for (const file of files)
+            if (file.status === "failed" && (!args.paths || args.paths.includes(file.path))) {
+              file.status = "completed";
+              file.downloadedBytes = file.totalBytes;
+              delete file.error;
+            }
+          state.tasks.find((task) => task.id === args.id).status = files.every((file) => file.status === "completed")
+            ? "completed"
+            : "failed";
+          return null;
+        }
         if (command === "open_output_folder") return null;
         const task = state.tasks.find((item) => item.id === args.id);
         if (command === "move_queued_download") {
@@ -282,6 +297,13 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  if (process.env.DESKTOP_SMOKE_ONLY === "retry-review") {
+    await testRetryAndReview({ page, screenshots });
+    assert.deepEqual(errors, [], "no browser exceptions");
+    console.log(`Retry and review UI checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
   await page.getByRole("treeitem", { name: "Library", exact: true }).waitFor();
   await testSearchCache({ page });
   await testTreeExpansion({ page, screenshots });
@@ -1199,6 +1221,7 @@ try {
     await preview.close();
   }
   await testTransferInspector({ page, screenshots });
+  await testRetryAndReview({ page, screenshots });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {

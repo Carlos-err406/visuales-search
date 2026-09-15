@@ -3,6 +3,8 @@ import colors from "ansi-colors";
 import { createDownloadTargets, decodePathSegment } from "@visuales/core/download/targets";
 import { downloadDefaults } from "@visuales/core/download/defaults";
 import { recordDownloadFiles } from "@visuales/core/download/file-details";
+import { claimDownloadFileRetry, runDownloadFileRetry, reviewDownload } from "@visuales/core";
+import { formatSize } from "@visuales/core/download/utils";
 import { downloadUrl, downloadUrls, stopProgress } from "./downloader.js";
 import { DownloadOptions } from "./types.js";
 import { CONFIG } from "../../lib/types.js";
@@ -42,6 +44,8 @@ interface DownloadCommandOptions {
   queue?: boolean;
   ignore?: string[];
   verbose?: boolean;
+  dryRun?: boolean;
+  json?: boolean;
 }
 
 // Helper functions for Download
@@ -112,7 +116,7 @@ export async function downloadCommand(urls: string | string[], options: Download
   for (const input of inputs) {
     const resolvedUrl = await resolveSearchAlias(input);
     validateResolvedUrl(input, resolvedUrl);
-    if (resolvedUrl !== input) {
+    if (resolvedUrl !== input && !options.json) {
       console.log(colors.gray(`Resolved ${input} to ${resolvedUrl}`));
     }
     resolvedUrls.push(resolvedUrl);
@@ -133,6 +137,32 @@ export async function downloadCommand(urls: string | string[], options: Download
   };
 
   const queue = options.queue ?? false;
+
+  if (options.json && !options.dryRun) throw new Error("--json requires --dry-run.");
+  if (options.dryRun) {
+    const review = await reviewDownload(
+      isBatch ? createDownloadTargets(resolvedUrls, output) : [{ url: resolvedUrls[0], output, relativePath: "" }],
+      downloadOptions
+    );
+    if (options.json) console.log(JSON.stringify(review));
+    else {
+      console.log(`Destination: ${review.output}`);
+      for (const entry of review.entries)
+        console.log(
+          `${entry.ignored ? "Ignored" : "Include"}\t${entry.bytes === null ? "Unknown size" : `${entry.estimated ? "~" : ""}${formatSize(entry.bytes)}`}\t${entry.path}`
+        );
+      console.log(
+        `${review.includedFiles} files; ${review.ignoredFiles} ignored files; ${review.ignoredDirectories} ignored subtrees`
+      );
+      console.log(
+        `Full download: ${review.estimated ? "~" : ""}${formatSize(review.knownBytes)}${review.unknownFiles ? ` + ${review.unknownFiles} unknown sizes` : ""}`
+      );
+      console.log(`Available: ${review.availableBytes === null ? "Unknown" : formatSize(review.availableBytes)}`);
+      if (review.spaceWarning)
+        console.log("Warning: the full download exceeds available space. Existing files may reduce the space needed.");
+    }
+    return;
+  }
 
   if (options.detach) {
     await startDetachedDownload(resolvedUrls, downloadOptions, queue);
@@ -328,6 +358,23 @@ function registerInterruptHandler(taskId: string): () => void {
   };
 }
 
+export async function retryFilesCommand(id: string, paths?: string[]): Promise<void> {
+  let cleanup = () => {};
+  try {
+    const task = await claimDownloadFileRetry(id, paths);
+    cleanup = registerInterruptHandler(task.id);
+    console.log(`Retrying ${task.retryPaths!.length} failed files in task ${task.id}`);
+    await runDownloadFileRetry(task);
+    console.log(`Task ${task.id} completed.`);
+  } catch (error) {
+    printError(error);
+    process.exitCode = 1;
+  } finally {
+    cleanup();
+    await stopProgress();
+  }
+}
+
 export async function resumeCommand(
   idOrUrls: string | string[],
   options: {
@@ -476,6 +523,8 @@ export function setupDownloadCommand(program: Command): void {
       String(downloadDefaults.connections)
     )
     .option("--compact", "Hide individual thread details (default: false)")
+    .option("--dry-run", "Review included/ignored files and disk space without downloading")
+    .option("--json", "Print the --dry-run review as JSON")
     .option("-d, --detach", "Run the download in the background")
     .option("-q, --queue", "Wait for running downloads to finish before starting")
     .option("--ignore <patterns...>", "Ordered gitignore-style rules; !pattern includes again (repeatable)")

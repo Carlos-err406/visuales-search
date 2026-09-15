@@ -8,6 +8,7 @@ export type TransferCommand =
   | "resume_download_task"
   | "cancel_download_task"
   | "delete_download_task"
+  | "retry_download_files"
   | "move_queued_download";
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
@@ -87,12 +88,12 @@ export function useTransfers(paused = false) {
     };
   }, [refresh]);
 
-  const act = async (command: TransferCommand, id: string, position?: QueueMove) => {
+  const act = async (command: TransferCommand, id: string, position?: QueueMove, paths?: string[]) => {
     if (busy.current.has(id)) return;
     busy.current.add(id);
     setPending(new Set(busy.current));
     try {
-      await invoke(command, { id, ...(position === undefined ? {} : { position }) });
+      await invoke(command, { id, ...(position === undefined ? {} : { position }), ...(paths ? { paths } : {}) });
       await refresh(true);
     } finally {
       busy.current.delete(id);
