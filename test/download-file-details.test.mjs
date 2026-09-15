@@ -92,7 +92,7 @@ test("persists optional live telemetry and rejects invalid values without requir
   }
 });
 
-test("the real downloader records verification and already-existing files, including a zero-progress skip", async () => {
+test("the real downloader records verification and publishes completion for already-existing files", async () => {
   const server = await startTestServer();
   const options = {
     output: home,
@@ -114,10 +114,12 @@ test("the real downloader records verification and already-existing files, inclu
     assert.equal(file.speedBytes, 0);
     assert.equal(file.connections, undefined);
     assert.ok(file.progressUpdatedAt > 0);
-    let progress = 0;
-    await recordDownloadFiles("actual", home, () => downloadUrl(url, options, () => progress++));
+    const progress = [];
+    await recordDownloadFiles("actual", home, () => downloadUrl(url, options, (event) => progress.push(event)));
     file = (await readDownloadFileDetails("actual")).files[0];
-    assert.equal(progress, 0);
+    assert.equal(progress.length, 1);
+    assert.equal(progress[0].progress, 100);
+    assert.equal(progress[0].downloadedSize, FILE_BODY.length);
     assert.equal(file.status, "completed");
     assert.equal(file.downloadedBytes, FILE_BODY.length);
     await recordDownloadFiles("unknown", home, async () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { downloadDefaults } from "@visuales/core/download/defaults";
 import type { DesktopSettings, DesktopSettingsSnapshot } from "@visuales/core/desktop-settings-types";
 import { isDesktop } from "./use-transfers";
@@ -21,6 +22,14 @@ export function useDesktopSettings() {
   const [attempt, setAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    const stop = listen("settings-changed", () => setAttempt((value) => value + 1));
+    return () => {
+      void stop.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;

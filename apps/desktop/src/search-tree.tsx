@@ -13,13 +13,14 @@ import { Download, File, FileImage, FileText, Folder, FolderOpen, ListPlus, Refr
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { IconButton } from "./icon-button";
-import { FilePreview } from "./file-preview";
+import { LibraryContextMenu } from "./library-context-menu";
 import { formatBytes, type Task } from "./task-view";
 import { createSearchDownloadStatusIndex } from "@visuales/core/search-download-status";
 import {
   buildSearchTree,
   canonicalTreeUrl,
   changeTreeSelection,
+  distinctDownloadUrls,
   type SearchTreeNode,
   type TreeCheckState,
 } from "@visuales/core/search-tree";
@@ -31,7 +32,7 @@ function normalizeEntries(entries: LibraryEntry[]) {
   return entries.map((entry) => ({ ...entry, encodedUrl: canonicalTreeUrl(entry.encodedUrl) }));
 }
 
-export function useSearchBrowser(results: LibraryEntry[], autoExpand = true) {
+export function useSearchBrowser(results: LibraryEntry[], autoExpand = true, root?: string, filter = "") {
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [contents, setContents] = useState<Record<string, LibraryEntry[]>>({});
   const [opened, setOpened] = useState<Set<string>>(new Set());
@@ -49,7 +50,29 @@ export function useSearchBrowser(results: LibraryEntry[], autoExpand = true) {
     indexedEntries.forEach(merge);
     return [...all.values()];
   }, [indexedEntries, contents]);
-  const tree = useMemo(() => buildSearchTree(entries), [entries]);
+  const tree = useMemo(() => {
+    const tree = buildSearchTree(
+      filter
+        ? entries.filter((entry) =>
+            filter
+              .toLowerCase()
+              .split(/\s+/)
+              .every((term) => entry.text.toLowerCase().includes(term))
+          )
+        : entries
+    );
+    if (!root) return tree;
+    function find(nodes: SearchTreeNode[]): SearchTreeNode[] | undefined {
+      for (const node of nodes) {
+        if (node.url === root) return node.children;
+        if (root?.startsWith(node.url)) {
+          const found = find(node.children);
+          if (found) return found;
+        }
+      }
+    }
+    return find(tree) ?? [];
+  }, [entries, root, filter]);
   const isOpen = (node: SearchTreeNode) =>
     !collapsed.has(node.url) && (opened.has(node.url) || (autoExpand && node.children.length > 0));
   async function load(node: SearchTreeNode, refresh = false) {
@@ -104,6 +127,7 @@ export function useSearchBrowser(results: LibraryEntry[], autoExpand = true) {
 export function SearchTree({
   browser,
   selectionStates,
+  selected,
   setSelected,
   disabled,
   tasks,
@@ -116,6 +140,7 @@ export function SearchTree({
 }: {
   browser: ReturnType<typeof useSearchBrowser>;
   selectionStates: ReadonlyMap<string, TreeCheckState>;
+  selected: ReadonlySet<string>;
   setSelected: Dispatch<SetStateAction<Set<string>>>;
   disabled: boolean;
   tasks: Task[];
@@ -124,10 +149,10 @@ export function SearchTree({
   submittingUrl: string | null;
   submitting: "download" | "queue" | null;
   output: string;
-  onTransfer: (url: string, queue: boolean) => void;
+  onTransfer: (url: string | string[], queue: boolean) => void;
 }) {
   const downloadStatus = useMemo(() => createSearchDownloadStatusIndex(tasks), [tasks]);
-  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  const [actionError, setActionError] = useState("");
   const [focused, setFocused] = useState<string | null>(null);
   const anchor = useRef<string | null>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -203,7 +228,10 @@ export function SearchTree({
     anchor.current = node.url;
   }
   function openPreview(node: SearchTreeNode) {
-    if (!disabled && !node.directory && previewKind(node.url)) setPreview({ url: node.url, name: node.name });
+    if (!disabled && !node.directory && previewKind(node.url)) {
+      setActionError("");
+      void invoke("open_library_window", { url: node.url }).catch((error) => setActionError(String(error)));
+    }
   }
   function onKey(event: KeyboardEvent, node: SearchTreeNode, index: number) {
     if (event.target !== event.currentTarget || disabled) return;
@@ -237,8 +265,9 @@ export function SearchTree({
         select(node, selectionStates.get(node.url) !== true, event.shiftKey);
         break;
       case "Enter":
-        if (node.directory) browser.toggle(node);
-        else openPreview(node);
+        if (node.directory) {
+          browser.toggle(node);
+        } else openPreview(node);
         break;
       default:
         return;
@@ -247,6 +276,11 @@ export function SearchTree({
   }
   return (
     <>
+      {actionError && (
+        <p role="alert" className="error">
+          {actionError}
+        </p>
+      )}
       <div
         role="tree"
         className="search-tree"
@@ -285,98 +319,111 @@ export function SearchTree({
                   : undefined
               }
             >
-              <div
-                role="treeitem"
-                aria-level={depth}
-                aria-posinset={pos}
-                aria-setsize={size}
-                aria-expanded={node.directory ? open : undefined}
-                aria-disabled={disabled || undefined}
-                aria-busy={listing?.loading || undefined}
-                aria-selected={checkState === true}
-                data-selection={checkState === "indeterminate" ? "partial" : undefined}
-                aria-label={node.name}
-                data-url={node.url}
-                tabIndex={node.url === focusUrl ? 0 : -1}
-                className={`tree-row ${node.entry ? "result-row" : "tree-group"} ${checkState === true ? "selected" : ""}`}
-                onFocus={() => setFocused(node.url)}
-                onKeyDown={(event) => onKey(event, node, index)}
-                onClick={(event) => {
-                  if (disabled || (event.target as HTMLElement).closest("button, input")) return;
-                  focus(node.url, true);
-                  if (event.metaKey || event.ctrlKey || event.shiftKey)
-                    select(node, event.shiftKey || checkState !== true, event.shiftKey);
-                  else if (node.directory) browser.toggle(node);
-                  else if (kind) openPreview(node);
-                }}
+              <LibraryContextMenu
+                url={node.url}
+                directory={node.directory}
+                targets={() => (checkState === true ? distinctDownloadUrls(selected) : [node.url])}
+                disabled={disabled}
+                transfersBlocked={transfersBlocked}
+                onTransfer={onTransfer}
+                onRefresh={() => browser.showContents(node, true)}
+                onError={setActionError}
               >
-                <span className="tree-content" style={{ paddingInlineStart: `${Math.min(depth - 1, 8) * 18}px` }}>
-                  <Symbol size={18} className="file-symbol" aria-hidden="true" />
-                  <span className="file-copy">
-                    <span className="file-title">{node.name}</span>
-                  </span>
-                </span>
-                <span className="tree-metadata">
-                  {transfer && (
-                    <span className={`tree-download-status ${transfer.status}`} aria-label={transfer.description}>
-                      {transfer.label}
+                <div
+                  role="treeitem"
+                  aria-level={depth}
+                  aria-posinset={pos}
+                  aria-setsize={size}
+                  aria-expanded={node.directory ? open : undefined}
+                  aria-disabled={disabled || undefined}
+                  aria-busy={listing?.loading || undefined}
+                  aria-selected={checkState === true}
+                  data-selection={checkState === "indeterminate" ? "partial" : undefined}
+                  aria-label={node.name}
+                  data-url={node.url}
+                  tabIndex={node.url === focusUrl ? 0 : -1}
+                  className={`tree-row ${node.entry ? "result-row" : "tree-group"} ${checkState === true ? "selected" : ""}`}
+                  onFocus={() => setFocused(node.url)}
+                  onKeyDown={(event) => onKey(event, node, index)}
+                  onClick={(event) => {
+                    if (disabled || (event.target as HTMLElement).closest("button, input")) return;
+                    if (event.ctrlKey && /Mac/.test(navigator.platform)) return;
+                    focus(node.url, true);
+                    if (event.metaKey || event.ctrlKey || event.shiftKey)
+                      select(node, event.shiftKey || checkState !== true, event.shiftKey);
+                    else if (node.directory) {
+                      browser.toggle(node);
+                    } else if (kind) openPreview(node);
+                  }}
+                >
+                  <span className="tree-content" style={{ paddingInlineStart: `${Math.min(depth - 1, 8) * 18}px` }}>
+                    <Symbol size={18} className="file-symbol" aria-hidden="true" />
+                    <span className="file-copy">
+                      <span className="file-title">{node.name}</span>
                     </span>
-                  )}
-                  {bytes !== undefined && <span className="secondary tree-size">{formatBytes(bytes)}</span>}
-                </span>
-                <div className="tree-actions">
-                  {refreshing ? (
-                    <Spinner size={14} aria-label="Refreshing folder contents" className="tree-refresh-spinner" />
-                  ) : node.directory && contents ? (
+                  </span>
+                  <span className="tree-metadata">
+                    {transfer && (
+                      <span className={`tree-download-status ${transfer.status}`} aria-label={transfer.description}>
+                        {transfer.label}
+                      </span>
+                    )}
+                    {bytes !== undefined && <span className="secondary tree-size">{formatBytes(bytes)}</span>}
+                  </span>
+                  <div className="tree-actions">
+                    {refreshing ? (
+                      <Spinner size={14} aria-label="Refreshing folder contents" className="tree-refresh-spinner" />
+                    ) : node.directory && contents ? (
+                      <IconButton
+                        label={`Refresh ${node.name}`}
+                        tooltip="Refresh folder"
+                        disabled={disabled || listing?.loading}
+                        onClick={() => {
+                          browser.showContents(node, true);
+                        }}
+                      >
+                        {listing?.loading ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                      </IconButton>
+                    ) : null}
                     <IconButton
-                      label={`Refresh ${node.name}`}
-                      tooltip="Refresh folder"
-                      disabled={disabled || listing?.loading}
-                      onClick={() => {
-                        browser.showContents(node, true);
-                      }}
+                      label={`Queue ${node.name}`}
+                      tooltip="Add to queue"
+                      description={`Save to ${output}. Starts after active transfers finish.`}
+                      disabled={disabled || transfersBlocked}
+                      disabledReason={
+                        transfersBlocked
+                          ? "Transfers are unavailable. Check the destination and app update status."
+                          : "Wait for the current request to finish."
+                      }
+                      onClick={() => onTransfer(node.url, true)}
                     >
-                      {listing?.loading ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                      {submittingUrl === node.url && submitting === "queue" ? (
+                        <Spinner size={16} />
+                      ) : (
+                        <ListPlus size={16} />
+                      )}
                     </IconButton>
-                  ) : null}
-                  <IconButton
-                    label={`Queue ${node.name}`}
-                    tooltip="Add to queue"
-                    description={`Save to ${output}. Starts after active transfers finish.`}
-                    disabled={disabled || transfersBlocked}
-                    disabledReason={
-                      transfersBlocked
-                        ? "Transfers are unavailable. Check the destination and app update status."
-                        : "Wait for the current request to finish."
-                    }
-                    onClick={() => onTransfer(node.url, true)}
-                  >
-                    {submittingUrl === node.url && submitting === "queue" ? (
-                      <Spinner size={16} />
-                    ) : (
-                      <ListPlus size={16} />
-                    )}
-                  </IconButton>
-                  <IconButton
-                    label={`Download ${node.name}`}
-                    tooltip="Download now"
-                    description={`Save to ${output}.`}
-                    disabled={disabled || transfersBlocked}
-                    disabledReason={
-                      transfersBlocked
-                        ? "Transfers are unavailable. Check the destination and app update status."
-                        : "Wait for the current request to finish."
-                    }
-                    onClick={() => onTransfer(node.url, false)}
-                  >
-                    {submittingUrl === node.url && submitting === "download" ? (
-                      <Spinner size={16} />
-                    ) : (
-                      <Download size={16} />
-                    )}
-                  </IconButton>
+                    <IconButton
+                      label={`Download ${node.name}`}
+                      tooltip="Download now"
+                      description={`Save to ${output}.`}
+                      disabled={disabled || transfersBlocked}
+                      disabledReason={
+                        transfersBlocked
+                          ? "Transfers are unavailable. Check the destination and app update status."
+                          : "Wait for the current request to finish."
+                      }
+                      onClick={() => onTransfer(node.url, false)}
+                    >
+                      {submittingUrl === node.url && submitting === "download" ? (
+                        <Spinner size={16} />
+                      ) : (
+                        <Download size={16} />
+                      )}
+                    </IconButton>
+                  </div>
                 </div>
-              </div>
+              </LibraryContextMenu>
               {open && (loadingEmpty || listing?.error || (contents?.length === 0 && node.children.length === 0)) && (
                 <div
                   className="tree-feedback"
@@ -403,7 +450,6 @@ export function SearchTree({
           );
         })}
       </div>
-      {preview && <FilePreview key={preview.url} file={preview} onClose={() => setPreview(null)} />}
     </>
   );
 }

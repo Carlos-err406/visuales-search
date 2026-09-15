@@ -25,7 +25,16 @@ import { createDownloadTargets } from "@visuales/core/download/targets";
 import { downloadDefaults } from "@visuales/core/download/defaults";
 import { summarizeTransfers, transferName } from "@visuales/core/download/transfer-summary";
 import { loadDesktopSettings, saveDesktopSettings, resolveDesktopOutput } from "@visuales/core/desktop-settings";
-import { listLibraryDirectory, previewLibraryFile } from "@visuales/core/library";
+import {
+  listLibraryDirectory,
+  previewLibraryFile,
+  cachedLibraryPreview,
+  libraryPreviewStatus,
+  libraryUrl,
+} from "@visuales/core/library";
+import { downloadedLibraryFile } from "@visuales/core/library-local";
+import { canonicalTreeUrl } from "@visuales/core/search-tree";
+import { previewKind } from "@visuales/core/library-types";
 import { recordDownloadFiles, readDownloadFileDetails } from "@visuales/core/download/file-details";
 
 const PROTOCOL_VERSION = 1;
@@ -184,7 +193,11 @@ async function runServer() {
         return { protocolVersion: PROTOCOL_VERSION, runtime: process.version };
       case "search": {
         const terms = strings(params.terms, "terms", true);
-        const { results, totalResults } = await searchContent(terms, { noCache: params.noCache === true });
+        if (params.root != null && typeof params.root !== "string") throw new Error("Search root must be a URL");
+        const { results, totalResults } = await searchContent(terms, {
+          noCache: params.noCache === true,
+          root: typeof params.root === "string" ? params.root : undefined,
+        });
         return { results, totalResults };
       }
       case "settings.get":
@@ -195,6 +208,19 @@ async function runServer() {
         return listLibraryDirectory(string(params.url, "url"), params.refresh === true);
       case "library.preview":
         return previewLibraryFile(string(params.url, "url"), params.refresh === true);
+      case "library.preview.cached":
+        return cachedLibraryPreview(string(params.url, "url"));
+      case "library.preview.status":
+        return libraryPreviewStatus(string(params.url, "url"));
+      case "library.local":
+        return downloadedLibraryFile(string(params.url, "url"));
+      case "library.resource": {
+        const url = canonicalTreeUrl(libraryUrl(string(params.url, "url")).href);
+        const folder = url.endsWith("/");
+        if (!folder && !previewKind(url)) throw new Error("Preview is not available for this file type");
+        const segment = new URL(url).pathname.replace(/\/$/, "").split("/").at(-1);
+        return { url, name: segment ? decodeURIComponent(segment) : "Visuales", kind: folder ? "folder" : "preview" };
+      }
       case "settings.save":
         return saveDesktopSettings(
           params.settings,
@@ -329,6 +355,10 @@ async function runServer() {
         "tasks.files",
         "library.list",
         "library.preview",
+        "library.preview.cached",
+        "library.preview.status",
+        "library.local",
+        "library.resource",
       ].includes(request.method);
       const result = readOnly
         ? dispatch(request.method, params)

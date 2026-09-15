@@ -18,8 +18,7 @@ export async function testQueueManagement({ page, screenshots, checkLayout }) {
   });
   await page.getByRole("tab", { name: /Downloads/ }).click();
   await page.getByRole("button", { name: "Refresh downloads", exact: true }).click();
-  await page.getByRole("combobox", { name: "Download status" }).click();
-  await page.getByRole("option", { name: "Queued", exact: true }).click();
+  await page.getByRole("button", { name: "Downloading downloads (1)", exact: true }).click();
   const rows = page.locator("#panel-downloads .transfer-row");
   await page.getByText("Queue 3 of 3", { exact: true }).waitFor();
   assert.equal(await rows.count(), 3);
