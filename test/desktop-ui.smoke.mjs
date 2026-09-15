@@ -660,7 +660,9 @@ try {
     assert.equal(await page.locator(".button-tooltip").isVisible(), true, "switched tooltip remains hoverable");
     if (name === "minimum") {
       await page.locator(".downloads-list").evaluate((el) => {
-        el.scrollTop = 80;
+        // Group headers and wrapped rows change the distance needed to hide the trigger.
+        const row = el.querySelector(".transfer-row");
+        el.scrollTop += row.getBoundingClientRect().bottom - el.getBoundingClientRect().top + 1;
       });
       await page.getByRole("tooltip").waitFor({ state: "detached" });
       await page.locator(".downloads-list").evaluate((el) => {
