@@ -163,8 +163,22 @@ async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
   const filePath = tasksFilePath();
   const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
 
-  await fs.writeFile(temporaryPath, JSON.stringify(store, null, 2));
-  await fs.rename(temporaryPath, filePath);
+  try {
+    await fs.writeFile(temporaryPath, JSON.stringify(store, null, 2));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(temporaryPath, filePath);
+        break;
+      } catch (error) {
+        // Windows readers or antivirus scans can briefly deny an atomic replacement.
+        if (attempt >= 5 || !["EPERM", "EACCES", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? ""))
+          throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+      }
+    }
+  } finally {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+  }
 }
 
 function normalizeTaskStatus(task: DownloadTaskRecord, processes: () => ProcessRow[]): DownloadTaskRecord {

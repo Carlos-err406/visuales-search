@@ -25,6 +25,7 @@
 - The full desktop UI smoke suite passed against the running dev server.
 - Review screenshots verified at 1240px, 900px, and 390px, with geometry assertions preventing clipped or sideways file lists.
 - All transfer fixtures were isolated; verification did not start downloads against the user's library.
+- Release CI exposed a Windows `EPERM` during atomic task-store replacement. A bounded backoff now handles transient replacement locks while preserving the old file; permanent failures propagate and temporary writes are removed. All 26 focused lifecycle, ignore-rule, and retry/review tests passed after this fix, including two new fault-injection tests.
 
 ## Limits
 
