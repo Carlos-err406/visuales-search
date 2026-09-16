@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowUpRight, Download, FolderOutput, ListFilter, Play, Power, RefreshCw, Square } from "lucide-react";
+import {
+  ArrowUpRight,
+  Download,
+  FolderOutput,
+  ListFilter,
+  ListPlus,
+  Play,
+  Power,
+  RefreshCw,
+  Square,
+} from "lucide-react";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { summarizeTransfer, summarizeTransfers } from "@visuales/core/download/transfer-summary";
 import { Button } from "@/components/ui/button";
@@ -16,7 +26,7 @@ import { selectTrayTasks, trayFilters, type TrayFilter } from "./tray-view";
 import appIcon from "../app-icon.svg?no-inline";
 import "./tray-popup.css";
 
-type TaskAction = "open_output_folder" | "cancel_download_task" | "resume_download_task";
+type TaskAction = "open_output_folder" | "cancel_download_task" | "resume_download_task" | "queue_download_task";
 
 export function TrayPopup() {
   useAppearance();
@@ -246,14 +256,24 @@ export function TrayPopup() {
                         <Square size={14} />
                       </IconButton>
                     ) : ["interrupted", "failed"].includes(task.status) ? (
-                      <IconButton
-                        label={`Resume ${task.name}`}
-                        tooltip="Resume download"
-                        description="Continue this task using existing partial files where possible."
-                        onClick={() => void taskAction("resume_download_task", record)}
-                      >
-                        <Play size={15} />
-                      </IconButton>
+                      <>
+                        <IconButton
+                          label={`Add ${task.name} to queue`}
+                          tooltip="Add to queue"
+                          description="Resume when this transfer reaches the front of the queue. Its destination, settings, and partial files are kept."
+                          onClick={() => void taskAction("queue_download_task", record)}
+                        >
+                          <ListPlus size={15} />
+                        </IconButton>
+                        <IconButton
+                          label={`Resume ${task.name}`}
+                          tooltip="Resume now"
+                          description="Continue immediately using existing partial files, without waiting in the queue."
+                          onClick={() => void taskAction("resume_download_task", record)}
+                        >
+                          <Play size={15} />
+                        </IconButton>
+                      </>
                     ) : null}
                   </div>
                 </div>

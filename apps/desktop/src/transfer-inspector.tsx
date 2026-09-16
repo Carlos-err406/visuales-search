@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertCircle, Check, ChevronRight, File, FolderOutput, Play, RefreshCw, Square, X } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  ChevronRight,
+  File,
+  FolderOutput,
+  ListPlus,
+  Play,
+  RefreshCw,
+  Square,
+  X,
+} from "lucide-react";
 import type { DownloadFileDetail, DownloadFileDetails } from "@visuales/core/download/file-details";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -340,13 +351,25 @@ export function TransferInspector({
             <IconButton label="Open download folder" onClick={onOpen}>
               <FolderOutput size={16} />
             </IconButton>
+            {["interrupted", "failed"].includes(task.status) && (
+              <IconButton
+                label="Add transfer to queue"
+                tooltip="Add to queue"
+                description="Resume when this transfer reaches the front of the queue. Its destination, settings, and partial files are kept."
+                disabled={pending || blocked}
+                onClick={() => onAction("queue_download_task", task.id)}
+              >
+                <ListPlus size={16} />
+              </IconButton>
+            )}
             {task.status !== "completed" && (
               <IconButton
                 label={isActive(task) ? "Interrupt transfer" : "Resume transfer"}
+                tooltip={isActive(task) ? "Interrupt transfer" : "Resume now"}
                 description={
                   isActive(task)
                     ? "Stop this transfer. Partial files are kept."
-                    : "Continue using existing partial files."
+                    : "Continue immediately using existing partial files, without waiting in the queue."
                 }
                 disabled={pending || blocked}
                 onClick={() => onAction(isActive(task) ? "cancel_download_task" : "resume_download_task", task.id)}

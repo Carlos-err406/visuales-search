@@ -1217,6 +1217,66 @@ describe("packaged Node sidecar", () => {
     await waitForTask(second.id, "completed");
   });
 
+  it("queues an interrupted partial transfer at the end without losing its identity, options or bytes", async () => {
+    const ids = [];
+    const output = path.join(home, "queued resume");
+    const url = `${slowUrl}/queued-resume.bin`;
+    const ranges = [];
+    const recordRequest = (request) => {
+      if (request.url === "/queued-resume.bin" && request.method === "GET") ranges.push(request.headers.range);
+    };
+    try {
+      const original = await rpc.request("download.start", { urls: [url], output });
+      ids.push(original.id);
+      const partial = await waitForPartial(output);
+      await rpc.request("tasks.cancel", { id: original.id });
+      await waitForTask(original.id, "interrupted");
+      const bytes = await fs.readFile(partial);
+      assert.ok(bytes.length > 0 && bytes.length < FILE_BODY.length);
+
+      const running = await rpc.request("download.start", {
+        urls: [`${slowUrl}/cancel-all-queued-resume-blocker.bin`],
+        output: path.join(home, "queued resume blocker"),
+      });
+      ids.push(running.id);
+      const ahead = await rpc.request("download.start", {
+        urls: [server.url("normal", "queued-ahead.bin")],
+        output: path.join(home, "queued ahead"),
+        queue: true,
+      });
+      ids.push(ahead.id);
+      slowServer.on("request", recordRequest);
+      const resumed = await rpc.request("tasks.resume", { id: original.id, queue: true });
+      assert.equal(resumed.id, original.id);
+      assert.equal(resumed.output, original.output);
+      assert.deepEqual(resumed.options, original.options);
+      assert.equal(resumed.status, "queued");
+      const records = await rpc.request("tasks.list");
+      assert.equal(records.filter((task) => task.id === original.id).length, 1);
+      assert.deepEqual(
+        records
+          .filter((task) => task.status === "queued")
+          .sort((a, b) => a.queueOrder - b.queueOrder)
+          .map((task) => task.id),
+        [ahead.id, original.id]
+      );
+      assert.deepEqual(await fs.readFile(partial), bytes, "waiting in the queue does not alter partial data");
+      assert.deepEqual(ranges, [], "queued resume does not start network work before its turn");
+
+      await rpc.request("tasks.cancel", { id: running.id });
+      await waitForTask(ahead.id, "completed");
+      await waitForTask(original.id, "completed");
+      assert.ok(
+        ranges.some((range) => range?.startsWith(`bytes=${bytes.length}-`)),
+        "resumes from existing bytes"
+      );
+      assert.deepEqual(await fs.readFile(path.join(output, "queued-resume.bin")), FILE_BODY);
+    } finally {
+      slowServer.off("request", recordRequest);
+      for (const id of ids) await rpc.request("tasks.cancel", { id });
+    }
+  });
+
   it("stops owned workers on disconnect and leaves tasks resumable", async () => {
     const other = await startRpc();
     const task = await other.request("download.start", {

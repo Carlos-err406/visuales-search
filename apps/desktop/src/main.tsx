@@ -229,11 +229,23 @@ function TaskRow({
               )}
               {["interrupted", "failed"].includes(task.status) && (
                 <IconButton
+                  label={`Add ${name} to queue`}
+                  disabled={actionsBlocked}
+                  disabledReason="Wait until transfer changes are available."
+                  tooltip="Add to queue"
+                  description="Resume when this transfer reaches the front of the queue. Its destination, settings, and partial files are kept."
+                  onClick={() => onAction("queue_download_task", task.id)}
+                >
+                  <ListPlus size={16} />
+                </IconButton>
+              )}
+              {["interrupted", "failed"].includes(task.status) && (
+                <IconButton
                   label={`Resume ${name}`}
                   disabled={actionsBlocked}
                   disabledReason="Restart Visuales to finish the app update before resuming transfers."
-                  tooltip="Resume download"
-                  description="Continue this task using existing partial files where possible."
+                  tooltip="Resume now"
+                  description="Continue immediately using existing partial files, without waiting in the queue."
                   onClick={() => onAction("resume_download_task", task.id)}
                 >
                   <Play size={15} />

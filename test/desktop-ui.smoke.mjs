@@ -14,6 +14,7 @@ import { testSettingsHelp } from "./desktop-help.smoke.mjs";
 import { testTrayPopup } from "./desktop-tray.smoke.mjs";
 import { testQueueManagement } from "./desktop-queue.smoke.mjs";
 import { testTransferInspector } from "./desktop-inspector.smoke.mjs";
+import { testQueueResume } from "./desktop-queue-resume.smoke.mjs";
 import { testRetryAndReview } from "./desktop-retry-review.smoke.mjs";
 import { testSearchCache } from "./desktop-search-cache.smoke.mjs";
 import { testInterruptAll } from "./desktop-interrupt-all.smoke.mjs";
@@ -299,7 +300,14 @@ try {
           });
           return queue;
         }
-        if (command === "resume_download_task") task.status = "running";
+        if (command === "queue_download_task") {
+          if (state.holdQueueResume)
+            await new Promise((resolve) => {
+              state.finishQueueResume = resolve;
+            });
+          task.status = "queued";
+          task.queueOrder = Math.max(0, ...state.tasks.map((item) => item.queueOrder ?? 0)) + 1;
+        } else if (command === "resume_download_task") task.status = "running";
         else if (command === "cancel_download_task") task.status = "interrupted";
         else if (command === "delete_download_task") state.tasks = state.tasks.filter((item) => item.id !== args.id);
         else throw new Error(`Unexpected command: ${command}`);
@@ -307,6 +315,14 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  if (process.env.DESKTOP_SMOKE_ONLY === "queue-resume") {
+    await testQueueResume({ page, screenshots });
+    await testTrayPopup({ browser, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`Queued resume UI checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.DESKTOP_SMOKE_ONLY === "interrupt-all") {
     await testInterruptAll({ page, screenshots });
     await testTrayPopup({ browser, screenshots });
@@ -1241,6 +1257,7 @@ try {
   await testTransferInspector({ page, screenshots });
   await testRetryAndReview({ page, screenshots });
   await testInterruptAll({ page, screenshots });
+  await testQueueResume({ page, screenshots });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {
