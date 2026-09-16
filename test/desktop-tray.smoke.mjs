@@ -74,6 +74,13 @@ export async function testTrayPopup({ browser, screenshots }) {
             },
           }));
         }
+        if (command === "cancel_all_downloads") {
+          const interrupted = window.trayTest.summary.transfers.filter((task) =>
+            ["running", "queued"].includes(task.status)
+          );
+          for (const task of interrupted) task.status = "interrupted";
+          return { interrupted, failures: [] };
+        }
         if (["open_output_folder", "cancel_download_task", "resume_download_task"].includes(command)) {
           if (window.trayTest.failAction) throw new Error("Restart Visuales before resuming downloads.");
           if (window.trayTest.holdAction)
@@ -219,6 +226,26 @@ export async function testTrayPopup({ browser, screenshots }) {
     });
     await choose("Completed");
     await page.getByText("Completed album", { exact: true }).waitFor();
+    const stopAll = page.getByRole("button", { name: "Interrupt all downloads", exact: true });
+    await stopAll.click();
+    const stopDialog = page.getByRole("dialog", { name: "Interrupt all downloads?" });
+    await page.screenshot({ path: `${screenshots}/tray-interrupt-all.png` });
+    await page.keyboard.press("Escape");
+    await stopDialog.waitFor({ state: "hidden" });
+    assert.equal(
+      await page.evaluate(() => window.trayTest.calls.some((call) => call.command === "dismiss_tray")),
+      false
+    );
+    await stopAll.click();
+    await stopDialog.getByRole("button", { name: "Interrupt all", exact: true }).click();
+    await stopDialog.waitFor({ state: "hidden" });
+    await page.waitForFunction(
+      () => !window.trayTest.summary.transfers.some((task) => ["running", "queued"].includes(task.status))
+    );
+    await page.waitForFunction(
+      () => document.querySelector('[aria-label="Interrupt all downloads"]').getAttribute("aria-disabled") === "true"
+    );
+    assert.equal(await page.getByRole("article", { name: "Completed album", exact: true }).isVisible(), true);
     const completedRow = page.getByRole("article", { name: "Completed album", exact: true });
     const nameBounds = await completedRow.locator(".tray-transfer-name").boundingBox();
     const statusBounds = await completedRow.locator(".tray-task-status").boundingBox();
@@ -230,12 +257,12 @@ export async function testTrayPopup({ browser, screenshots }) {
     assert.ok(nameBounds.x + nameBounds.width <= statusBounds.x, "status does not overlap the title");
     await page.screenshot({ path: `${screenshots}/tray-completed-compact.png` });
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
-    assert.equal(await page.getByRole("button", { name: /Interrupt|Resume/ }).count(), 0);
+    assert.equal(await completedRow.getByRole("button", { name: /Interrupt|Resume/ }).count(), 0);
     await page.getByRole("button", { name: "Open output folder for Completed album" }).waitFor();
     await choose("Failed");
     await page.getByRole("button", { name: "Resume Failed album" }).waitFor();
     await choose("Running");
-    await page.waitForFunction(() => document.querySelectorAll(".tray-transfer").length === 2);
+    await page.getByText("No matching transfers").waitFor();
     await choose("Active");
     assert.equal(await filter.locator(".tray-filter-indicator").count(), 1);
     await page.getByRole("button", { name: "Open Downloads" }).click();

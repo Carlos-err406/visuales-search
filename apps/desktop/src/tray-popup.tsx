@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { IconButton } from "./icon-button";
+import { InterruptAllButton } from "./interrupt-all-button";
 import { useAppearance } from "./use-appearance";
 import { isDesktop } from "./use-transfers";
 import { formatBytes, isActive, type Task } from "./task-view";
@@ -22,6 +23,8 @@ export function TrayPopup() {
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [filter, setFilter] = useState<TrayFilter>("all");
   const [filterOpen, setFilterOpen] = useState(false);
+  const [interruptOpen, setInterruptOpen] = useState(false);
+  const [interruptingAll, setInterruptingAll] = useState(false);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [actionError, setActionError] = useState("");
@@ -78,13 +81,13 @@ export function TrayPopup() {
   useEffect(() => {
     const dismiss = (event: KeyboardEvent) => {
       // Escape closes the status menu first, not the whole native popup.
-      if (event.key === "Escape" && !event.defaultPrevented && !filterOpen && isDesktop()) {
+      if (event.key === "Escape" && !event.defaultPrevented && !filterOpen && !interruptOpen && isDesktop()) {
         void invoke("dismiss_tray").catch(() => {});
       }
     };
     window.addEventListener("keydown", dismiss);
     return () => window.removeEventListener("keydown", dismiss);
-  }, [filterOpen]);
+  }, [filterOpen, interruptOpen]);
 
   async function act(command: "open_downloads" | "quit_from_tray") {
     setActionError("");
@@ -96,7 +99,7 @@ export function TrayPopup() {
   }
 
   async function taskAction(command: TaskAction, task: Task) {
-    if (busy.current.has(task.id)) return;
+    if (interruptingAll || busy.current.has(task.id)) return;
     busy.current.add(task.id);
     setPending(new Set(busy.current));
     setTaskErrors((current) => ({ ...current, [task.id]: "" }));
@@ -124,6 +127,16 @@ export function TrayPopup() {
           Visuales
         </h1>
         <div className="tray-header-actions">
+          <InterruptAllButton
+            tasks={tasks ?? []}
+            disabled={pending.size > 0}
+            onPendingChange={setInterruptingAll}
+            onOpenChange={setInterruptOpen}
+            onChanged={() => {
+              forceRefresh.current = true;
+              setAttempt((value) => value + 1);
+            }}
+          />
           <Select
             items={trayFilters}
             value={filter}
@@ -196,7 +209,7 @@ export function TrayPopup() {
         ) : (
           visible.map((record) => {
             const task = summarizeTransfer(record);
-            const updating = pending.has(task.id);
+            const updating = interruptingAll || pending.has(task.id);
             return (
               <article className="tray-transfer" key={task.id} aria-label={task.name}>
                 <div className="tray-transfer-heading">

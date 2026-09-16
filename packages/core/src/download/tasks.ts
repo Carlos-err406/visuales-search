@@ -183,7 +183,8 @@ async function saveTaskStore(store: DownloadTaskStore): Promise<void> {
 
 function normalizeTaskStatus(task: DownloadTaskRecord, processes: () => ProcessRow[]): DownloadTaskRecord {
   const isActive = task.status === "running" || task.status === "queued";
-  const recoveringInterrupted = task.status === "interrupted" && hasProgressSinceInterrupted(task);
+  const recoveringInterrupted =
+    task.status === "interrupted" && task.interruptedCause !== "canceled" && hasProgressSinceInterrupted(task);
   if (!isActive && !recoveringInterrupted) return task;
 
   const livePid = getLiveTaskPid(task, processes);
@@ -665,6 +666,52 @@ export async function cancelDownloadTask(idOrUrl: string): Promise<DownloadTaskR
   return { ...task, status: "interrupted", pid: undefined, interruptedAt, interruptedCause: "canceled" };
 }
 
+export interface CancelAllDownloadsResult {
+  interrupted: DownloadTaskRecord[];
+  failures: { id: string; message: string }[];
+}
+
+/** Stop one shared snapshot while holding the queue-claim lock, including hidden/CLI tasks. */
+export async function cancelAllDownloadTasks(): Promise<CancelAllDownloadsResult> {
+  return withTaskLock(async () => {
+    const tasks = await listDownloadTasksUnlocked();
+    const result: CancelAllDownloadsResult = { interrupted: [], failures: [] };
+    let rows: ProcessRow[] | undefined;
+    for (const task of tasks) {
+      if (task.status !== "running" && task.status !== "queued") continue;
+      const pids = isProcessAlive(task.pid) ? [task.pid!] : getLiveTaskPids(task, (rows ??= getProcessRows()));
+      const errors: string[] = [];
+      for (const pid of pids) {
+        try {
+          if (pid === process.pid) throw new Error("Cannot interrupt the process handling this request");
+          process.kill(pid, "SIGTERM");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH")
+            errors.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+      if (errors.length) result.failures.push({ id: task.id, message: errors.join("; ") });
+      // Even if a queued worker cannot be signaled, revoke its slot so it cannot start.
+      if (errors.length && task.status === "running") continue;
+      Object.assign(task, {
+        status: "interrupted",
+        pid: undefined,
+        interruptedAt: Date.now(),
+        interruptedCause: "canceled",
+        updatedAt: Date.now(),
+        queuedAt: undefined,
+        queueOrder: undefined,
+        lastProgress: task.lastProgress ? { ...task.lastProgress, speed: "0 B/s" } : undefined,
+        overallProgress: task.overallProgress ? { ...task.overallProgress, speedBytes: 0, activeFiles: [] } : undefined,
+      });
+      lastProgressWrite.delete(task.id);
+      result.interrupted.push(task);
+    }
+    if (result.interrupted.length) await saveTaskStore({ version: 1, tasks });
+    return result;
+  });
+}
+
 export async function updateDownloadTaskProgress(id: string, progress: DownloadProgress, force = false): Promise<void> {
   const now = Date.now();
   const lastWrite = lastProgressWrite.get(id) ?? 0;
@@ -713,6 +760,10 @@ async function updateTaskUnlocked(id: string, updates: Partial<DownloadTaskRecor
   const store = await loadTaskStore();
   const task = store.tasks.find((candidate) => candidate.id === id);
   if (!task) return;
+
+  // In-flight worker callbacks must not undo an explicit cancellation. A new run
+  // clears this state through registerTask/claimDownloadFileRetry, under the same lock.
+  if (task.status === "interrupted" && task.interruptedCause === "canceled") return;
 
   Object.assign(task, updates, { updatedAt: Date.now() });
   await saveTaskStore(store);

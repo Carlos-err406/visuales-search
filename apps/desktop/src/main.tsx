@@ -52,6 +52,7 @@ import { isDesktop, useTransfers, type TransferCommand } from "./use-transfers";
 import { useQueueReorderAnimation } from "./use-queue-reorder-animation";
 import { TransferInspector } from "./transfer-inspector";
 import { DownloadReview } from "./download-review";
+import { InterruptAllButton } from "./interrupt-all-button";
 import { hasOpenOverlay } from "./overlay-state";
 import "./library-windows.css";
 const LibraryWindow = lazy(() => import("./library-window").then((module) => ({ default: module.LibraryWindow })));
@@ -310,6 +311,7 @@ function App({ root }: { root?: string }) {
   const [reviewUrls, setReviewUrls] = useState<string[] | null>(null);
   const [message, setMessage] = useState("");
   const [taskErrors, setTaskErrors] = useState<Record<string, string>>({});
+  const [interruptingAll, setInterruptingAll] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [taskQuery, setTaskQuery] = useState("");
@@ -606,6 +608,7 @@ function App({ root }: { root?: string }) {
   }
 
   async function taskAction(command: TransferCommand, id: string, position?: QueueMove, paths?: string[]) {
+    if (interruptingAll) return;
     setTaskErrors((current) => ({ ...current, [id]: "" }));
     try {
       await act(command, id, position, paths);
@@ -639,7 +642,7 @@ function App({ root }: { root?: string }) {
       queuePosition={queuePositions.get(task.id) ?? 0}
       queueTotal={queuedCount}
       pending={pending.has(task.id)}
-      actionsBlocked={updates.blocksTransfers}
+      actionsBlocked={updates.blocksTransfers || interruptingAll}
       error={taskErrors[task.id]}
       onAction={(command, id, position) => void taskAction(command, id, position)}
       onOpen={() => void openOutputFolder(task.output, task.id)}
@@ -1034,16 +1037,24 @@ function App({ root }: { root?: string }) {
               aria-label="Filter downloads"
             />
           </InputGroup>
-          <IconButton
-            label="Refresh downloads"
-            className="downloads-refresh"
-            description="Fetch the latest status of desktop and CLI transfers."
-            disabledReason="Refreshing transfer status. Please wait."
-            disabled={refreshing || updates.blocksTransfers}
-            onClick={() => void refreshManually()}
-          >
-            <RefreshCw size={16} className={refreshing ? "spin" : ""} />
-          </IconButton>
+          <div className="downloads-toolbar-actions">
+            <InterruptAllButton
+              tasks={tasks}
+              disabled={updates.blocksTransfers || pending.size > 0}
+              onPendingChange={setInterruptingAll}
+              onChanged={() => refresh(true)}
+            />
+            <IconButton
+              label="Refresh downloads"
+              className="downloads-refresh"
+              description="Fetch the latest status of desktop and CLI transfers."
+              disabledReason="Refreshing transfer status. Please wait."
+              disabled={refreshing || updates.blocksTransfers}
+              onClick={() => void refreshManually()}
+            >
+              <RefreshCw size={16} className={refreshing ? "spin" : ""} />
+            </IconButton>
+          </div>
         </div>
         <div className={`downloads-content ${inspectedTask && view === "downloads" ? "has-inspector" : ""}`}>
           <div className="list-scroll downloads-list" ref={downloadsList}>
@@ -1110,7 +1121,7 @@ function App({ root }: { root?: string }) {
             <TransferInspector
               task={inspectedTask}
               pending={pending.has(inspectedTask.id)}
-              blocked={updates.blocksTransfers}
+              blocked={updates.blocksTransfers || interruptingAll}
               error={taskErrors[inspectedTask.id]}
               onClose={() => {
                 rememberDownloadAnchor();

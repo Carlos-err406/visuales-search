@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import {
   cancelDownloadTask,
+  cancelAllDownloadTasks,
   clearAndPrintDownloadTasks,
   completeDownloadTask,
   deleteDownloadTask,
@@ -23,7 +24,6 @@ import {
   createDownloadTaskId,
   getDownloadTaskLogPath,
   interruptDownloadTask,
-  listDownloadTasks,
   printDownloadTasks,
   startDownloadTask,
   startDownloadTaskWithPid,
@@ -441,14 +441,17 @@ export async function cancelCommand(
   let inputs: string[];
 
   if (options.all) {
-    const cancelable = (await listDownloadTasks()).filter(
-      (task) => task.status === "running" || task.status === "queued"
-    );
-    if (cancelable.length === 0) {
+    const result = await cancelAllDownloadTasks();
+    if (!result.interrupted.length && !result.failures.length) {
       console.log(colors.yellow("No running or queued download tasks to cancel."));
-      return;
     }
-    inputs = cancelable.map((task) => task.id);
+    for (const task of result.interrupted) {
+      console.log(colors.yellow(`Canceled task ${task.id}.`));
+      console.log(colors.gray(`Resume with: visuales tasks resume ${task.id}`));
+    }
+    for (const failure of result.failures) console.error(colors.red(`${failure.id}: ${failure.message}`));
+    if (result.failures.length) process.exitCode = 1;
+    return;
   } else {
     inputs = Array.isArray(idOrUrls) ? idOrUrls : idOrUrls ? [idOrUrls] : [];
     if (inputs.length === 0) {

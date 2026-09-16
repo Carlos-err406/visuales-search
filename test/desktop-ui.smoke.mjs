@@ -16,6 +16,7 @@ import { testQueueManagement } from "./desktop-queue.smoke.mjs";
 import { testTransferInspector } from "./desktop-inspector.smoke.mjs";
 import { testRetryAndReview } from "./desktop-retry-review.smoke.mjs";
 import { testSearchCache } from "./desktop-search-cache.smoke.mjs";
+import { testInterruptAll } from "./desktop-interrupt-all.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -274,6 +275,15 @@ try {
           return null;
         }
         if (command === "open_output_folder") return null;
+        if (command === "cancel_all_downloads") {
+          if (state.holdCancelAll)
+            await new Promise((resolve) => {
+              state.finishCancelAll = resolve;
+            });
+          const interrupted = state.tasks.filter((task) => ["running", "queued"].includes(task.status));
+          for (const task of interrupted) task.status = "interrupted";
+          return { interrupted, failures: [] };
+        }
         const task = state.tasks.find((item) => item.id === args.id);
         if (command === "move_queued_download") {
           if (state.moveDelay) await new Promise((resolve) => setTimeout(resolve, state.moveDelay));
@@ -297,6 +307,14 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  if (process.env.DESKTOP_SMOKE_ONLY === "interrupt-all") {
+    await testInterruptAll({ page, screenshots });
+    await testTrayPopup({ browser, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`Interrupt-all UI checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.DESKTOP_SMOKE_ONLY === "retry-review") {
     await testRetryAndReview({ page, screenshots });
     assert.deepEqual(errors, [], "no browser exceptions");
@@ -1222,6 +1240,7 @@ try {
   }
   await testTransferInspector({ page, screenshots });
   await testRetryAndReview({ page, screenshots });
+  await testInterruptAll({ page, screenshots });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {
