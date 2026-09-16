@@ -28,6 +28,8 @@ export interface VerifyDownloadRequest {
   filePath: string;
   options: DownloadOptions;
   expectedFileSize: ExpectedFileSize;
+  /** Exact length advertised by the transfer response, if available. */
+  transferSize?: number;
   onStatus?: (status: string) => void;
   onProgress?: (progress: FetchDownloadProgress) => void;
   log?: (message: string) => void;
@@ -35,10 +37,10 @@ export interface VerifyDownloadRequest {
 
 export interface VerifyDownloadResult {
   size: number;
-  /** Remote size confirmed by the server, 0 when it stayed unknown. */
+  /** Exact remote size confirmed by the server. */
   totalSize: number;
   /** True when the server confirmed the file is whole. */
-  verified: boolean;
+  verified: true;
   repairedBytes: number;
 }
 
@@ -52,8 +54,8 @@ const UNKNOWN_PROBE: RemoteFileProbe = {
 /**
  * Asks the server whether anything follows the bytes already on disk.
  *
- * A 416 means the requested range starts at or past the end of the file (nothing left to
- * download), while a 206 carries the real total in Content-Range. This works even when the
+ * A 416 proves completion only when Content-Range's total matches the local size, while a
+ * valid 206 proves bytes are still missing and supplies the real total. This works even when the
  * mirror refuses HEAD requests or omits Content-Length, which is exactly when the plain
  * size comparison silently accepts a truncated download.
  *
@@ -84,36 +86,43 @@ export async function probeRemoteCompletion(
 }
 
 function interpretProbeResponse(response: Response, localSize: number): RemoteFileProbe {
-  if (isUnavailableResponse(response)) return UNKNOWN_PROBE;
-
   const validator = getRangeValidator(response);
   const contentLength = parseInt(response.headers.get("content-length") ?? "0", 10);
 
-  // A 416 means the requested offset is at or past the end of the resource, so the local file
-  // cannot be missing any bytes. visuales' Apache omits Content-Range here, and without a total
-  // we simply cannot tell "exactly complete" from "longer than the remote file" - but neither
-  // is the truncation this module guards against, so the file is accepted.
+  // Without a total, 416 cannot distinguish a whole file from an oversized/corrupt one.
   if (response.status === 416) {
+    if (!/^bytes \*\/\d+$/i.test(response.headers.get("content-range") ?? "")) return UNKNOWN_PROBE;
     const totalSize = parseContentRangeTotal(response);
+    if (!Number.isSafeInteger(totalSize) || totalSize <= 0) return UNKNOWN_PROBE;
 
     return {
       known: true,
-      complete: totalSize === 0 || localSize === totalSize,
+      complete: localSize === totalSize,
       totalSize,
       acceptsRanges: true,
       validator,
     };
   }
 
+  if (isUnavailableResponse(response)) return UNKNOWN_PROBE;
+
   // A 206, on the other hand, proves bytes follow the offset. Calling that complete because the
   // total is missing is exactly the silent truncation this module exists to prevent.
   if (response.status === 206) {
-    const totalSize = parseContentRangeTotal(response);
-    if (totalSize === 0) return UNKNOWN_PROBE;
+    const range = /^bytes (\d+)-(\d+)\/(\d+)$/i.exec(response.headers.get("content-range") ?? "");
+    if (!range) return UNKNOWN_PROBE;
+    const [start, end, totalSize] = range.slice(1).map(Number);
+    if (
+      ![start, end, totalSize].every(Number.isSafeInteger) ||
+      start !== localSize ||
+      end !== start ||
+      totalSize <= end
+    )
+      return UNKNOWN_PROBE;
 
     return {
       known: true,
-      complete: localSize >= totalSize,
+      complete: false,
       totalSize,
       acceptsRanges: true,
       validator,
@@ -142,7 +151,7 @@ function interpretProbeResponse(response: Response, localSize: number): RemoteFi
  * never reach the output directory reported as complete.
  */
 export async function verifyDownloadedFile(request: VerifyDownloadRequest): Promise<VerifyDownloadResult> {
-  const { url, filePath, options, expectedFileSize, onStatus, onProgress, log } = request;
+  const { url, filePath, options, expectedFileSize, transferSize, onStatus, onProgress, log } = request;
   let localSize = await getFileSize(filePath);
 
   if (localSize === null) {
@@ -151,19 +160,27 @@ export async function verifyDownloadedFile(request: VerifyDownloadRequest): Prom
 
   await assertNotUnavailablePage(filePath);
 
-  if (expectedFileSize.exact && localSize === expectedFileSize.size) {
-    return { size: localSize, totalSize: expectedFileSize.size, verified: true, repairedBytes: 0 };
+  // Conflicting HEAD/probe and transfer lengths must go through the server check below.
+  const conflictingSize =
+    transferSize !== undefined && expectedFileSize.exact && transferSize !== expectedFileSize.size;
+  const confirmedSize = transferSize ?? (expectedFileSize.exact ? expectedFileSize.size : undefined);
+  if (!conflictingSize && confirmedSize !== undefined && localSize === confirmedSize) {
+    return { size: localSize, totalSize: confirmedSize, verified: true, repairedBytes: 0 };
   }
 
-  const maxPasses = Math.max(1, options.maxRetries + 1);
+  const maxRepairs = Math.max(1, options.maxRetries + 1);
   let repairedBytes = 0;
 
-  for (let pass = 1; pass <= maxPasses; pass++) {
+  for (let pass = 0; pass <= maxRepairs; pass++) {
     onStatus?.("Verifying");
     const probe = await probeRemoteCompletion(url, localSize, options);
 
     if (!probe.known) {
-      return finishUnverified(filePath, localSize, expectedFileSize, repairedBytes);
+      throw new Error(
+        `Could not verify download completion (${formatSize(localSize)} saved` +
+          `${expectedFileSize.exact ? `; expected ${formatSize(expectedFileSize.size)}` : ""}). ` +
+          "The server did not provide a reliable file size. Partial file kept; retry later."
+      );
     }
 
     if (probe.totalSize > 0 && localSize > probe.totalSize) {
@@ -178,6 +195,8 @@ export async function verifyDownloadedFile(request: VerifyDownloadRequest): Prom
     if (probe.complete) {
       return { size: localSize, totalSize: probe.totalSize || localSize, verified: true, repairedBytes };
     }
+
+    if (pass === maxRepairs) break;
 
     // Without range support the only way to complete the file is to fetch it again from scratch.
     if (probe.acceptsRanges) {
@@ -222,14 +241,14 @@ export async function verifyDownloadedFile(request: VerifyDownloadRequest): Prom
     }
     localSize = repairedSize;
 
-    if (probe.totalSize > 0 && localSize === probe.totalSize) {
+    if ((result.exactSize === undefined || result.exactSize === probe.totalSize) && localSize === probe.totalSize) {
       return { size: localSize, totalSize: probe.totalSize, verified: true, repairedBytes };
     }
   }
 
   await fs.rm(filePath, { force: true });
   throw new Error(
-    `Download is still incomplete after ${maxPasses} repair attempt${maxPasses === 1 ? "" : "s"}; discarded the partial file`
+    `Download is still incomplete after ${maxRepairs} repair attempt${maxRepairs === 1 ? "" : "s"}; discarded the partial file`
   );
 }
 
@@ -238,24 +257,4 @@ async function assertNotUnavailablePage(filePath: string): Promise<void> {
 
   await fs.rm(filePath, { force: true });
   throw new Error("Download returned the visuales unavailable-page response; retry later");
-}
-
-/**
- * Fallback for mirrors that disclose nothing usable: keep the pre-existing size check so the
- * download is not blocked, but flag the result as unverified.
- */
-async function finishUnverified(
-  filePath: string,
-  localSize: number,
-  expectedFileSize: ExpectedFileSize,
-  repairedBytes: number
-): Promise<VerifyDownloadResult> {
-  if (expectedFileSize.exact && localSize !== expectedFileSize.size) {
-    await fs.rm(filePath, { force: true });
-    throw new Error(
-      `Download finished but file size is ${formatSize(localSize)}; expected ${formatSize(expectedFileSize.size)}`
-    );
-  }
-
-  return { size: localSize, totalSize: expectedFileSize.size, verified: false, repairedBytes };
 }

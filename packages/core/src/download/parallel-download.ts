@@ -54,6 +54,35 @@ export async function clearParallelParts(tempPath: string): Promise<void> {
   await fs.rm(partsDirectory(tempPath), { recursive: true, force: true });
 }
 
+/** Local accounting only; the downloader still validates the remote identity before reusing chunks. */
+export async function parallelBytesOnDisk(tempPath: string, url: string): Promise<number> {
+  const directory = partsDirectory(tempPath);
+  try {
+    const metadata = JSON.parse(await fs.readFile(path.join(directory, "manifest.json"), "utf8")) as Metadata;
+    if (
+      metadata.version !== 1 ||
+      metadata.url !== url ||
+      !metadata.validator ||
+      !Number.isSafeInteger(metadata.size) ||
+      metadata.size <= 0 ||
+      !Number.isSafeInteger(metadata.chunkSize) ||
+      metadata.chunkSize <= 0
+    )
+      return 0;
+    const count = Math.ceil(metadata.size / metadata.chunkSize);
+    if (count > 128) return 0;
+    let bytes = 0;
+    for (let index = 0; index < count; index++) {
+      const size = (await getFileSize(path.join(directory, String(index)))) ?? 0;
+      const expected = Math.min(metadata.chunkSize, metadata.size - index * metadata.chunkSize);
+      if (size <= expected) bytes += size;
+    }
+    return bytes;
+  } catch {
+    return 0;
+  }
+}
+
 function range(response: Response): { start: number; end: number; size: number } | null {
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/i.exec(response.headers.get("content-range") ?? "");
   if (!match) return null;

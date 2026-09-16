@@ -41,6 +41,7 @@ function parseRange(header) {
  * - `nocontentrange` answers 206/416 but strips Content-Range, so the total stays unknown
  * - `stale`         treats every If-Range as stale and replies 200 with the whole body
  * - `badoffset`     answers 206 starting 64 bytes before the requested offset
+ * - `unverifiable`  ends at 40%, never revealing a reliable size
  */
 export async function startTestServer() {
   const requests = [];
@@ -56,6 +57,14 @@ export async function startTestServer() {
       range: req.headers.range ?? null,
       ifRange: req.headers["if-range"] ?? null,
     });
+
+    if (mode === "unverifiable") {
+      res.writeHead(range ? 206 : 200, req.method === "HEAD" ? {} : { "transfer-encoding": "chunked" });
+      res.end(
+        req.method === "HEAD" ? undefined : range ? FILE_BODY.subarray(0, 1) : FILE_BODY.subarray(0, TRUNCATED_SIZE)
+      );
+      return;
+    }
 
     if (mode === "unavailable") {
       res.writeHead(200, { "content-type": "text/html; charset=UTF-8" });

@@ -8,6 +8,7 @@ import {
   getRequestTimeoutSignal,
   isUnavailableResponse,
   parseContentRangeStart,
+  parseContentRangeTotal,
 } from "./http.js";
 import { getFileSize } from "./file-state.js";
 import { downloadInParallel, withDownloadConnection } from "./parallel-download.js";
@@ -81,9 +82,16 @@ async function downloadSequentially(request: FetchDownloadRequest): Promise<Fetc
       }
     }
     const startingBytes = shouldAppend ? existingBytes : 0;
-    const contentLength = parseInt(response.headers.get("content-length") ?? "0", 10);
-    const totalBytes =
-      expectedFileSize.size || (response.status === 206 ? startingBytes + contentLength : contentLength);
+    const lengthHeader = response.headers.get("content-length");
+    const contentLength = lengthHeader === null ? NaN : Number(lengthHeader);
+    const rangeTotal = response.status === 206 ? parseContentRangeTotal(response) : 0;
+    const exactSize =
+      response.status === 200 && Number.isSafeInteger(contentLength) && contentLength >= 0
+        ? contentLength
+        : response.status === 206 && rangeTotal > 0 && parseContentRangeStart(response) === startingBytes
+          ? rangeTotal
+          : undefined;
+    const totalBytes = exactSize ?? expectedFileSize.size;
 
     if (isUnavailableResponse(response)) {
       throw new Error("Download returned the visuales unavailable-page response; retry later");
@@ -128,6 +136,7 @@ async function downloadSequentially(request: FetchDownloadRequest): Promise<Fetc
       downloadedBytes,
       totalBytes,
       resumed: shouldAppend,
+      exactSize,
     };
   } finally {
     await response.body?.cancel().catch(() => {});

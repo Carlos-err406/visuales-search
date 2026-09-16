@@ -681,6 +681,54 @@ describe("packaged Node sidecar", () => {
     await assert.rejects(fs.access(path.join(folder, "Season")));
   });
 
+  it("CLI and desktop resumes reuse recorded completions without contacting each file again", async () => {
+    const output = path.join(home, "verified resume");
+    const url = `${slowUrl}/VerifiedResume/`;
+    const cliOptions = { env: { ...process.env, HOME: home, USERPROFILE: home }, timeout: 30000 };
+    await promisify(execFile)(
+      process.execPath,
+      ["dist/cli.js", "download", url, "--output", output, "--compact"],
+      cliOptions
+    );
+    const task = (await rpc.request("tasks.list")).find((entry) => entry.url === url && entry.output === output);
+    assert.equal(task.status, "completed");
+    const interruptRecord = async () => {
+      const file = path.join(home, ".visuales-cli-cache", "download", "tasks.json");
+      const store = JSON.parse(await fs.readFile(file, "utf8"));
+      Object.assign(
+        store.tasks.find((entry) => entry.id === task.id),
+        {
+          status: "interrupted",
+          pid: undefined,
+          completedAt: undefined,
+          lastProgress: undefined,
+          interruptedAt: Date.now() + 1,
+        }
+      );
+      await fs.writeFile(file, JSON.stringify(store));
+    };
+    const requests = [];
+    const observe = (req) => {
+      if (req.url.startsWith("/VerifiedResume/") && !req.url.endsWith("/")) requests.push(req.url);
+    };
+    slowServer.on("request", observe);
+    try {
+      await interruptRecord();
+      await promisify(execFile)(process.execPath, ["dist/cli.js", "tasks", "resume", task.id], cliOptions);
+      assert.deepEqual(requests, [], "the CLI makes no requests for verified, unchanged files");
+      await interruptRecord();
+      await rpc.request("tasks.resume", { id: task.id });
+      const completed = await waitForTask(task.id, "completed");
+      assert.deepEqual(requests, [], "the packaged desktop worker shares the same fast resume path");
+      assert.equal(completed.overallProgress.completedFiles, 2);
+      assert.equal(completed.overallProgress.downloadedBytes, 2 * FILE_BODY.length);
+      const details = await rpc.request("tasks.files", { id: task.id });
+      assert.ok(details.files.every((file) => file.status === "completed"));
+    } finally {
+      slowServer.off("request", observe);
+    }
+  });
+
   it("preserves an existing CLI folder destination when resumed from desktop", async () => {
     const output = path.join(home, "legacy exact destination");
     const url = `${slowUrl}/Legacy/`;
@@ -783,6 +831,158 @@ describe("packaged Node sidecar", () => {
     assert.equal(code, 0, display);
     assert.match(display, new RegExp(task.id));
     assert.match(display, /completed/);
+  });
+
+  it("CLI and desktop report unverifiable downloads as failed and retain only partial output", async () => {
+    for (const desktop of [false, true]) {
+      const output = path.join(home, desktop ? "unverified desktop" : "unverified cli");
+      const url = server.url("unverifiable", "short.bin");
+      let task;
+      if (desktop) {
+        task = await rpc.request("download.start", { urls: [url], output });
+      } else {
+        await assert.rejects(
+          promisify(execFile)(
+            process.execPath,
+            [
+              path.resolve("dist/cli.js"),
+              "download",
+              url,
+              "--output",
+              output,
+              "--connections",
+              "1",
+              "--max-retries",
+              "0",
+            ],
+            {
+              env: { ...process.env, HOME: home, USERPROFILE: home },
+            }
+          ),
+          (error) => {
+            assert.notEqual(error.code, 0);
+            assert.match(error.stdout + error.stderr, /Could not verify download completion/);
+            return true;
+          }
+        );
+        task = (await rpc.request("tasks.list")).find((candidate) => candidate.output === output);
+      }
+      const failed = await waitForTask(task.id, "failed");
+      assert.notEqual(failed.status, "completed");
+      const details = await rpc.request("tasks.files", { id: task.id });
+      assert.equal(details.files[0].status, "failed");
+      assert.equal(details.files[0].verified, false);
+      assert.match(details.files[0].error, /Could not verify download completion/);
+      await assert.rejects(fs.stat(path.join(output, "short.bin")), { code: "ENOENT" });
+      assert.equal((await fs.stat(path.join(output, ".visuales-parts", "short.bin"))).size, server.truncatedSize);
+    }
+  });
+
+  it("CLI and desktop persist reconciled failure bytes before publishing terminal task status", async (t) => {
+    const fixture = http.createServer((req, res) => {
+      if (req.url.endsWith("/")) {
+        res.end(
+          '<pre><a href="good.bin">good.bin</a> 16-Sep-2026 09:00 10\n<a href="broken.bin">broken.bin</a> 16-Sep-2026 09:00 1000</pre>'
+        );
+        return;
+      }
+      if (req.url.endsWith("good.bin")) {
+        res.writeHead(200, { "content-length": 10 });
+        res.end(req.method === "HEAD" ? undefined : Buffer.alloc(10, 65));
+        return;
+      }
+      if (req.method === "HEAD") {
+        res.writeHead(200, { "content-length": 1000 });
+        res.end();
+        return;
+      }
+      const probe = /^bytes=(\d+)-\1$/.exec(req.headers.range ?? "");
+      if (probe) {
+        res.writeHead(206, {
+          "content-length": 1,
+          "content-range": `bytes ${probe[1]}-${probe[1]}/1000`,
+          etag: '"reset"',
+        });
+        res.end("x");
+        return;
+      }
+      // Reject the old prefix, then fail after either zero or 100 new bytes.
+      res.writeHead(200, { "content-length": 1000 });
+      res.flushHeaders();
+      if (req.url.startsWith("/single/")) res.write(Buffer.alloc(100, 66));
+      const timer = setTimeout(() => res.destroy(), 30);
+      res.once("close", () => clearTimeout(timer));
+    });
+    await new Promise((resolve) => fixture.listen(0, "127.0.0.1", resolve));
+    t.after(async () => {
+      fixture.closeAllConnections();
+      await new Promise((resolve) => fixture.close(resolve));
+    });
+    const initial = await rpc.request("settings.get");
+    try {
+      await rpc.request("settings.save", {
+        settings: { ...initial.settings, concurrent: 1, connections: 1, maxRetries: 0, exclude: [] },
+      });
+      for (const desktop of [false, true]) {
+        for (const folder of [false, true]) {
+          const base = path.join(home, `failure-checkpoint-${desktop}-${folder}`);
+          const output = desktop && folder ? path.join(base, "folder") : base;
+          const url = `http://127.0.0.1:${fixture.address().port}/${folder ? "folder/" : "single/broken.bin"}`;
+          const partial = path.join(output, ".visuales-parts", "broken.bin");
+          await fs.mkdir(path.dirname(partial), { recursive: true });
+          await fs.writeFile(partial, Buffer.alloc(400, 65));
+          let task;
+          if (desktop) task = await rpc.request("download.start", { urls: [url], output: base });
+          else {
+            await assert.rejects(
+              promisify(execFile)(
+                process.execPath,
+                [
+                  path.resolve("dist/cli.js"),
+                  "download",
+                  url,
+                  "--output",
+                  output,
+                  "--concurrent",
+                  "1",
+                  "--connections",
+                  "1",
+                  "--max-retries",
+                  "0",
+                ],
+                { env: { ...process.env, HOME: home, USERPROFILE: home }, timeout: 30000 }
+              )
+            );
+            task = (await rpc.request("tasks.list")).find((entry) => entry.output === output);
+          }
+          const failed = await waitForTask(task.id, "failed");
+          const details = (await rpc.request("tasks.files", { id: task.id })).files;
+          const expectedBytes = folder ? 0 : 100;
+          assert.equal((await fs.stat(partial)).size, expectedBytes);
+          const broken = details.find((file) => file.path === "broken.bin");
+          assert.equal(broken.downloadedBytes, expectedBytes);
+          assert.equal(broken.status, "failed");
+          assert.equal(broken.verified, false);
+          await assert.rejects(fs.stat(path.join(output, "broken.bin")), { code: "ENOENT" });
+          assert.equal(failed.lastProgress.fileName, "broken.bin");
+          assert.equal(failed.lastProgress.downloadedSize, expectedBytes);
+          assert.equal(failed.lastProgress.speed, "0 B/s");
+          if (folder) {
+            assert.equal(
+              failed.overallProgress.downloadedBytes,
+              10,
+              "retain the successful sibling, not the old prefix"
+            );
+            assert.equal(failed.overallProgress.completedFiles, 1);
+            assert.equal(failed.overallProgress.totalFiles, 2);
+            assert.equal(failed.overallProgress.speedBytes, 0);
+            assert.deepEqual(failed.overallProgress.activeFiles, []);
+          }
+        }
+      }
+    } finally {
+      await rpc.request("settings.save", { settings: initial.settings });
+    }
   });
 
   it("preserves concurrent task updates and reports failures", async () => {
