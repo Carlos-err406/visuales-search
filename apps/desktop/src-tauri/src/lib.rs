@@ -185,11 +185,20 @@ async fn delete_download_task(app: tauri::AppHandle, id: String) -> Result<Value
 
 #[tauri::command]
 async fn resume_download_task(app: tauri::AppHandle, id: String) -> Result<Value, String> {
+    resume_task(app, id, false).await
+}
+
+#[tauri::command]
+async fn queue_download_task(app: tauri::AppHandle, id: String) -> Result<Value, String> {
+    resume_task(app, id, true).await
+}
+
+async fn resume_task(app: tauri::AppHandle, id: String, queue: bool) -> Result<Value, String> {
     let updates = app.state::<updates::UpdateState>();
     let _guard = updates.transfers.read().await;
     updates.ensure_downloads_allowed()?;
     app.state::<quit::QuitState>().ensure_downloads_allowed()?;
-    sidecar::request(&app, "tasks.resume", json!({ "id": id })).await
+    sidecar::request(&app, "tasks.resume", json!({ "id": id, "queue": queue })).await
 }
 
 pub fn run() {
@@ -245,6 +254,7 @@ pub fn run() {
             cancel_all_downloads,
             delete_download_task,
             resume_download_task,
+            queue_download_task,
             updates::app_update_info,
             updates::check_app_update,
             updates::download_app_update,

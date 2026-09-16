@@ -81,7 +81,11 @@ export async function testTrayPopup({ browser, screenshots }) {
           for (const task of interrupted) task.status = "interrupted";
           return { interrupted, failures: [] };
         }
-        if (["open_output_folder", "cancel_download_task", "resume_download_task"].includes(command)) {
+        if (
+          ["open_output_folder", "cancel_download_task", "resume_download_task", "queue_download_task"].includes(
+            command
+          )
+        ) {
           if (window.trayTest.failAction) throw new Error("Restart Visuales before resuming downloads.");
           if (window.trayTest.holdAction)
             await new Promise((resolve) => {
@@ -90,6 +94,7 @@ export async function testTrayPopup({ browser, screenshots }) {
           const task = window.trayTest.summary.transfers.find((task) => task.id === args.id);
           if (command === "cancel_download_task") task.status = "interrupted";
           if (command === "resume_download_task") task.status = "running";
+          if (command === "queue_download_task") task.status = "queued";
         }
         return null;
       },
@@ -199,6 +204,17 @@ export async function testTrayPopup({ browser, screenshots }) {
     );
     await choose("Interrupted");
     await page.waitForFunction(() => document.querySelectorAll(".tray-transfer").length === 1);
+    await page.screenshot({ path: `${screenshots}/tray-queue-resume.png` });
+    await page.getByRole("button", { name: "Add Harry_Potter to queue", exact: true }).click();
+    await page.getByText("No matching transfers").waitFor();
+    assert.ok(
+      await page.evaluate(() =>
+        window.trayTest.calls.some((call) => call.command === "queue_download_task" && call.args.id === "a")
+      )
+    );
+    await choose("Queued");
+    await page.getByRole("button", { name: "Interrupt Harry_Potter", exact: true }).click();
+    await choose("Interrupted");
     await page.evaluate(() => {
       window.trayTest.failAction = true;
     });
@@ -257,10 +273,11 @@ export async function testTrayPopup({ browser, screenshots }) {
     assert.ok(nameBounds.x + nameBounds.width <= statusBounds.x, "status does not overlap the title");
     await page.screenshot({ path: `${screenshots}/tray-completed-compact.png` });
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
-    assert.equal(await completedRow.getByRole("button", { name: /Interrupt|Resume/ }).count(), 0);
+    assert.equal(await completedRow.getByRole("button", { name: /Interrupt|Resume|to queue$/ }).count(), 0);
     await page.getByRole("button", { name: "Open output folder for Completed album" }).waitFor();
     await choose("Failed");
     await page.getByRole("button", { name: "Resume Failed album" }).waitFor();
+    await page.getByRole("button", { name: "Add Failed album to queue", exact: true }).waitFor();
     await choose("Running");
     await page.getByText("No matching transfers").waitFor();
     await choose("Active");

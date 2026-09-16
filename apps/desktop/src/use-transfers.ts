@@ -6,6 +6,7 @@ import type { QueueMove } from "@visuales/core/download/queue-order";
 
 export type TransferCommand =
   | "resume_download_task"
+  | "queue_download_task"
   | "cancel_download_task"
   | "delete_download_task"
   | "retry_download_files"
