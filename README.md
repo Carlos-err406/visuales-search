@@ -210,6 +210,10 @@ Each download stores its source URL, output path, options, and last progress in 
 Interrupted tasks also store why they stopped when the CLI can determine it, such as a user cancellation, interrupt signal, or unexpected process exit.
 By default, partial multi-connection chunks are preserved so interrupted downloads can resume. Use `--resume false` to discard existing chunk state and start a download cleanly.
 
+Resume restores explicitly verified completions after checking their local size and modification time, without probing each unchanged completed file again. Overall progress includes existing complete files and partial data before network transfers begin. Missing, modified, or unverified files still use the normal verification/resume path; partial chunks are checked against the server's current validator before reuse. This behavior is shared by CLI and desktop. Records from older verification rules need one verification pass before qualifying for the local shortcut.
+
+Cached sizes are progress estimates, not proof of completion. A file must match a current exact server size before it is promoted from `.visuales-parts/`. Conflicting metadata and transfer sizes trigger the final range probe and missing-tail repair, including verification after the last repair attempt. A range rejection (HTTP 416) without a total cannot certify a file. When completion cannot be verified, the file and task fail with a retryable explanation; partial data is kept for a later retry rather than reported as completed.
+
 ## Cache
 
 Cached data lives in `~/.visuales-cli-cache`.

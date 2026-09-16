@@ -11,7 +11,7 @@ import pLimit from "p-limit";
 import { DownloadOptions, DownloadProgress, type DownloadActiveFileProgress } from "./types.js";
 import { formatSize, parseSize } from "./utils.js";
 import { createIgnoreMatcher } from "./ignore-rules.js";
-import { reportDownloadFile } from "./file-details.js";
+import { reportDownloadFile, recordedFileCompletion, FILE_VERIFICATION_VERSION } from "./file-details.js";
 import {
   DIRECTORY_LISTING_PARSER_VERSION,
   dirListingCache,
@@ -24,7 +24,7 @@ import {
 import { DOWNLOAD_USER_AGENT, type ExpectedFileSize, fetchExpectedFileSize } from "./http.js";
 import { getExistingFileState, getFileSize, isUnavailablePageFile } from "./file-state.js";
 import { downloadWithFetch, type FetchDownloadProgress } from "./fetch-download.js";
-import { clearParallelParts } from "./parallel-download.js";
+import { clearParallelParts, parallelBytesOnDisk } from "./parallel-download.js";
 import { probeRemoteCompletion, verifyDownloadedFile, type VerifyDownloadResult } from "./verify.js";
 import { reconcileExistingFile } from "./reconcile.js";
 import {
@@ -55,6 +55,7 @@ interface DownloadPlanSummary {
   totalBytes: number;
   hasSizeInfo: boolean;
   isEstimate: boolean;
+  localFiles: Map<string, { completed: boolean; bytes: number; expectedSize: number }>;
 }
 
 export interface DownloadTarget {
@@ -68,6 +69,8 @@ interface FileCountProgress {
   completedFiles: number;
   totalBytes: number;
   completedBytes: number;
+  localFiles: DownloadPlanSummary["localFiles"];
+  pendingBytes: Map<string, number>;
   activeBytes: Map<string, number>;
   activeSpeeds: Map<string, number>;
   activeFiles: Map<string, DownloadActiveFileProgress>;
@@ -161,26 +164,6 @@ async function cleanFileDownloadParts(filePath: string): Promise<void> {
   }
 }
 
-/**
- * A parts file left behind by an interrupted run is resumed without ever contacting the server
- * first, so nothing would stop an append onto bytes of an older revision. Fetching the validator
- * up front lets If-Range turn that into a clean full download instead of a corrupted file.
- */
-async function getPartialResumeValidator(
-  url: string,
-  tempPath: string,
-  options: DownloadOptions
-): Promise<string | undefined> {
-  if (!options.resume) return undefined;
-
-  const partialSize = (await getFileSize(tempPath)) ?? 0;
-  if (partialSize <= 0) return undefined;
-
-  const probe = await probeRemoteCompletion(url, partialSize, options);
-
-  return probe.known ? probe.validator : undefined;
-}
-
 function logFileNotice(filename: string, message: string): void {
   progressBars.log(`${colors.gray("·")} ${colors.bold.white(filename)} ${colors.yellow(`(${message})`)}\n`);
 }
@@ -258,7 +241,10 @@ function isTransientDownloadError(error: Error): boolean {
 }
 
 function updateOverallDownloadProgress(progress: FileCountProgress): void {
-  const activeBytes = [...progress.activeBytes.values()].reduce((sum, bytes) => sum + bytes, 0);
+  const activeBytes = [...progress.pendingBytes.values(), ...progress.activeBytes.values()].reduce(
+    (sum, bytes) => sum + bytes,
+    0
+  );
   const activeSpeed = [...progress.activeSpeeds.values()].reduce((sum, bytesPerSecond) => sum + bytesPerSecond, 0);
   const activeTotalBytes = [...progress.activeFiles.values()].reduce(
     (sum, file) => sum + (file.totalSize > 0 ? file.totalSize : file.downloadedSize),
@@ -277,7 +263,10 @@ function updateOverallDownloadProgress(progress: FileCountProgress): void {
 }
 
 function getOverallDownloadProgress(progress: FileCountProgress): DownloadProgress["overall"] {
-  const activeBytes = [...progress.activeBytes.values()].reduce((sum, bytes) => sum + bytes, 0);
+  const activeBytes = [...progress.pendingBytes.values(), ...progress.activeBytes.values()].reduce(
+    (sum, bytes) => sum + bytes,
+    0
+  );
   const activeSpeed = [...progress.activeSpeeds.values()].reduce((sum, bytesPerSecond) => sum + bytesPerSecond, 0);
   const activeTotalBytes = [...progress.activeFiles.values()].reduce(
     (sum, file) => sum + (file.totalSize > 0 ? file.totalSize : file.downloadedSize),
@@ -295,18 +284,23 @@ function getOverallDownloadProgress(progress: FileCountProgress): DownloadProgre
   };
 }
 
-function createFileCountProgressState(totalFiles: number, totalBytes: number, concurrent: number): FileCountProgress {
+function createFileCountProgressState(summary: DownloadPlanSummary, concurrent: number): FileCountProgress {
+  const completed = [...summary.localFiles.values()].filter((file) => file.completed);
   return {
-    totalFiles,
-    completedFiles: 0,
-    totalBytes,
-    completedBytes: 0,
+    totalFiles: summary.fileCount,
+    completedFiles: completed.length,
+    totalBytes: summary.totalBytes,
+    completedBytes: completed.reduce((sum, file) => sum + file.bytes, 0),
+    localFiles: summary.localFiles,
+    pendingBytes: new Map(
+      [...summary.localFiles].filter(([, file]) => !file.completed).map(([url, file]) => [url, file.bytes])
+    ),
     activeBytes: new Map<string, number>(),
     activeSpeeds: new Map<string, number>(),
     activeFiles: new Map(),
     freeSlots: Array.from({ length: concurrent }, (_, index) => index + 1),
     nextSlot: concurrent + 1,
-    bar: createFileCountBar(totalFiles),
+    bar: createFileCountBar(summary.fileCount),
     slotBars: [] as ReturnType<typeof createDownloadBar>[],
   };
 }
@@ -347,12 +341,34 @@ export async function downloadFile(
   downloadedUrls?.add(url);
 
   const filename = getDecodedUrlBasename(url);
-  reportDownloadFile(url, options.output, filename, { status: "downloading", error: undefined });
+  const completed = options.resume ? await recordedFileCompletion(url, options.output, filename) : null;
+  if (completed) {
+    logDownloadSkipped(filename, "already verified locally");
+    onProgress?.({
+      url,
+      fileName: filename,
+      progress: 100,
+      downloadedSize: completed.downloadedBytes,
+      totalSize: completed.downloadedBytes,
+      speed: "0 B/s",
+      speedBytes: 0,
+    });
+    return;
+  }
+  reportDownloadFile(url, options.output, filename, {
+    status: "downloading",
+    verified: false,
+    verificationVersion: undefined,
+    localMtimeMs: undefined,
+    error: undefined,
+  });
+  let lastTotalSize = expectedSize ?? 0;
   try {
     await downloadFileContents(
       url,
       options,
       (progress) => {
+        lastTotalSize = progress.totalSize;
         reportDownloadFile(url, options.output, filename, {
           downloadedBytes: progress.downloadedSize,
           totalBytes: progress.totalSize > 0 ? progress.totalSize : null,
@@ -367,11 +383,14 @@ export async function downloadFile(
       slotBar
     );
     const size = await getFileSize(path.join(options.output, filename));
+    const stat = await fs.stat(path.join(options.output, filename));
     reportDownloadFile(url, options.output, filename, {
       status: "completed",
       downloadedBytes: size ?? 0,
       totalBytes: size,
       estimated: false,
+      localMtimeMs: stat.mtimeMs,
+      verificationVersion: FILE_VERIFICATION_VERSION,
       speedBytes: 0,
       connections: undefined,
     });
@@ -385,11 +404,23 @@ export async function downloadFile(
       speedBytes: 0,
     });
   } catch (error) {
+    const bytes = await localDownloadedBytes(url, options.output);
     reportDownloadFile(url, options.output, filename, {
       status: "failed",
+      downloadedBytes: bytes,
       speedBytes: 0,
       connections: undefined,
       error: error instanceof Error ? error.message : String(error),
+    });
+    onProgress?.({
+      checkpoint: true,
+      url,
+      fileName: filename,
+      progress: lastTotalSize > 0 ? Math.min(100, (bytes / lastTotalSize) * 100) : 0,
+      downloadedSize: bytes,
+      totalSize: lastTotalSize,
+      speed: "0 B/s",
+      speedBytes: 0,
     });
     throw error;
   }
@@ -409,7 +440,8 @@ async function downloadFileContents(
   let expectedFileSize = await fetchExpectedFileSize(url, options);
   const cachedFileSize = getCachedFileSizeInfo(url);
   if (!expectedFileSize.size && cachedFileSize.size) {
-    expectedFileSize = cachedFileSize;
+    // Cached lengths describe a previous representation, not current completion evidence.
+    expectedFileSize = { size: cachedFileSize.size, exact: false };
   }
   if (!expectedFileSize.size && expectedSize) {
     expectedFileSize = { size: expectedSize, exact: false };
@@ -434,6 +466,7 @@ async function downloadFileContents(
   const existingFile = await getExistingFileState(finalPath);
   if (existingFile !== null) {
     if (!existingFile.isUnavailablePage && isExistingFileComplete(existingFile.size, expectedFileSize)) {
+      reportDownloadFile(url, options.output, filename, { verified: true });
       await cleanFileDownloadParts(tempPath);
       logDownloadSkipped(filename, "already exists");
       return;
@@ -442,6 +475,7 @@ async function downloadFileContents(
     const decision = await reconcileExistingFile({ url, finalPath, tempPath, existing: existingFile, options });
 
     if (decision.action === "skip") {
+      reportDownloadFile(url, options.output, filename, { verified: true });
       await cleanFileDownloadParts(tempPath);
       if (decision.totalSize > 0) {
         updateCachedFileSize(url, decision.totalSize);
@@ -467,7 +501,28 @@ async function downloadFileContents(
       );
     }
   } else {
-    resumeValidator = await getPartialResumeValidator(url, tempPath, options);
+    const partialSize = await getFileSize(tempPath);
+    if (options.resume && partialSize !== null) {
+      let complete = isExistingFileComplete(partialSize, expectedFileSize);
+      if (!complete && partialSize > 0) {
+        const probe = await probeRemoteCompletion(url, partialSize, options);
+        if (probe.known) {
+          expectedFileSize = { size: probe.totalSize, exact: true };
+          resumeValidator = probe.validator;
+          complete = probe.complete;
+          if (partialSize > probe.totalSize) {
+            await fs.rm(tempPath, { force: true });
+            await cleanFileDownloadParts(tempPath);
+          }
+        }
+      }
+      if (complete) {
+        await verifyDownloadedFile({ url, filePath: tempPath, options, expectedFileSize });
+        await promoteDownloadedFile(tempPath, finalPath);
+        reportDownloadFile(url, options.output, filename, { verified: true });
+        return;
+      }
+    }
   }
 
   const ownsBar = !slotBar;
@@ -558,13 +613,12 @@ async function downloadFileContents(
             validator: resumeValidator,
             onProgress: (progress) => renderProgress(progress),
           });
-          if (downloaded.exactSize !== undefined) expectedFileSize = { size: downloaded.exactSize, exact: true };
-
           const verification = await verifyDownloadedFile({
             url,
             filePath: tempPath,
             options,
             expectedFileSize,
+            transferSize: downloaded.exactSize,
             onStatus: updateStatus,
             onProgress: (progress) => renderProgress(progress, "Repairing"),
             log: (message) => logFileNotice(filename, message),
@@ -938,6 +992,52 @@ export async function getDirectoryListing(
   return result;
 }
 
+async function localDownloadedBytes(url: string, output: string): Promise<number> {
+  const filename = getDecodedUrlBasename(url);
+  const final = await getExistingFileState(path.join(output, filename));
+  const temp = path.join(output, PARTS_DIRECTORY_NAME, filename);
+  const partial = await getExistingFileState(temp);
+  return Math.max(
+    final && !final.isUnavailablePage ? final.size : 0,
+    partial && !partial.isUnavailablePage ? partial.size : 0,
+    await parallelBytesOnDisk(temp, url)
+  );
+}
+
+async function localFileProgress(url: string, options: DownloadOptions, size: number, exact: boolean) {
+  const filename = getDecodedUrlBasename(url);
+  const completed = options.resume ? await recordedFileCompletion(url, options.output, filename) : null;
+  if (completed) return { completed: true, bytes: completed.downloadedBytes, expectedSize: completed.downloadedBytes };
+  let bytes = 0;
+  if (options.resume) {
+    bytes = await localDownloadedBytes(url, options.output);
+    if (exact && size > 0 && bytes > size) bytes = 0;
+  }
+  reportDownloadFile(url, options.output, filename, {
+    status: "waiting",
+    downloadedBytes: bytes,
+    totalBytes: size > 0 ? size : null,
+    estimated: !exact,
+    speedBytes: 0,
+    connections: undefined,
+  });
+  return { completed: false, bytes, expectedSize: Math.max(size, bytes) };
+}
+
+function publishInitialProgress(progress: FileCountProgress, onProgress?: (progress: DownloadProgress) => void) {
+  updateOverallDownloadProgress(progress);
+  onProgress?.({
+    checkpoint: true,
+    fileName: "Preparing download",
+    progress: 0,
+    downloadedSize: 0,
+    totalSize: 0,
+    speed: "0 B/s",
+    speedBytes: 0,
+    overall: getOverallDownloadProgress(progress),
+  });
+}
+
 async function summarizeDirectoryDownload(
   url: string,
   options: DownloadOptions,
@@ -951,6 +1051,7 @@ async function summarizeDirectoryDownload(
     totalBytes: 0,
     hasSizeInfo: false,
     isEstimate: false,
+    localFiles: new Map(),
   };
 
   for (const file of files) {
@@ -958,16 +1059,14 @@ async function summarizeDirectoryDownload(
     const relativeFilePath = path.posix.join(relativePath, filename);
     if (isExcluded(relativeFilePath)) continue;
 
-    reportDownloadFile(file.url, options.output, filename, {
-      totalBytes: file.size > 0 ? file.size : null,
-      estimated: !file.exact,
-    });
+    const local = await localFileProgress(file.url, options, file.size, file.exact === true);
+    summary.localFiles.set(file.url, local);
 
     summary.fileCount++;
-    if (file.size > 0) {
+    if (local.expectedSize > 0) {
       summary.hasSizeInfo = true;
-      summary.totalBytes += file.size;
-      if (!file.exact) summary.isEstimate = true;
+      summary.totalBytes += local.expectedSize;
+      if (!local.completed && !file.exact) summary.isEstimate = true;
     }
   }
 
@@ -990,6 +1089,7 @@ async function summarizeDirectoryDownload(
     summary.totalBytes += subSummary.totalBytes;
     summary.hasSizeInfo ||= subSummary.hasSizeInfo;
     summary.isEstimate ||= subSummary.isEstimate;
+    for (const [url, local] of subSummary.localFiles) summary.localFiles.set(url, local);
   }
 
   return summary;
@@ -1000,23 +1100,27 @@ function addSummary(target: DownloadPlanSummary, source: DownloadPlanSummary): v
   target.totalBytes += source.totalBytes;
   target.hasSizeInfo ||= source.hasSizeInfo;
   target.isEstimate ||= source.isEstimate;
+  for (const [url, local] of source.localFiles) target.localFiles.set(url, local);
 }
 
 async function summarizeFileDownload(url: string, options: DownloadOptions): Promise<DownloadPlanSummary> {
-  const expectedFileSize = await fetchExpectedFileSize(url, options);
+  const completed = options.resume
+    ? await recordedFileCompletion(url, options.output, getDecodedUrlBasename(url))
+    : null;
+  const expectedFileSize = completed
+    ? { size: completed.downloadedBytes, exact: true }
+    : await fetchExpectedFileSize(url, options);
   const cachedFileSize = getCachedFileSizeInfo(url);
   const size = expectedFileSize.size || cachedFileSize.size;
   const exact = expectedFileSize.size ? expectedFileSize.exact : cachedFileSize.exact;
-  reportDownloadFile(url, options.output, getDecodedUrlBasename(url), {
-    totalBytes: size > 0 ? size : null,
-    estimated: !exact,
-  });
+  const local = await localFileProgress(url, options, size, exact);
 
   return {
     fileCount: 1,
-    totalBytes: size,
+    totalBytes: local.expectedSize,
     hasSizeInfo: size > 0,
     isEstimate: size > 0 && !exact,
+    localFiles: new Map([[url, local]]),
   };
 }
 
@@ -1028,6 +1132,14 @@ async function downloadFileWithOverallProgress(
   onProgress?: (progress: DownloadProgress) => void,
   expectedSize?: number
 ): Promise<DownloadFailure | null> {
+  const local = fileCountProgress?.localFiles.get(fileUrl);
+  if (local?.completed && fileCountProgress) {
+    if (await recordedFileCompletion(fileUrl, options.output, getDecodedUrlBasename(fileUrl))) return null;
+    // A local file may have changed between planning and taking its worker slot.
+    fileCountProgress.completedFiles--;
+    fileCountProgress.completedBytes -= local.bytes;
+  }
+  const plannedSize = local?.expectedSize ?? expectedSize ?? 0;
   let lastDownloadedBytes = 0;
   const slot = acquireDownloadSlot(fileCountProgress);
 
@@ -1038,6 +1150,7 @@ async function downloadFileWithOverallProgress(
       (progress) => {
         lastDownloadedBytes = progress.downloadedSize;
         if (fileCountProgress) {
+          fileCountProgress.pendingBytes.delete(fileUrl);
           fileCountProgress.activeBytes.set(fileUrl, progress.downloadedSize);
           fileCountProgress.activeSpeeds.set(fileUrl, progress.speedBytes ?? 0);
           fileCountProgress.activeFiles.set(fileUrl, {
@@ -1068,7 +1181,7 @@ async function downloadFileWithOverallProgress(
       fileCountProgress.completedFiles++;
       // Completion includes skipped existing files and any tail repaired by verification.
       fileCountProgress.completedBytes += lastDownloadedBytes;
-      fileCountProgress.totalBytes += lastDownloadedBytes - (expectedSize ?? 0);
+      fileCountProgress.totalBytes += lastDownloadedBytes - plannedSize;
       updateOverallDownloadProgress(fileCountProgress);
       onProgress?.({
         url: fileUrl,
@@ -1084,11 +1197,24 @@ async function downloadFileWithOverallProgress(
 
     return null;
   } catch (err: unknown) {
+    const bytes = await localDownloadedBytes(fileUrl, options.output);
+    if (fileCountProgress) fileCountProgress.pendingBytes.set(fileUrl, bytes);
     fileCountProgress?.activeBytes.delete(fileUrl);
     fileCountProgress?.activeSpeeds.delete(fileUrl);
     fileCountProgress?.activeFiles.delete(fileUrl);
     if (fileCountProgress) {
       updateOverallDownloadProgress(fileCountProgress);
+      onProgress?.({
+        checkpoint: true,
+        url: fileUrl,
+        fileName: getDecodedUrlBasename(fileUrl),
+        progress: plannedSize > 0 ? Math.min(100, (bytes / plannedSize) * 100) : 0,
+        downloadedSize: bytes,
+        totalSize: plannedSize,
+        speed: "0 B/s",
+        speedBytes: 0,
+        overall: getOverallDownloadProgress(fileCountProgress),
+      });
     }
 
     const errorMsg = err instanceof Error ? err.message : String(err);
@@ -1203,6 +1329,7 @@ async function downloadMany(
     totalBytes: 0,
     hasSizeInfo: false,
     isEstimate: false,
+    localFiles: new Map(),
   };
   const directoryTargets: {
     target: DownloadTarget;
@@ -1262,9 +1389,7 @@ async function downloadMany(
     );
 
     const fileCountProgress =
-      summary.fileCount > 0
-        ? createFileCountProgressState(summary.fileCount, summary.totalBytes, options.concurrent)
-        : undefined;
+      summary.fileCount > 0 ? createFileCountProgressState(summary, options.concurrent) : undefined;
     if (!fileCountProgress) {
       const directoryFailures = await Promise.all(
         directoryTargets.map(({ target, listing }) =>
@@ -1285,7 +1410,7 @@ async function downloadMany(
       return;
     }
 
-    updateOverallDownloadProgress(fileCountProgress);
+    publishInitialProgress(fileCountProgress, onProgress);
     progressBars.log(`${colors.bold.white("Slots")}\n`);
     fileCountProgress.slotBars = Array.from({ length: options.concurrent }, (_, index) =>
       createDownloadBar("", 100, 0, "", index + 1)
@@ -1377,11 +1502,9 @@ async function downloadSingle(
       );
 
       const fileCountProgress =
-        summary.fileCount > 0
-          ? createFileCountProgressState(summary.fileCount, summary.totalBytes, options.concurrent)
-          : undefined;
+        summary.fileCount > 0 ? createFileCountProgressState(summary, options.concurrent) : undefined;
       if (fileCountProgress) {
-        updateOverallDownloadProgress(fileCountProgress);
+        publishInitialProgress(fileCountProgress, onProgress);
         progressBars.log(`${colors.bold.white("Slots")}\n`);
         fileCountProgress.slotBars = Array.from({ length: options.concurrent }, (_, index) =>
           createDownloadBar("", 100, 0, "", index + 1)

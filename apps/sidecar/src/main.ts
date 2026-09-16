@@ -68,10 +68,15 @@ async function runWorker(config: WorkerConfig) {
       if (!task) throw new Error("Download task not found");
       await runDownloadFileRetry(task);
     } else {
-      await recordDownloadFiles(taskId, options.output, async () => {
-        if (urls.length === 1) await downloadUrl(urls[0], options, onProgress);
-        else await downloadUrls(createDownloadTargets(urls, options.output), options, onProgress);
-      });
+      await recordDownloadFiles(
+        taskId,
+        options.output,
+        async () => {
+          if (urls.length === 1) await downloadUrl(urls[0], options, onProgress);
+          else await downloadUrls(createDownloadTargets(urls, options.output), options, onProgress);
+        },
+        { resume: options.resume }
+      );
       await progressWrites;
       await completeDownloadTask(taskId);
     }

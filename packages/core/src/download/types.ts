@@ -20,6 +20,8 @@ export interface ThreadState {
 }
 
 export interface DownloadProgress {
+  /** Lifecycle snapshot that must survive telemetry throttling; not stored in task records. */
+  checkpoint?: boolean;
   url?: string;
   fileName: string;
   progress: number;

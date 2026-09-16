@@ -195,18 +195,23 @@ export async function downloadCommand(urls: string | string[], options: Download
     }
 
     let progressWrites = Promise.resolve();
-    await recordDownloadFiles(task.id, output, async () => {
-      const onProgress = (progress: Parameters<typeof updateDownloadTaskProgress>[1]) => {
-        progressWrites = progressWrites.then(() => updateDownloadTaskProgress(task.id, progress));
-        void progressWrites.catch(() => {});
-      };
-      try {
-        if (isBatch) await downloadUrls(createDownloadTargets(resolvedUrls, output), downloadOptions, onProgress);
-        else await downloadUrl(resolvedUrls[0], downloadOptions, onProgress);
-      } finally {
-        await progressWrites;
-      }
-    });
+    await recordDownloadFiles(
+      task.id,
+      output,
+      async () => {
+        const onProgress = (progress: Parameters<typeof updateDownloadTaskProgress>[1]) => {
+          progressWrites = progressWrites.then(() => updateDownloadTaskProgress(task.id, progress));
+          void progressWrites.catch(() => {});
+        };
+        try {
+          if (isBatch) await downloadUrls(createDownloadTargets(resolvedUrls, output), downloadOptions, onProgress);
+          else await downloadUrl(resolvedUrls[0], downloadOptions, onProgress);
+        } finally {
+          await progressWrites;
+        }
+      },
+      { resume: downloadOptions.resume }
+    );
     await stopProgress();
     await completeDownloadTask(task.id);
     console.log(colors.bold.green("\n[SUCCESS] All downloads finished successfully!"));

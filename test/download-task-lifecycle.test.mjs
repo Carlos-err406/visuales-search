@@ -160,6 +160,41 @@ describe("download task lifecycle", () => {
       assert.equal(stored.overallProgress.downloadedBytes, count * 100);
     }
   });
+
+  it("persists lifecycle checkpoints without disabling routine progress throttling", async (t) => {
+    const task = await tasks.startDownloadTaskWithPid("http://example/checkpoint/", options(), process.pid);
+    const now = Date.now();
+    t.mock.method(Date, "now", () => now);
+    await tasks.updateDownloadTaskProgress(task.id, progress());
+    const routine = { ...progress(), downloadedSize: 900, overall: { ...progress().overall, downloadedBytes: 900 } };
+    await tasks.updateDownloadTaskProgress(task.id, routine);
+    assert.equal((await tasks.findDownloadTask(task.id)).overallProgress.downloadedBytes, 250);
+
+    for (const bytes of [0, 375]) {
+      const checkpoint = {
+        ...progress(),
+        checkpoint: true,
+        progress: (bytes / 1000) * 100,
+        downloadedSize: bytes,
+        speed: "0 B/s",
+        overall: { ...progress().overall, downloadedBytes: bytes, speedBytes: 0, activeFiles: [] },
+      };
+      await tasks.updateDownloadTaskProgress(task.id, checkpoint);
+      const stored = await tasks.findDownloadTask(task.id);
+      assert.equal(stored.lastProgress.downloadedSize, bytes);
+      assert.equal(stored.overallProgress.downloadedBytes, bytes);
+      assert.equal(stored.overallProgress.completedFiles, 1);
+      assert.equal(stored.overallProgress.speedBytes, 0);
+      assert.deepEqual(stored.overallProgress.activeFiles, []);
+      assert.equal(stored.lastProgress.checkpoint, undefined, "checkpoint is not part of the stored schema");
+      await tasks.updateDownloadTaskProgress(task.id, routine);
+      assert.equal((await tasks.findDownloadTask(task.id)).overallProgress.downloadedBytes, bytes);
+    }
+    await tasks.failDownloadTask(task.id, new Error("Fixture failure"));
+    const failed = await tasks.findDownloadTask(task.id);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.overallProgress.downloadedBytes, 375);
+  });
   it("does not demote a running detached task when the parent writes the queued record late", async () => {
     const url = "http://example/race.mp4";
     const running = await tasks.startDownloadTaskWithPid(url, options(), process.pid);

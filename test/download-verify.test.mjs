@@ -94,13 +94,11 @@ describe("probeRemoteCompletion", () => {
     assert.equal(partial.complete, false);
   });
 
-  it("accepts a 416 with no Content-Range, the way visuales' Apache answers it", async () => {
-    // A 416 proves the offset is at or past the end, so nothing is missing even though the
-    // server disclosed no total. Treating it as unknown would re-download whole files.
+  it("refuses to certify a 416 without a total, which cannot rule out oversized files", async () => {
     const past = await probeRemoteCompletion(server.url("nocontentrange", "no-cr.bin"), FILE_SIZE * 2, options());
 
-    assert.equal(past.known, true);
-    assert.equal(past.complete, true);
+    assert.equal(past.known, false);
+    assert.equal(past.complete, false);
     assert.equal(past.totalSize, 0);
   });
 });
@@ -183,18 +181,19 @@ describe("verifyDownloadedFile", () => {
 });
 
 describe("verifyDownloadedFile fallbacks", () => {
-  it("keeps a file the server cannot describe, but marks it unverified", async () => {
+  it("fails verification without deleting a file the server cannot describe", async () => {
     const filePath = await writePartialFile("unknown.bin", 4096);
 
-    const result = await verifyDownloadedFile({
-      url: server.url("nocontentrange", "unknown.bin"),
-      filePath,
-      options: options(),
-      expectedFileSize: UNKNOWN,
-    });
-
-    assert.equal(result.verified, false);
-    assert.equal(result.size, 4096);
+    await assert.rejects(
+      verifyDownloadedFile({
+        url: server.url("nocontentrange", "unknown.bin"),
+        filePath,
+        options: options(),
+        expectedFileSize: UNKNOWN,
+      }),
+      /Could not verify download completion/
+    );
+    assert.equal(await readFileSize(filePath), 4096);
   });
 
   it("rejects a size mismatch when the server cannot be reached for a second opinion", async () => {
@@ -209,7 +208,7 @@ describe("verifyDownloadedFile fallbacks", () => {
       }),
       /expected/i
     );
-    assert.equal(await getExistingFileState(filePath), null);
+    assert.equal(await readFileSize(filePath), 4096, "keep incomplete data available for a later resume");
   });
 
   it("rejects and removes a saved unavailable-page response", async () => {
@@ -238,7 +237,7 @@ describe("verifyDownloadedFile fallbacks", () => {
         options: options({ maxRetries: 0 }),
         expectedFileSize: UNKNOWN,
       }),
-      /instead of 8192|refusing to append/i
+      /Could not verify download completion|instead of 8192|refusing to append/i
     );
   });
 });
