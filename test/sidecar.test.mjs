@@ -132,16 +132,19 @@ before(async () => {
       return;
     }
     let offset = start;
-    const timer = setInterval(() => {
-      const next = Math.min(offset + 32768, end + 1);
-      res.write(FILE_BODY.subarray(offset, next));
-      offset = next;
-      if (offset > end) {
-        clearInterval(timer);
-        sleeps.delete(timer);
-        res.end();
-      }
-    }, 80);
+    const timer = setInterval(
+      () => {
+        const next = Math.min(offset + 32768, end + 1);
+        res.write(FILE_BODY.subarray(offset, next));
+        offset = next;
+        if (offset > end) {
+          clearInterval(timer);
+          sleeps.delete(timer);
+          res.end();
+        }
+      },
+      req.url.includes("cancel-all-") ? 250 : 80
+    );
     sleeps.add(timer);
     res.on("close", () => {
       clearInterval(timer);
@@ -152,6 +155,65 @@ before(async () => {
   slowUrl = `http://127.0.0.1:${slowServer.address().port}`;
   rpc = await startRpc();
 });
+
+for (const initiator of ["desktop", "CLI"]) {
+  it(`${initiator} interrupts desktop and CLI downloads plus their queue, preserving partial files`, async () => {
+    const cliOutput = path.join(home, `cancel-all-${initiator}-cli`);
+    const cliUrl = `${slowUrl}/cancel-all-${initiator}-cli.bin`;
+    const cli = spawn(process.execPath, [path.resolve("dist/cli.js"), "download", cliUrl, "--output", cliOutput], {
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      stdio: "ignore",
+    });
+    const closed = once(cli, "close");
+    try {
+      const cliPartial = await waitForPartial(cliOutput);
+      const running = await rpc.request("download.start", {
+        urls: [`${slowUrl}/cancel-all-${initiator}-desktop.bin`],
+        output: path.join(home, `cancel-all-${initiator}-desktop`),
+      });
+      const desktopPartial = await waitForPartial(running.output);
+      const queued = await rpc.request("download.start", {
+        urls: [`${slowUrl}/cancel-all-${initiator}-queued.bin`],
+        output: path.join(home, `cancel-all-${initiator}-queued`),
+        queue: true,
+      });
+      if (initiator === "desktop") {
+        const result = await rpc.request("tasks.cancelAll");
+        assert.deepEqual(result.failures, []);
+        assert.ok(result.interrupted.some((task) => task.id === running.id));
+        assert.ok(result.interrupted.some((task) => task.id === queued.id));
+        assert.ok(result.interrupted.some((task) => task.url === cliUrl));
+      } else {
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [path.resolve("dist/cli.js"), "tasks", "cancel", "--all"],
+          {
+            env: { ...process.env, HOME: home, USERPROFILE: home },
+            timeout: 20000,
+          }
+        );
+        assert.match(stdout, new RegExp(running.id));
+        assert.match(stdout, new RegExp(queued.id));
+      }
+      await closed;
+      await waitForTask(running.id, "interrupted");
+      await waitForTask(queued.id, "interrupted");
+      const records = await rpc.request("tasks.list");
+      assert.equal(records.find((task) => task.url === cliUrl).status, "interrupted");
+      assert.ok((await fs.stat(cliPartial)).size > 0);
+      assert.ok((await fs.stat(desktopPartial)).size > 0);
+      assert.equal(
+        records.find((task) => task.id === queued.id).lastProgress,
+        undefined,
+        "queued task never downloads"
+      );
+      assert.deepEqual(await rpc.request("tasks.cancelAll"), { interrupted: [], failures: [] });
+    } finally {
+      cli.kill();
+      await closed;
+    }
+  });
+}
 
 after(async () => {
   await rpc?.close();

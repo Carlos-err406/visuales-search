@@ -174,6 +174,11 @@ async fn cancel_download_task(app: tauri::AppHandle, id: String) -> Result<Value
 }
 
 #[tauri::command]
+async fn cancel_all_downloads(app: tauri::AppHandle) -> Result<Value, String> {
+    sidecar::request(&app, "tasks.cancelAll", json!({})).await
+}
+
+#[tauri::command]
 async fn delete_download_task(app: tauri::AppHandle, id: String) -> Result<Value, String> {
     sidecar::request(&app, "tasks.delete", json!({ "id": id })).await
 }
@@ -237,6 +242,7 @@ pub fn run() {
             retry_download_files,
             move_queued_download,
             cancel_download_task,
+            cancel_all_downloads,
             delete_download_task,
             resume_download_task,
             updates::app_update_info,

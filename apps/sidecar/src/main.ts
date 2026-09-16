@@ -13,6 +13,7 @@ import {
   failDownloadTask,
   interruptDownloadTask,
   cancelDownloadTask,
+  cancelAllDownloadTasks,
   deleteDownloadTask,
   updateDownloadTaskProgress,
   waitForQueueSlot,
@@ -352,6 +353,19 @@ async function runServer() {
             ? { paths: params.paths == null ? undefined : strings(params.paths, "paths") }
             : undefined
         );
+      }
+      case "tasks.cancelAll": {
+        const result = await cancelAllDownloadTasks();
+        const stopped = new Set(result.interrupted.map((task) => task.id));
+        for (const [id, worker] of workers) {
+          if (stopped.has(id)) worker.silence();
+        }
+        for (let index = notices.length - 1; index >= 0; index--) {
+          if (stopped.has(notices[index].taskId)) notices.splice(index, 1);
+        }
+        await Promise.all([...workers].filter(([id]) => stopped.has(id)).map(([, worker]) => worker.closed));
+        changed();
+        return result;
       }
       case "tasks.cancel":
       case "tasks.delete": {
