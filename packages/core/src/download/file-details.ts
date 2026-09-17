@@ -19,6 +19,9 @@ export interface DownloadFileDetail {
   verificationVersion?: number;
   localMtimeMs?: number;
   error?: string;
+  /** File attempts in the latest run, including the initial attempt. Older records omit these fields. */
+  attempts?: number;
+  maxRetries?: number;
   speedBytes?: number;
   progressUpdatedAt?: number;
   connections?: DownloadConnectionProgress;
@@ -193,6 +196,8 @@ export async function readDownloadFileDetails(taskId: string): Promise<DownloadF
           (file.localMtimeMs === undefined || (Number.isFinite(file.localMtimeMs) && file.localMtimeMs >= 0)) &&
           (file.totalBytes === null || (Number.isFinite(file.totalBytes) && file.totalBytes >= 0)) &&
           (file.speedBytes === undefined || (Number.isFinite(file.speedBytes) && file.speedBytes >= 0)) &&
+          (file.attempts === undefined || (Number.isSafeInteger(file.attempts) && file.attempts >= 0)) &&
+          (file.maxRetries === undefined || (Number.isSafeInteger(file.maxRetries) && file.maxRetries >= 0)) &&
           (file.progressUpdatedAt === undefined ||
             (Number.isFinite(file.progressUpdatedAt) && file.progressUpdatedAt >= 0)) &&
           (file.connections === undefined ||

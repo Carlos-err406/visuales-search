@@ -32,8 +32,14 @@ export function isUnavailableResponse(response: Response): boolean {
 }
 
 export function checkRetryableStatus(response: Response): void {
-  if (response.status === 429 || response.status >= 500)
+  if (response.status === 408 || response.status === 429 || response.status >= 500)
     throw Object.assign(new Error(`Download failed: HTTP ${response.status}`), { code: "ERR_DOWNLOAD_RETRYABLE" });
+}
+
+export function unavailableDownloadError(): Error {
+  return Object.assign(new Error("Download returned the visuales unavailable-page response; retry later"), {
+    code: "ERR_DOWNLOAD_RETRYABLE",
+  });
 }
 
 /**

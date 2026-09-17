@@ -149,9 +149,17 @@ async function runServer() {
     }
   })();
 
-  async function start(urls: string[], options: DownloadOptions, queue = false, retry?: { paths?: string[] }) {
+  async function start(
+    urls: string[],
+    options: DownloadOptions,
+    queue = false,
+    retry?: { paths?: string[] },
+    failedOnly = false
+  ) {
     const taskId = createDownloadTaskId(urls, options.output);
     const existing = await findDownloadTask(taskId);
+    if (failedOnly && existing?.status !== "failed")
+      throw new Error("This transfer is no longer failed. Refresh downloads before retrying.");
     if (existing?.status === "running" || existing?.status === "queued") {
       if (retry) throw new Error("Wait for this transfer to stop before retrying its files.");
       return existing;
@@ -201,7 +209,14 @@ async function runServer() {
       });
       const task = retry
         ? await claimDownloadFileRetry(taskId, retry.paths, child.pid!)
-        : await startDownloadTaskWithPid(urls, options, child.pid!, undefined, queue ? "queued" : "running");
+        : await startDownloadTaskWithPid(
+            urls,
+            options,
+            child.pid!,
+            undefined,
+            queue ? "queued" : "running",
+            failedOnly
+          );
       taskRegistered = true;
       child.on("message", (message: WorkerMessage) => {
         if (
@@ -383,7 +398,8 @@ async function runServer() {
           params.queue === true,
           method === "tasks.retry"
             ? { paths: params.paths == null ? undefined : strings(params.paths, "paths") }
-            : undefined
+            : undefined,
+          params.failedOnly === true
         );
       }
       case "tasks.cancelAll": {

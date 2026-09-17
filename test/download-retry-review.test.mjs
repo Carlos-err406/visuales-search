@@ -111,6 +111,24 @@ test("claims are atomic and retries reject unsafe recorded destinations", async 
   }
 });
 
+test("bulk retry claims only failed tasks, once, without overwriting their saved options", async () => {
+  const task = await seed("bulk-claim", []);
+  const opts = { ...task.options, timeout: task.options.timeout === "Infinity" ? Infinity : task.options.timeout };
+  const claim = () => core.startDownloadTaskWithPid(task.url, opts, process.pid, undefined, "queued", true);
+  const results = await Promise.allSettled([claim(), claim()]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  const queued = await core.findDownloadTask(task.id);
+  assert.equal(queued.status, "queued");
+  assert.deepEqual(queued.options, task.options);
+  await core.interruptDownloadTask(task.id, "canceled");
+  await assert.rejects(claim(), /no longer failed/);
+  assert.equal((await core.findDownloadTask(task.id)).status, "interrupted");
+  await core.startDownloadTask(task.url, opts);
+  await core.completeDownloadTask(task.id);
+  assert.equal((await core.findDownloadTask(task.id)).status, "completed");
+  await assert.rejects(claim(), /no longer failed/);
+});
+
 test("retries resume partial data, keep failed attempts visible, and continue other selected files", async () => {
   const task = await seed("partial", [
     {
