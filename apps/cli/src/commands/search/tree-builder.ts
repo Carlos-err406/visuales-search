@@ -18,6 +18,7 @@ export function buildTree(results: SearchResult[], allResults: SearchResult[]): 
 
   for (const result of results) {
     const parts = result.directory.split("/").filter((part) => part && part.length > 0) as string[];
+    if (!parts.length && !result.isDirectoryLink) parts.push(new URL(result.encodedUrl).hostname);
     let currentMap: Map<string, TreeNode> = root;
 
     let currentPath = "";

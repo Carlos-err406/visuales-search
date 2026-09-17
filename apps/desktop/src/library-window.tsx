@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FilePreview } from "./file-preview";
@@ -37,7 +38,7 @@ export function LibraryWindow({ renderFolder }: { renderFolder: (resource: Libra
   if (error)
     return (
       <main className="auxiliary-window">
-        <p role="alert">{error}</p>
+        <p role="alert">{messageForDisplay(error)}</p>
       </main>
     );
   if (!resource)

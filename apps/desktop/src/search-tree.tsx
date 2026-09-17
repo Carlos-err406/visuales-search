@@ -9,6 +9,7 @@ import {
 } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { Download, File, FileImage, FileText, Folder, FolderOpen, ListPlus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -121,7 +122,26 @@ export function useSearchBrowser(results: LibraryEntry[], autoExpand = true, roo
     setOpened(new Set());
     setCollapsed(new Set());
   }
-  return { tree, entries, listings, contents, isOpen, toggle, load, showContents, reset };
+  function reconcile(previous: LibraryEntry[], next: LibraryEntry[]) {
+    const present = new Set(next.map((entry) => canonicalTreeUrl(entry.encodedUrl)));
+    const removed = new Set(
+      previous.map((entry) => canonicalTreeUrl(entry.encodedUrl)).filter((url) => !present.has(url))
+    );
+    if (!removed.size) return;
+    const removedFolders = [...removed].filter((url) => url.endsWith("/"));
+    const missing = (url: string) => removed.has(url) || removedFolders.some((folder) => url.startsWith(folder));
+    generation.current++;
+    pending.current.clear();
+    setListings({});
+    setContents((current) =>
+      Object.fromEntries(
+        Object.entries(current)
+          .filter(([url]) => !missing(url))
+          .map(([url, entries]) => [url, entries.filter((entry) => !missing(entry.encodedUrl))])
+      )
+    );
+  }
+  return { tree, entries, listings, contents, isOpen, toggle, load, showContents, reset, reconcile };
 }
 
 export function SearchTree({
@@ -159,6 +179,11 @@ export function SearchTree({
   const anchor = useRef<string | null>(null);
   const container = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<string | null>(null);
+  const previousRows = useRef<{ urls: string[]; anchor?: string; offset: number; virtual: boolean }>({
+    urls: [],
+    offset: 0,
+    virtual: false,
+  });
   const visible: { node: SearchTreeNode; depth: number; pos: number; size: number }[] = [];
   function visit(nodes: SearchTreeNode[], depth: number) {
     nodes.forEach((node, index) => {
@@ -189,6 +214,43 @@ export function SearchTree({
     ? virtualizer.getVirtualItems().map((item) => ({ ...visible[item.index], index: item.index, item }))
     : visible.map((row, index) => ({ ...row, index, item: null }));
   const focusUrl = visible.some(({ node }) => node.url === focused) ? focused : visible[0]?.node.url;
+  useLayoutEffect(() => {
+    const list = container.current?.parentElement;
+    if (!list) return;
+    const previous = previousRows.current;
+    const urls = visible.map(({ node }) => node.url);
+    if (previous.anchor && previous.urls.length) {
+      if (previous.virtual && virtual) {
+        const index = urls.indexOf(previous.anchor);
+        if (index >= 0) list.scrollTop = index * 44 + previous.offset;
+      } else if (!previous.virtual && !virtual) {
+        const row = [...(container.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(
+          (row) => row.dataset.url === previous.anchor
+        );
+        if (row) list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - previous.offset;
+      }
+    }
+    function remember() {
+      if (virtual) {
+        const index = Math.floor(list!.scrollTop / 44);
+        previousRows.current = { urls, anchor: urls[index], offset: list!.scrollTop % 44, virtual };
+      } else {
+        const top = list!.getBoundingClientRect().top;
+        const row = [...(container.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(
+          (row) => row.getBoundingClientRect().bottom > top
+        );
+        previousRows.current = {
+          urls,
+          anchor: row?.dataset.url,
+          offset: row ? row.getBoundingClientRect().top - top : 0,
+          virtual,
+        };
+      }
+    }
+    remember();
+    list.addEventListener("scroll", remember, { passive: true });
+    return () => list.removeEventListener("scroll", remember);
+  }, [browser.tree]);
   useLayoutEffect(() => {
     // Selecting near the bottom can reveal the action bar and shrink the viewport.
     const active = document.activeElement;
@@ -280,7 +342,7 @@ export function SearchTree({
     <>
       {actionError && (
         <p role="alert" className="error">
-          {actionError}
+          {messageForDisplay(actionError)}
         </p>
       )}
       <div
@@ -439,7 +501,7 @@ export function SearchTree({
                     </span>
                   ) : listing?.error ? (
                     <>
-                      <span role="alert">{listing.error}</span>
+                      <span role="alert">{messageForDisplay(listing.error)}</span>
                       <Button variant="link" disabled={disabled} onClick={() => void browser.load(node, true)}>
                         Retry
                       </Button>

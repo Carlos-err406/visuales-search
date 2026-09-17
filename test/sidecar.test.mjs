@@ -14,14 +14,20 @@ import { FILE_BODY, startTestServer } from "./helpers/test-server.mjs";
 let home, rpc, server, slowServer, slowUrl;
 const sleeps = new Set();
 
-async function startRpc() {
+async function startRpc({ indexing = false } = {}) {
   const script = path.join(home, "packaged engine", "sidecar.cjs");
   await fs.mkdir(path.dirname(script), { recursive: true });
   await fs.copyFile("apps/sidecar/dist/sidecar.cjs", script);
   // Run outside the repository so accidental runtime imports cannot find node_modules.
   const child = spawn(process.execPath, [script], {
     cwd: home,
-    env: { ...process.env, HOME: home, USERPROFILE: home, NODE_PATH: "" },
+    env: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      NODE_PATH: "",
+      VISUALES_INDEX_AUTOSTART: indexing ? "1" : "0",
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const pending = new Map();
@@ -225,6 +231,33 @@ after(async () => {
 });
 
 describe("packaged Node sidecar", () => {
+  it("exposes shared indexing controls without changing preferences or starting transfers", async () => {
+    const tasks = await rpc.request("tasks.list");
+    const settings = await rpc.request("settings.get");
+    const first = await rpc.request("index.status");
+    assert.equal(typeof first.files, "number");
+    assert.equal((await rpc.request("index.control", { action: "pause" })).phase, "paused");
+    const other = await startRpc({ indexing: true });
+    try {
+      const deadline = Date.now() + 5000;
+      while (!(await other.request("index.status")).running && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(
+        (await other.request("index.status")).running,
+        true,
+        "desktop starts one coordinator even while paused"
+      );
+      assert.equal((await other.request("index.status")).phase, "paused");
+      assert.equal((await other.request("index.control", { action: "refresh" })).phase, "paused");
+      await assert.rejects(rpc.request("index.control", { action: "bad" }), /Unknown indexing/);
+      assert.deepEqual(await rpc.request("tasks.list"), tasks);
+      assert.deepEqual(await rpc.request("settings.get"), settings);
+    } finally {
+      await other.close();
+    }
+    assert.equal((await rpc.request("index.status")).running, false, "shutdown releases the indexing lease");
+    assert.equal((await rpc.request("index.control", { action: "resume" })).phase, "idle");
+  });
   it("reviews without starting and uses the reviewed settings even if defaults change", async () => {
     const initial = await rpc.request("settings.get");
     const output = path.join(home, "reviewed-output");
@@ -329,6 +362,12 @@ describe("packaged Node sidecar", () => {
     assert.deepEqual(await rpc.request("library.resource", { url }), {
       url,
       name: new URL(url).pathname.split("/").at(-1),
+      kind: "preview",
+    });
+    const encoded = "https://visuales.uclv.cu/RpcFixtures/Espa%F1ol%20%23%20literal%2520.txt";
+    assert.deepEqual(await rpc.request("library.resource", { url: encoded }), {
+      url: encoded,
+      name: "Espa\u00f1ol # literal%20.txt",
       kind: "preview",
     });
     await assert.rejects(rpc.request("library.resource", { url: "https://evil.test/test.png" }), /Only Visuales/);

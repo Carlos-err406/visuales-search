@@ -1,14 +1,15 @@
 import type { DownloadTaskRecord } from "./tasks.js";
 import { compareTransferOrder } from "./queue-order.js";
+import { decodeUriForDisplay } from "../uri-display.js";
 
 export function transferName(task: DownloadTaskRecord): string {
-  let name = task.url;
+  let name = decodeUriForDisplay(task.url);
   try {
     const url = new URL(task.url);
     const segment = url.pathname.replace(/\/+$/, "").split("/").pop();
-    name = segment ? decodeURIComponent(segment) : url.hostname;
+    name = segment ? decodeUriForDisplay(segment) : url.hostname;
   } catch {
-    /* Keep the stored source when it cannot be decoded. */
+    /* Show the source when it is not a valid URL. */
   }
   const extra = (task.urls?.length ?? 1) - 1;
   return extra > 0 ? `${name} + ${extra} more` : name;

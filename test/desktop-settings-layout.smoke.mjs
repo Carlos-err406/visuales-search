@@ -23,6 +23,7 @@ export async function testSettingsLayout({ page, screenshots }) {
   const save = page.getByRole("button", { name: "Save changes", exact: true });
   const discard = page.getByRole("button", { name: "Discard", exact: true });
   await editor.waitFor();
+  await page.waitForFunction((value) => document.querySelector("#settings-exclude")?.value === value, rules.join("\n"));
   assert.equal(await editor.inputValue(), rules.join("\n"));
   assert.equal(await page.locator(".settings-sidebar").count(), 0);
   assert.equal(await concurrent.isVisible(), true);

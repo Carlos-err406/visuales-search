@@ -5,7 +5,8 @@ import pLimit from "p-limit";
 import { CONFIG } from "./lib/types.js";
 import { registerPreviewCache } from "./lib/cache.js";
 import { getDirectoryListing } from "./download/downloader.js";
-import { createDownloadHeaders } from "./download/http.js";
+import { libraryUrl, listingEntries, fetchInteractiveLibraryResource as fetchLibrary } from "./library-listing.js";
+import { cachedIndexedDirectory } from "./search-file-index.js";
 import { dirListingCache, loadDiscoveryCache } from "./download/discovery-cache.js";
 import { previewKind, previewLimits, type FilePreview, type LibraryEntry } from "./library-types.js";
 import { canonicalTreeUrl } from "./search-tree.js";
@@ -14,79 +15,15 @@ const listings = pLimit(1);
 const previews = pLimit(1);
 const pendingPreviews = new Map<string, Promise<FilePreview>>();
 const previewStates = new Map<string, "waiting" | "loading">();
-
-export function libraryUrl(value: string): URL {
-  const url = new URL(value);
-  if (
-    url.hostname !== "visuales.uclv.cu" ||
-    !["http:", "https:"].includes(url.protocol) ||
-    url.port ||
-    url.username ||
-    url.password
-  ) {
-    throw new Error("Only Visuales library URLs are supported");
-  }
-  url.protocol = "https:";
-  url.hash = "";
-  if (url.search) throw new Error("Library URLs cannot contain query parameters");
-  return url;
-}
-
-// Bound both bytes and duration, including chunked responses. Never follow a redirect to another host.
-async function fetchLibrary(url: string, limit: number): Promise<Response> {
-  const signal = AbortSignal.timeout(120000);
-  let current = libraryUrl(url);
-  for (let redirects = 0; redirects <= 3; redirects++) {
-    const response = await fetch(current, { redirect: "manual", signal, headers: createDownloadHeaders() });
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      await response.body?.cancel();
-      const location = response.headers.get("location");
-      if (!location) throw new Error("Library redirect has no destination");
-      const next = libraryUrl(new URL(location, current).href);
-      if (next.pathname !== current.pathname) throw new Error("The library redirected to a different resource");
-      current = next;
-      continue;
-    }
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error(`Library request failed (${response.status})`);
-    }
-    if (Number(response.headers.get("content-length")) > limit) {
-      await response.body?.cancel();
-      throw new Error(`File is too large to preview (limit ${Math.round(limit / 1024)} KB)`);
-    }
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("Library returned no content");
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.length;
-        if (size > limit) throw new Error(`File is too large to preview (limit ${Math.round(limit / 1024)} KB)`);
-        chunks.push(value);
-      }
-    } finally {
-      await reader.cancel().catch(() => {});
-    }
-    return new Response(Buffer.concat(chunks), { headers: response.headers });
-  }
-  throw new Error("Too many library redirects");
-}
-
-function nameOf(url: URL): string {
-  const part = url.pathname.replace(/\/$/, "").split("/").at(-1) || url.hostname;
-  try {
-    return decodeURIComponent(part);
-  } catch {
-    return part;
-  }
-}
+export { libraryUrl } from "./library-listing.js";
 
 export async function listLibraryDirectory(value: string, refresh = false): Promise<LibraryEntry[]> {
   const url = libraryUrl(value);
   if (!url.pathname.endsWith("/")) throw new Error("Choose a directory to browse");
+  if (!refresh) {
+    const indexed = await cachedIndexedDirectory(url.href);
+    if (indexed) return indexed.entries;
+  }
   return listings(async () => {
     // Re-read disk so clearing discovery through the CLI also invalidates the desktop view.
     dirListingCache.clear();
@@ -96,29 +33,7 @@ export async function listLibraryDirectory(value: string, refresh = false): Prom
       allowEmptyCache: true,
       fetcher: (target) => fetchLibrary(target, 8 * 1024 * 1024),
     });
-    const entries = [
-      ...listing.dirs.map((encodedUrl) => ({ encodedUrl, isDirectoryLink: true, size: undefined })),
-      ...listing.files.map((file) => ({ encodedUrl: file.url, isDirectoryLink: false, size: file.size || undefined })),
-    ];
-    const unique = new Map<string, LibraryEntry>();
-    for (const entry of entries) {
-      let child: URL;
-      try {
-        child = libraryUrl(entry.encodedUrl);
-      } catch {
-        continue;
-      }
-      const relative = child.pathname.slice(url.pathname.length).replace(/\/$/, "");
-      if (!child.pathname.startsWith(url.pathname) || !relative || relative.includes("/")) continue;
-      unique.set(child.href, {
-        ...entry,
-        encodedUrl: child.href,
-        url: child.href,
-        text: nameOf(child),
-        directory: url.pathname,
-      });
-    }
-    return [...unique.values()];
+    return listingEntries(url.href, listing);
   });
 }
 

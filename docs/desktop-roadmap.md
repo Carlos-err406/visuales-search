@@ -97,14 +97,17 @@ Files are grouped into collapsible Downloading, Pending, Needs attention, and Fi
 
 CLI and desktop runs record the same shared-core per-file history under the unified download cache, separate from task summaries. Details are loaded only for the inspected task; large file lists are virtualized. Existing historical tasks are not guessed or re-scanned: their inspector reports when no per-file history is available. No release has been made for this feature.
 
+## Completed: Standalone-File Search
+
+Implemented shared CLI/desktop file search and automatic background indexing, in parsed listado order without folder-specific priority. Settings exposes coverage, persistent Pause/Resume, Retry, and Refresh file index; the existing Revalidate cache stays listado-only. Search preserves selection and viewport when applying newly indexed results. See [016: Standalone-file search](../.context/compound-engineering/todos/016-complete-p3-standalone-file-search.md) and the [implementation plan](plans/2026-09-17-001-feat-standalone-file-index-plan.md). Included in 3.8.0.
+
 ## Later
 
 Desktop download notifications are included in the 3.2.0 release work; see [behavior and platform verification](desktop-notifications.md). This is separately authorized from tray progress.
 
-| Bucket | Feature                                                                                                   | Status                                             | Notes                                                                                                                                                                                          |
-| ------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md)             | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md).     |
-| 2      | [Standalone-file search](../.context/compound-engineering/todos/016-pending-p3-standalone-file-search.md) | Deferred; needs triage                             | Include cached file matches, refresh Recientes in the background, and consider optional deeper indexing. Shared core behavior for CLI and desktop; preserve branch scope and deduplicate URLs. |
+| Bucket | Feature                                                                                       | Status                                             | Notes                                                                                                                                                                                      |
+| ------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md) | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md). |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 

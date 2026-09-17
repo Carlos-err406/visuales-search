@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUpRight,
@@ -193,7 +194,7 @@ export function TrayPopup() {
       <div className="tray-transfers">
         {error ? (
           <div className="tray-empty">
-            <span role="status">{error}</span>
+            <span role="status">{messageForDisplay(error)}</span>
             <Button
               variant="outline"
               size="sm"
@@ -305,7 +306,7 @@ export function TrayPopup() {
                 )}
                 {(taskErrors[task.id] || record.lastError) && (
                   <p className="tray-task-error" role={taskErrors[task.id] ? "alert" : undefined}>
-                    {taskErrors[task.id] || record.lastError}
+                    {messageForDisplay(taskErrors[task.id] || record.lastError)}
                   </p>
                 )}
               </article>
@@ -315,7 +316,7 @@ export function TrayPopup() {
       </div>
       {actionError && (
         <p className="tray-error" role="alert">
-          {actionError}
+          {messageForDisplay(actionError)}
         </p>
       )}
       <footer className="tray-footer">

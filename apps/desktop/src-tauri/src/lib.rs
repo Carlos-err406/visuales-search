@@ -40,6 +40,16 @@ async fn search_content(
 }
 
 #[tauri::command]
+async fn search_index_status(app: tauri::AppHandle) -> Result<Value, String> {
+    sidecar::request(&app, "index.status", json!({})).await
+}
+
+#[tauri::command]
+async fn search_index_control(app: tauri::AppHandle, action: String) -> Result<Value, String> {
+    sidecar::request(&app, "index.control", json!({ "action": action })).await
+}
+
+#[tauri::command]
 async fn list_library_directory(
     app: tauri::AppHandle,
     url: String,
@@ -240,6 +250,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             search_content,
+            search_index_status,
+            search_index_control,
             list_library_directory,
             preview_library_file,
             library_windows::open_library_window,

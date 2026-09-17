@@ -22,6 +22,8 @@ import { testSearchCache } from "./desktop-search-cache.smoke.mjs";
 import { testInterruptAll } from "./desktop-interrupt-all.smoke.mjs";
 import { settingsPage } from "./helpers/settings-navigation.mjs";
 import { testSettingsLayout } from "./desktop-settings-layout.smoke.mjs";
+import { testFileIndex } from "./desktop-file-index.smoke.mjs";
+import { testUriDisplay } from "./desktop-uri-display.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -241,6 +243,16 @@ try {
         }
         if (command === "restart_after_update") return null;
         if (command === "default_output_dir") return "/Users/carlos/Downloads/Visuales";
+        if (command === "search_index_status") return structuredClone(state.fileIndex ?? null);
+        if (command === "search_index_control") {
+          state.fileIndex.phase =
+            args.action === "pause"
+              ? "paused"
+              : args.action === "refresh" && state.fileIndex.phase === "paused"
+                ? "paused"
+                : "indexing";
+          return structuredClone(state.fileIndex);
+        }
         if (command === "get_desktop_settings")
           return structuredClone({ settings: state.settings, defaults: state.settingsDefaults });
         if (command === "save_desktop_settings") {
@@ -343,6 +355,22 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  if (process.env.DESKTOP_SMOKE_ONLY === "uri-display") {
+    await testUriDisplay({ page, screenshots });
+    await testFileIndex({ page, screenshots });
+    await testLibraryWindows({ browser, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`Decoded URI display checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
+  if (process.env.DESKTOP_SMOKE_ONLY === "file-index") {
+    await testFileIndex({ page, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`File indexing UI checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.DESKTOP_SMOKE_ONLY === "search-revalidation") {
     await testSearchRevalidation({ page, screenshots });
     assert.deepEqual(errors, []);
@@ -1324,7 +1352,9 @@ try {
   await testQueueResume({ page, screenshots });
   await testGroupState({ page, screenshots });
   await testSearchRevalidation({ page, screenshots });
+  await testFileIndex({ page, screenshots });
   await testSettingsLayout({ page, screenshots });
+  await testUriDisplay({ page, screenshots });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {

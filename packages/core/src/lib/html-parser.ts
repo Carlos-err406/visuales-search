@@ -2,6 +2,7 @@ import { logger } from "../logger.js";
 import * as cheerio from "cheerio";
 import colors from "ansi-colors";
 import { type SearchResult } from "./types.js";
+import { decodeUriForDisplay } from "../uri-display.js";
 
 const VISUALES_HOSTNAME = "visuales.uclv.cu";
 
@@ -85,7 +86,8 @@ function getNameFromPath(pathname: string): string {
   return lastSlashIndex >= 0 ? trimmedPathname.slice(lastSlashIndex + 1) : trimmedPathname;
 }
 
-function getDisplayText(text: string, decodedPathname: string): string {
+function getDisplayText(text: string, pathname: string, decodedPathname: string): string {
+  if (text === getNameFromPath(pathname)) return decodeUriForDisplay(text);
   return text.includes("�") ? getNameFromPath(decodedPathname) : text;
 }
 
@@ -118,7 +120,7 @@ export function parseHtml(html: string, searchTerms: string[]): SearchResult[] {
     normalizeUrlProtocol(urlObj);
 
     const decodedPathname = decodePathname(urlObj.pathname);
-    const displayText = getDisplayText(text, decodedPathname);
+    const displayText = getDisplayText(text, urlObj.pathname, decodedPathname);
 
     const normalizedUrl = `${urlObj.origin}${decodedPathname}${urlObj.search}`;
     const encodedUrl = `${urlObj.origin}${urlObj.pathname.replace(/\/+/g, "/")}${urlObj.search}`;

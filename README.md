@@ -38,6 +38,20 @@ visuales search supernatural season 5
 
 All search terms must be present in a result.
 
+Search includes indexed files as well as folders. Filename separators such as dots, underscores, and hyphens match spaces, so `visuales search stuart fails` can find `Stuart.Fails...mkv`. Previously browsed/download-discovered files are available immediately; unvisited folders become searchable as indexing progresses. Results keep their download IDs and folder-scoped windows search only their branch.
+
+Desktop automatically indexes directory listings while running. CLI searches use the same local catalog without launching a background process. To build or manage the index explicitly:
+
+```bash
+visuales index
+visuales index status
+visuales index pause
+visuales index resume
+visuales index refresh
+```
+
+The indexer follows `listado.html` order, then newly discovered folders, with no special priority for any directory. It continues alongside downloads with one background listing request at a time and at least one second between listings. Interactive browsing takes priority, and server crawl restrictions and retry delays are respected. Progress and pause choices survive restarts. Listings refresh uniformly after seven days; folder discovery is checked daily. An explicit refresh retains searchable cached results and does not override a pause. Ctrl-C pauses a CLI-owned scan, or only detaches when observing a desktop-owned scan. Indexing reads directory metadata, never media contents.
+
 Bypass the search cache and refresh it from visuales.uclv.cu:
 
 ```bash
@@ -262,7 +276,9 @@ The desktop opens in Search, with a contextual selection bar and expandable tran
 
 Downloads status groups and the transfer inspector's file groups remember their expanded/collapsed choices independently across app launches. Inspector choices apply across transfers; navigation shortcuts can temporarily reveal a group without changing those saved choices.
 
-Settings > Search > **Revalidate cache** re-fetches `listado.html` and updates the shared search index. Open Search views reload from the refreshed index when visible; download history, directory listings, previews, and saved settings are not cleared. This does not crawl folders or add standalone files to global search.
+Settings > Search > **Revalidate cache** still re-fetches only `listado.html`. **File index** separately shows coverage, progress, last successful scan, and errors, with Pause/Resume, Retry, and Refresh controls. File-index actions never clear downloads, previews, or preferences. Search shows indexing status even with no matches. New matches are deferred behind **New results** while selecting or browsing a scrolled list, preserving expansion and position when applied.
+
+The disposable file catalog and scan checkpoint live in `~/.visuales-cli-cache/file-index/` and participate in `visuales cache`. Metadata from this catalog is not download-completion verification. Failed refreshes retain the last good listings, and multiple desktop/CLI processes share one indexing owner.
 
 Downloads and the tray popup include **Interrupt all downloads**. After confirmation, it stops every running and queued transfer in the shared history, including CLI transfers and items hidden by filters. Partial files and completed history are kept. The CLI equivalent is `visuales tasks cancel --all`; both use the same atomic queue cancellation so waiting downloads cannot start midway through the operation. Resume individual tasks when ready.
 

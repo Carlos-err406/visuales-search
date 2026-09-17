@@ -98,6 +98,8 @@ test("directory browsing reuses core discovery, deduplicates children and handle
   await library.listLibraryDirectory(`${base}/empty/`);
   assert.equal(calls.get("/empty/"), 1);
   await cache.clearCacheById("discovery");
+  const { clearFileIndex } = await import("../packages/core/dist/search-file-index.js");
+  await clearFileIndex();
   await library.listLibraryDirectory(`${base}/empty/`);
   assert.equal(calls.get("/empty/"), 2);
   await assert.rejects(library.listLibraryDirectory(`${base}/blocked/`), /did not return/);

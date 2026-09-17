@@ -3,16 +3,45 @@ use std::sync::Mutex;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
+    tray::{TrayIcon, TrayIconBuilder},
     Emitter, Manager,
 };
 #[cfg(not(target_os = "linux"))]
-use tauri::{PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    tray::{MouseButton, MouseButtonState, TrayIconEvent},
+    PhysicalPosition, WebviewUrl, WebviewWindowBuilder,
+};
 
 #[cfg(not(target_os = "linux"))]
 const POPUP_WIDTH: f64 = 360.0;
 #[cfg(not(target_os = "linux"))]
 const POPUP_HEIGHT: f64 = 560.0;
+#[cfg(not(target_os = "linux"))]
+const BLUR_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
+#[cfg(any(test, not(target_os = "linux")))]
+#[derive(Default)]
+struct PopupInteraction {
+    visible_on_press: Option<bool>,
+    revision: u64,
+}
+
+#[cfg(any(test, not(target_os = "linux")))]
+impl PopupInteraction {
+    fn press(&mut self, visible: bool) {
+        self.visible_on_press = Some(visible);
+    }
+
+    fn release(&mut self, visible: bool) -> bool {
+        self.invalidate_blur();
+        !self.visible_on_press.take().unwrap_or(visible)
+    }
+
+    fn invalidate_blur(&mut self) -> u64 {
+        self.revision = self.revision.wrapping_add(1);
+        self.revision
+    }
+}
 
 struct TrayUi {
     icon: TrayIcon,
@@ -23,6 +52,8 @@ struct TrayUi {
 #[derive(Default)]
 pub struct TrayState {
     ui: Mutex<Option<TrayUi>>,
+    #[cfg(not(target_os = "linux"))]
+    popup: Mutex<PopupInteraction>,
     // Retained until the main frontend acknowledges it, including during reload.
     navigation: Mutex<Option<String>>,
 }
@@ -59,21 +90,30 @@ pub fn setup(app: &tauri::AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                rect,
-                ..
-            } = event
-            {
-                #[cfg(not(target_os = "linux"))]
-                if let Err(error) = toggle_popup(tray.app_handle(), rect) {
-                    eprintln!("Could not show transfer popup: {error}");
-                    let _ = open_downloads(tray.app_handle().clone(), None);
+            #[cfg(not(target_os = "linux"))]
+            match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state,
+                    rect,
+                    ..
+                } => {
+                    if let Err(error) = handle_popup_click(tray.app_handle(), button_state, rect) {
+                        eprintln!("Could not toggle transfer popup: {error}");
+                    }
                 }
-                #[cfg(target_os = "linux")]
-                let _ = (tray, rect);
+                TrayIconEvent::Leave { .. } => {
+                    tray.app_handle()
+                        .state::<TrayState>()
+                        .popup
+                        .lock()
+                        .unwrap()
+                        .visible_on_press = None;
+                }
+                _ => {}
             }
+            #[cfg(target_os = "linux")]
+            let _ = (tray, event);
         })
         .build(app)?;
     *app.state::<TrayState>().ui.lock().unwrap() = Some(TrayUi {
@@ -97,8 +137,8 @@ pub fn setup(app: &tauri::AppHandle) -> tauri::Result<()> {
                 .build()?;
         let handle = app.clone();
         popup.on_window_event(move |event| match event {
-            tauri::WindowEvent::Focused(false) => {
-                let _ = dismiss_tray(handle.clone());
+            tauri::WindowEvent::Focused(focused) => {
+                handle_popup_focus(&handle, *focused);
             }
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
@@ -156,11 +196,25 @@ fn small_icon(source: &Image<'_>) -> Image<'static> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn toggle_popup(app: &tauri::AppHandle, rect: tauri::Rect) -> Result<(), String> {
+pub fn handle_popup_click(
+    app: &tauri::AppHandle,
+    button_state: MouseButtonState,
+    rect: tauri::Rect,
+) -> Result<(), String> {
     let popup = app
         .get_webview_window("tray")
         .ok_or("Transfer popup is unavailable")?;
-    if popup.is_visible().map_err(|e| e.to_string())? {
+    let visible = popup.is_visible().map_err(|e| e.to_string())?;
+    let show = {
+        let state = app.state::<TrayState>();
+        let mut interaction = state.popup.lock().unwrap();
+        if button_state == MouseButtonState::Down {
+            interaction.press(visible);
+            return Ok(());
+        }
+        interaction.release(visible)
+    };
+    if !show {
         return dismiss_tray(app.clone());
     }
     let scale = popup.scale_factor().map_err(|e| e.to_string())?;
@@ -195,6 +249,37 @@ pub fn toggle_popup(app: &tauri::AppHandle, rect: tauri::Rect) -> Result<(), Str
     popup.set_focus().map_err(|e| e.to_string())
 }
 
+#[cfg(not(target_os = "linux"))]
+pub fn handle_popup_focus(app: &tauri::AppHandle, focused: bool) {
+    let revision = app
+        .state::<TrayState>()
+        .popup
+        .lock()
+        .unwrap()
+        .invalidate_blur();
+    if focused {
+        return;
+    }
+    // Native focus loss can precede the tray's mouse-down event. Let that
+    // press capture visibility before hiding; mouse-up keeps that intent even
+    // for a long press. A newer click/focus event cancels this pending hide.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(BLUR_DELAY).await;
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if handle.state::<TrayState>().popup.lock().unwrap().revision != revision {
+                return;
+            }
+            if let Some(popup) = handle.get_webview_window("tray") {
+                if popup.is_visible().unwrap_or(false) && !popup.is_focused().unwrap_or(true) {
+                    let _ = dismiss_tray(handle);
+                }
+            }
+        });
+    });
+}
+
 #[cfg(any(test, not(target_os = "linux")))]
 fn popup_position(
     anchor: (f64, f64, f64, f64),
@@ -217,6 +302,12 @@ fn popup_position(
 
 #[tauri::command]
 pub fn dismiss_tray(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(not(target_os = "linux"))]
+    app.state::<TrayState>()
+        .popup
+        .lock()
+        .unwrap()
+        .invalidate_blur();
     if let Some(popup) = app.get_webview_window("tray") {
         popup.hide().map_err(|e| e.to_string())?;
     }
@@ -286,6 +377,44 @@ pub fn update_status(app: &tauri::AppHandle, snapshot: Option<&Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tray_click_closes_even_if_blur_hides_popup_before_release() {
+        let mut interaction = PopupInteraction::default();
+        interaction.press(true);
+        interaction.invalidate_blur();
+        assert!(!interaction.release(false));
+        interaction.press(false);
+        assert!(interaction.release(false));
+    }
+
+    #[test]
+    fn tray_click_cancels_blur_that_arrived_before_press() {
+        let mut interaction = PopupInteraction::default();
+        let pending_hide = interaction.invalidate_blur();
+        interaction.press(true);
+        assert!(!interaction.release(true));
+        assert_ne!(interaction.revision, pending_hide);
+    }
+
+    #[test]
+    fn new_click_or_focus_invalidates_old_blur() {
+        let mut interaction = PopupInteraction::default();
+        let pending_hide = interaction.invalidate_blur();
+        interaction.press(false);
+        assert!(interaction.release(false));
+        assert_ne!(interaction.revision, pending_hide);
+        let pending_hide = interaction.invalidate_blur();
+        interaction.invalidate_blur();
+        assert_ne!(interaction.revision, pending_hide);
+    }
+
+    #[test]
+    fn release_without_press_uses_current_visibility() {
+        let mut interaction = PopupInteraction::default();
+        assert!(!interaction.release(true));
+        assert!(interaction.release(false));
+    }
+
     #[test]
     fn tray_mark_fills_the_template_without_clipping() {
         let mut pixels = vec![0; 64 * 64 * 4];
