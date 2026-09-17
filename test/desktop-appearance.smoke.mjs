@@ -1,10 +1,12 @@
 /* global window, document */
 import assert from "node:assert/strict";
+import { settingsPage } from "./helpers/settings-navigation.mjs";
 
 export async function testAppearance({ page, screenshots, checkLayout }) {
   const storageKey = "visuales.appearance";
   async function choose(label) {
     await page.getByRole("tab", { name: "Settings", exact: true }).click();
+    await settingsPage(page, "Settings");
     await page.getByRole("combobox", { name: "Theme", exact: true }).click();
     await page.getByRole("option", { name: label, exact: true }).click();
     await page.waitForFunction((value) => document.documentElement.dataset.appearance === value, label.toLowerCase());
@@ -76,7 +78,7 @@ export async function testAppearance({ page, screenshots, checkLayout }) {
   await page.goto(url.href);
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.getByRole("combobox", { name: "Theme", exact: true }).waitFor();
-  await page.getByLabel("Concurrent files", { exact: true }).waitFor();
+  await page.getByLabel("Concurrent files", { exact: true }).waitFor({ state: "attached" });
   assert.equal(await isDark(), true, "explicit dark persists with a light OS");
   await page.emulateMedia({ colorScheme: "dark" });
   await choose("Light");
@@ -188,15 +190,16 @@ export async function testAppearance({ page, screenshots, checkLayout }) {
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
-    for (const name of ["Search", "Downloads", "Settings"]) {
+    for (const name of ["Search", "Downloads", "Settings", "About"]) {
       await page
+        .locator(".app-header")
         .getByRole("tab", { name: name === "Downloads" ? /Downloads/ : name, exact: name !== "Downloads" })
         .click();
       await checkLayout(`dark-${name.toLowerCase()}-${viewport.width}`);
     }
   }
   await page.setViewportSize({ width: 1240, height: 820 });
-  await page.getByRole("tab", { name: /Downloads/ }).click();
+  await page.locator("#tab-downloads").click();
   await page.getByRole("button", { name: "Refresh downloads", exact: true }).hover();
   const tooltip = page.getByRole("tooltip");
   await tooltip.waitFor();
@@ -207,6 +210,7 @@ export async function testAppearance({ page, screenshots, checkLayout }) {
   await page.evaluate(() => {
     window.testBridge.updateVersion = "1.4.0";
   });
+  await settingsPage(page, "About");
   await page.getByRole("button", { name: "Check for updates", exact: true }).click();
   await page.locator("#app-updates").waitFor();
   await page.screenshot({ path: `${screenshots}/dark-update.png` });

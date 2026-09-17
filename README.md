@@ -114,7 +114,7 @@ visuales download "https://visuales.uclv.cu/Movies/Example/" \
 
 Quote patterns so the shell does not expand `*` or interpret `!`. The shared Node engine evaluates rules in order: later matches override earlier ones. Repeating `--ignore '*.jpg'` after the exception would exclude the poster again. Queued, detached, and resumed transfers keep the ordered rules saved with their task.
 
-Desktop Settings > Transfers > Ignore rules uses the same rules, one per line:
+Desktop Settings > Ignore rules uses the same rules, one per line:
 
 ```gitignore
 # Skip artwork except the poster
@@ -260,6 +260,10 @@ Android is deferred: Tauri's desktop sidecar mechanism does not provide an Andro
 
 The desktop opens in Search, with a contextual selection bar and expandable transfer activity. Downloads lists the shared task history. UI priorities and deferred requests are tracked in [Desktop Roadmap](docs/desktop-roadmap.md).
 
+Downloads status groups and the transfer inspector's file groups remember their expanded/collapsed choices independently across app launches. Inspector choices apply across transfers; navigation shortcuts can temporarily reveal a group without changing those saved choices.
+
+Settings > Search > **Revalidate cache** re-fetches `listado.html` and updates the shared search index. Open Search views reload from the refreshed index when visible; download history, directory listings, previews, and saved settings are not cleared. This does not crawl folders or add standalone files to global search.
+
 Downloads and the tray popup include **Interrupt all downloads**. After confirmation, it stops every running and queued transfer in the shared history, including CLI transfers and items hidden by filters. Partial files and completed history are kept. The CLI equivalent is `visuales tasks cancel --all`; both use the same atomic queue cancellation so waiting downloads cannot start midway through the operation. Resume individual tasks when ready.
 
 Interrupted and failed transfers offer **Resume now** and **Add to queue** in Downloads, the transfer inspector, and the tray. Resume starts immediately; Add to queue appends the existing task to the shared queue. Both preserve the recorded destination, settings, and partial files. The CLI equivalent for queued resumption is `visuales tasks resume <id> --queue --detach`.
@@ -267,6 +271,8 @@ Interrupted and failed transfers offer **Resume now** and **Add to queue** in Do
 Desktop controls use shadcn/ui's Base UI components in `apps/desktop/src/components/ui`. Add components with `npx shadcn@latest add <component> --cwd apps/desktop`; `components.json` selects the Base Nova style. Tailwind tokens in `src/theme.css` map to the app's teal palette, local JetBrains Mono fonts, and 1px radii. `src/styles.css` owns the workspace layout and compact app-specific styling. Icon buttons share one Base UI tooltip handle and popup, with no custom hover ownership or entrance animations between buttons. Native folder dialogs and all Node-side task behavior remain unchanged.
 
 The desktop destination is a parent folder: selecting `Season/` saves into `<destination>/Season/`, even when it is the only selection. Individual files save directly into the destination. Existing tasks retain their recorded output paths when resumed; the CLI's explicit `--output` behavior is unchanged.
+
+**Settings** puts download defaults, appearance, notifications, and search cache controls together in a compact two-column layout that stacks in narrower windows. Ignore rules expands to fit saved rules, edits, and wrapped lines without an internal scrollbar. The right-aligned **About** main tab holds the app identity, author credit, GitHub project link, license, and update controls. Drafts survive switching pages; Save/Discard appears only in Settings when preferences have changed. Theme changes apply immediately.
 
 Settings saves desktop-only defaults for the output folder, concurrent files (1-32), connections per file (1-8), and retries per file (0-20). Transfer defaults come from the same core definition as the CLI: five concurrent files, three connections per file, and three retries, with resume enabled and no request timeout. Desktop keeps the OS Downloads folder's `Visuales` subfolder as its default destination. Saved preferences override these defaults without changing the CLI. Save changes commits the form; Discard restores saved values, and Restore defaults stages the shared baseline for review before saving.
 

@@ -3,6 +3,8 @@ use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
+const MAX_NOTICE_AGE_MS: u64 = 5 * 60 * 1000;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Notice {
@@ -28,7 +30,10 @@ impl Notice {
     }
 
     fn eligible(&self, focused: bool, now: u64) -> bool {
-        !focused && now.checked_sub(self.at).is_some_and(|age| age <= 30_000)
+        !focused
+            && now
+                .checked_sub(self.at)
+                .is_some_and(|age| age <= MAX_NOTICE_AGE_MS)
     }
 }
 
@@ -45,6 +50,9 @@ fn foreground(app: &tauri::AppHandle) -> bool {
 }
 
 pub async fn poll(app: &tauri::AppHandle) {
+    if !available(app) {
+        return;
+    }
     // Drain even in the foreground. Suppressed events must not become late alerts.
     let value = match crate::sidecar::request(app, "notifications.take", json!({})).await {
         Ok(value) => value,
@@ -61,16 +69,35 @@ pub async fn poll(app: &tauri::AppHandle) {
         }
     };
     for notice in notices {
-        if notice.eligible(foreground(app), now_ms()) && available(app) {
+        let focused = foreground(app);
+        if notice.eligible(focused, now_ms()) && available(app) {
             let app = app.clone();
             // Native delivery/DBus can block; never stall transfer monitoring or the UI.
             tauri::async_runtime::spawn_blocking(move || {
                 if notice.eligible(foreground(&app), now_ms()) && available(&app) {
-                    if let Err(error) = show(&app, &notice) {
-                        eprintln!("Could not deliver download notification: {error}");
+                    match show(&app, &notice) {
+                        Ok(()) => eprintln!(
+                            "Download notification {} submitted to the operating system",
+                            notice.task_id
+                        ),
+                        Err(error) => eprintln!(
+                            "Could not deliver download notification {}: {error}",
+                            notice.task_id
+                        ),
                     }
+                } else {
+                    eprintln!(
+                        "Download notification {} suppressed after focus/lifecycle recheck",
+                        notice.task_id
+                    );
                 }
             });
+        } else {
+            eprintln!(
+                "Download notification {} suppressed (focused={focused}, age_ms={})",
+                notice.task_id,
+                now_ms().saturating_sub(notice.at)
+            );
         }
     }
 }
@@ -200,7 +227,12 @@ mod tests {
         assert!(notice.eligible(false, 1000));
         assert!(notice.eligible(false, 31000));
         assert!(!notice.eligible(true, 1000));
-        assert!(!notice.eligible(false, 31001));
+        assert!(
+            notice.eligible(false, 31001),
+            "a slow refresh must not expire a completion alert"
+        );
+        assert!(notice.eligible(false, 1000 + MAX_NOTICE_AGE_MS));
+        assert!(!notice.eligible(false, 1001 + MAX_NOTICE_AGE_MS));
         assert!(!notice.eligible(false, 999));
         assert!(serde_json::from_value::<Notice>(json!({
             "taskId": "a", "name": "Album", "status": "interrupted", "at": 1000

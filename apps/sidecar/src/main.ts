@@ -43,6 +43,7 @@ import { previewKind } from "@visuales/core/library-types";
 import { recordDownloadFiles, readDownloadFileDetails } from "@visuales/core/download/file-details";
 
 const PROTOCOL_VERSION = 1;
+const MAX_NOTICE_AGE_MS = 5 * 60 * 1000;
 setLogger({ log: (...values) => console.error(...values), error: (...values) => console.error(...values) });
 
 type WorkerConfig = { taskId: string; urls: string[]; options: DownloadOptions; queue: boolean; retry?: boolean };
@@ -268,7 +269,7 @@ async function runServer() {
           const age = Date.now() - notice.at;
           return (
             age >= 0 &&
-            age <= 30000 &&
+            age <= MAX_NOTICE_AGE_MS &&
             (notice.status === "completed" ? settings.notifyCompleted : settings.notifyFailed)
           );
         });

@@ -1,10 +1,12 @@
 /* global window */
 import assert from "node:assert/strict";
+import { settingsPage } from "./helpers/settings-navigation.mjs";
 
 export async function testSettingsExclusions({ page, screenshots, checkLayout }) {
   await page.setViewportSize({ width: 1240, height: 820 });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420");
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "Settings");
   const editor = page.getByRole("textbox", { name: "Ignore rules", exact: true });
   const save = page.getByRole("button", { name: "Save changes", exact: true });
   const discard = page.getByRole("button", { name: "Discard", exact: true });
@@ -13,7 +15,7 @@ export async function testSettingsExclusions({ page, screenshots, checkLayout })
   assert.equal(await save.count(), 0);
   await editor.fill("*.jpg\n!poster.jpg\n*.jpg\n!poster.jpg\n# Cover artwork");
   assert.equal(await save.isEnabled(), true);
-  await page.getByRole("tab", { name: /Downloads/ }).click();
+  await page.locator("#tab-downloads").click();
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
   assert.equal(
     await editor.inputValue(),
@@ -44,6 +46,7 @@ export async function testSettingsExclusions({ page, screenshots, checkLayout })
   ]);
   await page.reload();
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "Settings");
   await editor.waitFor();
   assert.equal(await editor.inputValue(), "*.jpg\n!poster.jpg\n*.jpg\n!poster.jpg\n# Cover artwork");
   await editor.fill("");
@@ -52,8 +55,10 @@ export async function testSettingsExclusions({ page, screenshots, checkLayout })
   assert.equal(await save.count(), 0);
 
   for (const theme of ["Light", "Dark"]) {
+    await settingsPage(page, "Settings");
     await page.getByRole("combobox", { name: "Theme", exact: true }).click();
     await page.getByRole("option", { name: theme, exact: true }).click();
+    await settingsPage(page, "Settings");
     for (const width of [1240, 760, 390]) {
       await page.setViewportSize({ width, height: 820 });
       await editor.scrollIntoViewIfNeeded();

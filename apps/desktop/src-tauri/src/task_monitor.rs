@@ -41,6 +41,7 @@ pub struct TaskMonitor {
     cache: SnapshotCache,
     stopped: AtomicBool,
     wake: Notify,
+    notification_wake: Notify,
 }
 
 impl TaskMonitor {
@@ -51,11 +52,27 @@ impl TaskMonitor {
     pub fn invalidate(&self) {
         self.cache.revision.fetch_add(1, Ordering::SeqCst);
         self.wake.notify_one();
+        self.notification_wake.notify_one();
     }
 
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
         self.wake.notify_one();
+        self.notification_wake.notify_one();
+    }
+
+    async fn poll_notifications<F, Fut>(&self, poll: F)
+    where
+        F: Fn() -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        while !self.is_stopped() {
+            poll().await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(2)) => {},
+                _ = self.notification_wake.notified() => {},
+            }
+        }
     }
 }
 
@@ -80,6 +97,14 @@ pub async fn snapshot(app: &tauri::AppHandle) -> Reply {
 }
 
 pub fn start(app: &tauri::AppHandle) {
+    let notifications_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // A slow or failed task reconciliation must never hold completion alerts hostage.
+        notifications_app
+            .state::<TaskMonitor>()
+            .poll_notifications(|| crate::notifications::poll(&notifications_app))
+            .await;
+    });
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let monitor = app.state::<TaskMonitor>();
@@ -101,9 +126,6 @@ pub fn start(app: &tauri::AppHandle) {
                 break;
             }
             crate::tray::update_status(&app, value.as_ref().ok());
-            if value.is_ok() {
-                crate::notifications::poll(&app).await;
-            }
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {},
                 _ = monitor.wake.notified() => {},
@@ -115,6 +137,51 @@ pub fn start(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn notifications_continue_during_slow_and_failed_snapshots() {
+        let monitor = TaskMonitor::default();
+        let calls = AtomicU64::new(0);
+        let polled = Notify::new();
+        let reading = Notify::new();
+        let release = Notify::new();
+        let snapshot = monitor.cache.read(|| async {
+            reading.notify_one();
+            release.notified().await;
+            Err("task store unavailable".into())
+        });
+        let polling = monitor.poll_notifications(|| async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            polled.notify_one();
+        });
+        let verify = async {
+            reading.notified().await;
+            polled.notified().await;
+            monitor.invalidate();
+            polled.notified().await;
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            release.notify_one();
+            let failed = monitor
+                .cache
+                .read(|| async { Err("still unavailable".into()) })
+                .await;
+            assert!(failed.is_err());
+            monitor.invalidate();
+            polled.notified().await;
+            assert_eq!(calls.load(Ordering::SeqCst), 3);
+            monitor.stop();
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            let (result, (), ()) = tokio::join!(snapshot, polling, verify);
+            assert!(result.is_err());
+        })
+        .await
+        .expect("notification polling must not wait for task snapshots or its timer");
+        monitor
+            .poll_notifications(|| async { panic!("stopped monitor must not poll") })
+            .await;
+    }
+
     #[tokio::test]
     async fn concurrent_reads_share_success_and_failure() {
         let cache = SnapshotCache::default();

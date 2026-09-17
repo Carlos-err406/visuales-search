@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 
 export async function testTransferInspector({ page, screenshots }) {
   await page.setViewportSize({ width: 1240, height: 820 });
+  await page.evaluate(() => {
+    window.localStorage.removeItem("visuales.download-groups");
+    window.localStorage.removeItem("visuales.transfer-file-groups");
+  });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
   await page.evaluate(() => {
     const files = [
@@ -221,6 +225,10 @@ export async function testTransferInspector({ page, screenshots }) {
   const rowTop = () => archive.evaluate((el) => el.closest("tr").getBoundingClientRect().top);
   const before = await rowTop();
   await archive.click();
+  const archiveFinished = inspector.getByRole("button", { name: "Finished files (2000)", exact: true });
+  await archiveFinished.waitFor();
+  assert.equal(await archiveFinished.getAttribute("aria-expanded"), "false", "group choices carry across transfers");
+  await archiveFinished.click();
   await inspector.getByText("Season 0/episode.mkv", { exact: true }).waitFor();
   assert.ok(Math.abs((await rowTop()) - before) < 2, "opening details anchors the selected row");
   assert.ok((await inspector.locator(".inspector-file").count()) < 30, "large file histories stay virtualized");

@@ -28,6 +28,7 @@ import {
   Download,
   FolderOutput,
   FolderOpen,
+  Info,
   ListPlus,
   Play,
   RefreshCw,
@@ -61,12 +62,14 @@ import { useAppUpdates } from "./use-app-updates";
 import { AppUpdatesPanel } from "./app-updates";
 import { useDesktopSettings } from "./use-desktop-settings";
 import { SettingsView } from "./settings-view";
+import { AboutView } from "./about-view";
 import { useAppearance } from "./use-appearance";
+import { useCollapsedGroups } from "./use-collapsed-groups";
 import { SearchTree, useSearchBrowser } from "./search-tree";
 import { distinctDownloadUrls, treeSelectionStates } from "@visuales/core/search-tree";
 import appIcon from "../app-icon.svg?no-inline";
 
-type View = "search" | "downloads" | "settings";
+type View = "search" | "downloads" | "settings" | "about";
 const taskGroups = [
   { id: "running", label: "Downloading", statuses: ["running"] },
   { id: "queued", label: "Pending", statuses: ["queued"] },
@@ -325,7 +328,9 @@ function App({ root }: { root?: string }) {
   const [taskErrors, setTaskErrors] = useState<Record<string, string>>({});
   const [interruptingAll, setInterruptingAll] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const { collapsed: savedGroups, setCollapsed: saveGroup } = useCollapsedGroups("visuales.download-groups");
+  const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>({});
+  const collapsedGroups = useMemo(() => ({ ...savedGroups, ...groupOverrides }), [savedGroups, groupOverrides]);
   const [taskQuery, setTaskQuery] = useState("");
   const [inspectedId, setInspectedId] = useState<string | null>(null);
   const updates = useAppUpdates();
@@ -336,12 +341,17 @@ function App({ root }: { root?: string }) {
   const outputEdited = useRef(false);
   const inspectedTask = tasks.find((task) => task.id === inspectedId);
   useEffect(() => {
+    if (view !== "downloads") setGroupOverrides((current) => (Object.keys(current).length ? {} : current));
+  }, [view]);
+  useEffect(() => {
     if (inspectedId && !inspectedTask) setInspectedId(null);
   }, [inspectedId, inspectedTask]);
   const starting = useRef(false);
   const searchingRef = useRef(false);
   const searchRequest = useRef(0);
   const libraryIndex = useRef<Promise<SearchResult[]> | null>(null);
+  const indexInvalidated = useRef(false);
+  const [indexRevision, setIndexRevision] = useState(0);
   const lastRequest = useRef("");
   const searchInput = useRef<HTMLInputElement>(null);
   const searchList = useRef<HTMLDivElement>(null);
@@ -376,7 +386,7 @@ function App({ root }: { root?: string }) {
     const navigate = async () => {
       const id = await invoke<string | null>("take_download_navigation");
       if (stopped || typeof id !== "string") return;
-      setCollapsedGroups({});
+      setGroupOverrides(id ? { running: false, queued: false, attention: false, completed: false } : {});
       setTaskQuery(id);
       setView("downloads");
     };
@@ -398,6 +408,24 @@ function App({ root }: { root?: string }) {
       searchRequest.current++;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    const stop = listen("search-index-changed", () => {
+      libraryIndex.current = null;
+      indexInvalidated.current = true;
+      setIndexRevision((revision) => revision + 1);
+    });
+    return () => {
+      void stop.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    if (view !== "search" || !indexInvalidated.current) return;
+    indexInvalidated.current = false;
+    void loadSearch(lastRequest.current);
+  }, [view, indexRevision]);
 
   useEffect(() => {
     if (!isDesktop() || root) return;
@@ -466,7 +494,7 @@ function App({ root }: { root?: string }) {
   }, [settings.snapshot]);
 
   useLayoutEffect(() => {
-    if (view === "settings") return;
+    if (view !== "search" && view !== "downloads") return;
     const element = view === "search" ? searchList.current : downloadsList.current;
     if (element) element.scrollTop = scrollPositions.current[view];
   }, [view]);
@@ -492,12 +520,12 @@ function App({ root }: { root?: string }) {
 
   function switchView(next: View) {
     const element = view === "search" ? searchList.current : downloadsList.current;
-    if (element && view !== "settings") scrollPositions.current[view] = element.scrollTop;
+    if (element && (view === "search" || view === "downloads")) scrollPositions.current[view] = element.scrollTop;
     setView(next);
   }
 
   function showFailures() {
-    setCollapsedGroups({ running: true, queued: true, completed: true, attention: false });
+    setGroupOverrides({ running: true, queued: true, completed: true, attention: false });
     setTaskQuery("");
     switchView("downloads");
   }
@@ -713,6 +741,9 @@ function App({ root }: { root?: string }) {
           </TabsTrigger>
           <TabsTrigger value="settings" id="tab-settings">
             <Settings size={16} /> Settings
+          </TabsTrigger>
+          <TabsTrigger value="about" id="tab-about" className="about-tab">
+            <Info size={16} /> About
           </TabsTrigger>
         </TabsList>
       </header>
@@ -1044,7 +1075,10 @@ function App({ root }: { root?: string }) {
             <InputGroupInput
               type="search"
               value={taskQuery}
-              onChange={(event) => setTaskQuery(event.target.value)}
+              onChange={(event) => {
+                setTaskQuery(event.target.value);
+                setGroupOverrides({});
+              }}
               placeholder="Filter downloads"
               aria-label="Filter downloads"
             />
@@ -1087,7 +1121,14 @@ function App({ root }: { root?: string }) {
                               aria-label={`${group.label} downloads (${items.length})`}
                               aria-expanded={!collapsed}
                               aria-controls={`download-group-${group.id}`}
-                              onClick={() => setCollapsedGroups((current) => ({ ...current, [group.id]: !collapsed }))}
+                              onClick={() => {
+                                saveGroup(group.id, !collapsed);
+                                setGroupOverrides((current) => {
+                                  const next = { ...current };
+                                  delete next[group.id];
+                                  return next;
+                                });
+                              }}
                             >
                               <ChevronRight size={14} className={collapsed ? "" : "group-expanded"} />
                               <span>{group.label}</span>
@@ -1171,7 +1212,16 @@ function App({ root }: { root?: string }) {
         id="panel-settings"
         className="workspace-panel settings-panel"
       >
-        <SettingsView controller={settings} updates={updates} appearance={appearance} />
+        <SettingsView controller={settings} appearance={appearance} />
+      </TabsContent>
+      <TabsContent
+        value="about"
+        keepMounted
+        hidden={view !== "about"}
+        id="panel-about"
+        className="workspace-panel about-page"
+      >
+        <AboutView updates={updates} />
       </TabsContent>
     </Tabs>
   );

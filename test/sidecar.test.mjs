@@ -1175,6 +1175,63 @@ describe("packaged Node sidecar", () => {
     }
   });
 
+  it("notifies for each completion with running, queued, and interrupted neighbors", async () => {
+    const client = await startRpc();
+    const original = (await client.request("settings.get")).settings;
+    try {
+      await client.request("settings.save", {
+        settings: { ...original, notifyCompleted: true, notifyFailed: true },
+      });
+      const running = await client.request("download.start", {
+        urls: [`${slowUrl}/cancel-all-notification-blocker.bin`],
+        output: path.join(home, "notification-neighbor-running"),
+      });
+      const queued = await client.request("download.start", {
+        urls: [server.url("normal", "queued-notification.bin")],
+        output: path.join(home, "notification-neighbor-queued"),
+        queue: true,
+      });
+      const interrupted = await client.request("download.start", {
+        urls: [`${slowUrl}/cancel-all-notification-interrupted.bin`],
+        output: path.join(home, "notification-neighbor-interrupted"),
+      });
+      await client.request("tasks.cancel", { id: interrupted.id });
+      const completed = await client.request("download.start", {
+        urls: [server.url("normal", "completed-notification.bin")],
+        output: path.join(home, "notification-neighbor-completed"),
+      });
+      async function takeNotice(id) {
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const notices = await client.request("notifications.take");
+          if (notices.length) {
+            assert.deepEqual(
+              notices.map(({ taskId, status }) => ({ taskId, status })),
+              [{ taskId: id, status: "completed" }]
+            );
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        assert.fail("Expected completion notice independently of other task states");
+      }
+      await takeNotice(completed.id);
+      const { tasks } = await client.request("tasks.snapshot");
+      assert.equal(tasks.find((task) => task.id === running.id).status, "running");
+      assert.equal(tasks.find((task) => task.id === queued.id).status, "queued");
+      assert.equal(tasks.find((task) => task.id === interrupted.id).status, "interrupted");
+      assert.deepEqual(await client.request("notifications.take"), [], "one alert, not one per poll");
+
+      await client.request("tasks.cancel", { id: running.id });
+      await takeNotice(queued.id);
+      await waitForTask(queued.id, "completed", client);
+      assert.deepEqual(await client.request("notifications.take"), [], "queue handoff does not repeat alerts");
+    } finally {
+      await client.request("settings.save", { settings: original });
+      await client.close();
+    }
+  });
+
   it("cancels and resumes a partial download without restarting from zero", async () => {
     const output = path.join(home, "resumable");
     const task = await rpc.request("download.start", { urls: [`${slowUrl}/resume.bin`], output });

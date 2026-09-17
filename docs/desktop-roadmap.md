@@ -101,9 +101,10 @@ CLI and desktop runs record the same shared-core per-file history under the unif
 
 Desktop download notifications are included in the 3.2.0 release work; see [behavior and platform verification](desktop-notifications.md). This is separately authorized from tray progress.
 
-| Bucket | Feature                                                                                       | Status                                             | Notes                                                                                                                                                                                      |
-| ------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md) | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md). |
+| Bucket | Feature                                                                                                   | Status                                             | Notes                                                                                                                                                                                          |
+| ------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md)             | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md).     |
+| 2      | [Standalone-file search](../.context/compound-engineering/todos/016-pending-p3-standalone-file-search.md) | Deferred; needs triage                             | Include cached file matches, refresh Recientes in the background, and consider optional deeper indexing. Shared core behavior for CLI and desktop; preserve branch scope and deduplicate URLs. |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 
@@ -116,6 +117,8 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 
 ## Decisions
 
+- 2026-09-17: Prepare v3.7.0 with remembered download/file group choices, explicit search-index revalidation, compact Settings with auto-sizing ignore rules, a standalone About page, and independent completion-notification polling. CLI behavior is unchanged; standalone-file search remains deferred.
+- 2026-09-17: Bucket standalone-file search; implement a Settings button to re-fetch listado.html first. No server-wide crawling or new file indexing in this pass.
 - 2026-09-08: User selected option 1 for triage and requested a persistent future-feature bucket, starting with menu bar progress.
 - 2026-09-08: User selected the compact, expandable activity strip as the default. Search Workspace scope marked ready; menu bar progress remains deferred.
 - 2026-09-08: Search Workspace implemented and verified at default, minimum desktop, and narrow viewports. macOS app rebuilt; menu bar progress remains in Later.

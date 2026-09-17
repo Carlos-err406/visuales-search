@@ -27,12 +27,16 @@ async fn search_content(
     no_cache: bool,
     root: Option<String>,
 ) -> Result<Value, String> {
-    sidecar::request(
+    let result = sidecar::request(
         &app,
         "search",
         json!({ "terms": terms, "noCache": no_cache, "root": root }),
     )
-    .await
+    .await?;
+    if no_cache {
+        let _ = app.emit("search-index-changed", ());
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -201,6 +205,19 @@ async fn resume_task(app: tauri::AppHandle, id: String, queue: bool) -> Result<V
     sidecar::request(&app, "tasks.resume", json!({ "id": id, "queue": queue })).await
 }
 
+#[tauri::command]
+async fn open_project_page() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        tauri_plugin_opener::open_url(
+            "https://github.com/Carlos-err406/visuales-search",
+            None::<&str>,
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(windows::state_builder().build())
@@ -239,6 +256,7 @@ pub fn run() {
             get_desktop_settings,
             save_desktop_settings,
             folders::open_output_folder,
+            open_project_page,
             list_download_tasks,
             get_download_files,
             tray::tray_snapshot,

@@ -21,6 +21,7 @@ import { IconButton } from "./icon-button";
 import { formatBytes, isActive, taskName, taskProgress, taskSize, taskSpeed, type Task } from "./task-view";
 import type { TransferCommand } from "./use-transfers";
 import { hasOpenOverlay } from "./overlay-state";
+import { useCollapsedGroups } from "./use-collapsed-groups";
 
 const WIDTH_KEY = "visuales.transfer-inspector-width";
 const MIN_WIDTH = 320;
@@ -78,7 +79,9 @@ function FileList({
   onRetry: (paths?: string[]) => void;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ finished: task.status !== "completed" });
+  const { collapsed, setCollapsed } = useCollapsedGroups("visuales.transfer-file-groups", {
+    finished: task.status !== "completed",
+  });
   const rows = useMemo(() => {
     const groups = [
       { id: "downloading", label: "Downloading", files: [] as DownloadFileDetail[] },
@@ -137,7 +140,7 @@ function FileList({
                   variant="ghost"
                   aria-label={`${row.label} files (${row.count})`}
                   aria-expanded={!collapsed[row.id]}
-                  onClick={() => setCollapsed((current) => ({ ...current, [row.id]: !current[row.id] }))}
+                  onClick={() => setCollapsed(row.id, !collapsed[row.id])}
                 >
                   <ChevronRight size={14} className={collapsed[row.id] ? "" : "group-expanded"} aria-hidden="true" />
                   <span>{row.label}</span>
