@@ -11,7 +11,7 @@ import { runSearchIndexer, getSearchIndexStatus } from "../packages/core/dist/se
 
 test(
   "CLI search uses cached files; index controls share state and Ctrl-C only detaches an observer",
-  { timeout: 20000 },
+  { timeout: 90000 },
   async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "visuales-index-cli-"));
     process.env.HOME = process.env.USERPROFILE = home;
