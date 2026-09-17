@@ -13,6 +13,7 @@ import { FILE_BODY, startTestServer } from "./helpers/test-server.mjs";
 
 let home, rpc, server, slowServer, slowUrl;
 const sleeps = new Set();
+const heldDownloads = new Set();
 
 async function startRpc({ indexing = false } = {}) {
   const script = path.join(home, "packaged engine", "sidecar.cjs");
@@ -140,6 +141,8 @@ before(async () => {
     let offset = start;
     const timer = setInterval(
       () => {
+        // Cancellation tests must retain a partial file regardless of runner speed.
+        if (offset > start && heldDownloads.has(req.url)) return;
         const next = Math.min(offset + 32768, end + 1);
         res.write(FILE_BODY.subarray(offset, next));
         offset = next;
@@ -166,6 +169,8 @@ for (const initiator of ["desktop", "CLI"]) {
   it(`${initiator} interrupts desktop and CLI downloads plus their queue, preserving partial files`, async () => {
     const cliOutput = path.join(home, `cancel-all-${initiator}-cli`);
     const cliUrl = `${slowUrl}/cancel-all-${initiator}-cli.bin`;
+    const heldPaths = [`/cancel-all-${initiator}-cli.bin`, `/cancel-all-${initiator}-desktop.bin`];
+    for (const heldPath of heldPaths) heldDownloads.add(heldPath);
     const cli = spawn(process.execPath, [path.resolve("dist/cli.js"), "download", cliUrl, "--output", cliOutput], {
       env: { ...process.env, HOME: home, USERPROFILE: home },
       stdio: "ignore",
@@ -217,6 +222,7 @@ for (const initiator of ["desktop", "CLI"]) {
     } finally {
       cli.kill();
       await closed;
+      for (const heldPath of heldPaths) heldDownloads.delete(heldPath);
     }
   });
 }
