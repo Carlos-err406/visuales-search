@@ -326,6 +326,16 @@ try {
           return { interrupted, failures: [] };
         }
         const task = state.tasks.find((item) => item.id === args.id);
+        if (command === "retry_failed_download_task") {
+          if (state.holdRetryAll)
+            await new Promise((resolve) => {
+              state.finishRetryAll = resolve;
+            });
+          if (args.id === state.failRetryId) throw new Error("Test retry failure");
+          if (task.status !== "failed") throw new Error("This transfer is no longer failed");
+          task.status = "queued";
+          return task;
+        }
         if (command === "move_queued_download") {
           if (state.moveDelay) await new Promise((resolve) => setTimeout(resolve, state.moveDelay));
           const queue = state.tasks

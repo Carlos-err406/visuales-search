@@ -222,14 +222,22 @@ function isTransientDownloadError(error: Error): boolean {
       "ENETRESET",
       "EPIPE",
       "ETIMEDOUT",
+      "ECONNREFUSED",
+      "ENETUNREACH",
+      "EHOSTUNREACH",
       "EAI_AGAIN",
       "ENOTFOUND",
       "UND_ERR_SOCKET",
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_HEADERS_TIMEOUT",
+      "UND_ERR_BODY_TIMEOUT",
       "ERR_DOWNLOAD_RETRYABLE",
     ].includes(code)
   ) {
     return true;
   }
+
+  if (error.name === "TimeoutError") return true;
 
   return /ECONNRESET|EPIPE|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|aborted|terminated|read timed out|socket hang up|network timeout/i.test(
     error.message
@@ -357,6 +365,8 @@ export async function downloadFile(
     verificationVersion: undefined,
     localMtimeMs: undefined,
     error: undefined,
+    attempts: 0,
+    maxRetries: Number.isSafeInteger(options.maxRetries) && options.maxRetries >= 0 ? options.maxRetries : undefined,
   });
   let lastTotalSize = expectedSize ?? 0;
   try {
@@ -525,6 +535,7 @@ async function downloadFileContents(
   const maxFileAttempts = Math.max(1, options.maxRetries + 1);
 
   for (let attempt = 1; attempt <= maxFileAttempts; attempt++) {
+    reportDownloadFile(url, options.output, filename, { attempts: attempt });
     try {
       if (usesNativeFetchDownloader()) {
         let bars: ReturnType<typeof createDownloadBar> | null = slotBar ?? null;
@@ -885,6 +896,7 @@ async function downloadFileContents(
       }
 
       const retryDelay = 5000 + 3000 * (attempt - 1);
+      reportDownloadFile(url, options.output, filename, { speedBytes: 0, connections: undefined });
       progressBars.log(
         `${colors.gray("·")} ${colors.bold.white(filename)} ${colors.yellow(
           `(Retrying after ${error.message}; attempt ${attempt + 1}/${maxFileAttempts})`

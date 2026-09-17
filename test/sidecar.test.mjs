@@ -326,6 +326,48 @@ describe("packaged Node sidecar", () => {
     }
   });
 
+  it("bulk retry queues only failed transfers with their original retry settings", async () => {
+    const initial = await rpc.request("settings.get");
+    let blocker;
+    try {
+      await rpc.request("settings.save", { settings: { ...initial.settings, maxRetries: 5 } });
+      const task = await rpc.request("download.start", {
+        urls: [server.url("normal", "bulk-retry.bin")],
+        output: path.join(home, "bulk-retry"),
+      });
+      await waitForTask(task.id, "completed");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await assert.rejects(rpc.request("tasks.resume", { id: task.id, queue: true, failedOnly: true }), /complete/);
+      const storePath = path.join(home, ".visuales-cli-cache/download/tasks.json");
+      const store = JSON.parse(await fs.readFile(storePath, "utf8"));
+      store.tasks.find((entry) => entry.id === task.id).status = "failed";
+      await fs.writeFile(storePath, JSON.stringify(store));
+      await rpc.request("settings.save", { settings: { ...initial.settings, maxRetries: 0 } });
+      blocker = await rpc.request("download.start", {
+        urls: [`${slowUrl}/cancel-all-bulk-blocker.bin`],
+        output: path.join(home, "bulk-blocker"),
+      });
+      const queued = await rpc.request("tasks.resume", { id: task.id, queue: true, failedOnly: true });
+      assert.equal(queued.status, "queued");
+      assert.equal(queued.id, task.id);
+      assert.deepEqual(queued.options, task.options);
+      assert.equal(queued.options.maxRetries, 5);
+      await assert.rejects(
+        rpc.request("tasks.resume", { id: task.id, queue: true, failedOnly: true }),
+        /no longer failed/
+      );
+      await rpc.request("tasks.cancel", { id: task.id });
+      await assert.rejects(
+        rpc.request("tasks.resume", { id: task.id, queue: true, failedOnly: true }),
+        /no longer failed/
+      );
+      assert.equal((await rpc.request("tasks.list")).find((entry) => entry.id === task.id).status, "interrupted");
+    } finally {
+      if (blocker) await rpc.request("tasks.cancel", { id: blocker.id });
+      await rpc.request("settings.save", { settings: initial.settings });
+    }
+  });
+
   it("serves cached directory listings and file previews through the packaged RPC adapter", async () => {
     const tasksBefore = await rpc.request("tasks.list");
     const root = path.join(home, ".visuales-cli-cache");
@@ -1087,26 +1129,32 @@ describe("packaged Node sidecar", () => {
   });
 
   it("preserves concurrent task updates and reports failures", async () => {
-    const jobs = await Promise.all(
-      ["first", "second", "third"].map((name) =>
-        rpc.request("download.start", {
-          urls: [server.url("normal", `${name}.bin`)],
-          output: path.join(home, name),
-        })
-      )
-    );
-    for (const job of jobs) await waitForTask(job.id, "completed");
-    const failed = await rpc.request("download.start", {
-      urls: [server.url("unavailable", "blocked.bin")],
-      output: path.join(home, "blocked"),
-    });
-    const result = await waitForTask(failed.id, "failed");
-    assert.ok(result.lastError);
-    const details = await rpc.request("tasks.files", { id: failed.id });
-    assert.equal(details.files[0].status, "failed");
-    assert.ok(details.files[0].error);
-    await assert.rejects(rpc.request("tasks.files", { id: "../../missing-task" }), /not found/);
-    await assert.rejects(fs.access(path.join(home, "blocked", "blocked.bin")));
+    const initial = await rpc.request("settings.get");
+    await rpc.request("settings.save", { settings: { ...initial.settings, maxRetries: 0 } });
+    try {
+      const jobs = await Promise.all(
+        ["first", "second", "third"].map((name) =>
+          rpc.request("download.start", {
+            urls: [server.url("normal", `${name}.bin`)],
+            output: path.join(home, name),
+          })
+        )
+      );
+      for (const job of jobs) await waitForTask(job.id, "completed");
+      const failed = await rpc.request("download.start", {
+        urls: [server.url("unavailable", "blocked.bin")],
+        output: path.join(home, "blocked"),
+      });
+      const result = await waitForTask(failed.id, "failed");
+      assert.ok(result.lastError);
+      const details = await rpc.request("tasks.files", { id: failed.id });
+      assert.equal(details.files[0].status, "failed");
+      assert.ok(details.files[0].error);
+      await assert.rejects(rpc.request("tasks.files", { id: "../../missing-task" }), /not found/);
+      await assert.rejects(fs.access(path.join(home, "blocked", "blocked.bin")));
+    } finally {
+      await rpc.request("settings.save", { settings: initial.settings });
+    }
   });
 
   it("notifies once per desktop run, without history, CLI transfers, interruptions, or disabled events", async () => {

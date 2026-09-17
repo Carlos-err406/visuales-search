@@ -9,6 +9,7 @@ import {
   isUnavailableResponse,
   parseContentRangeStart,
   parseContentRangeTotal,
+  unavailableDownloadError,
 } from "./http.js";
 import { getFileSize } from "./file-state.js";
 import { downloadInParallel, withDownloadConnection } from "./parallel-download.js";
@@ -94,7 +95,7 @@ async function downloadSequentially(request: FetchDownloadRequest): Promise<Fetc
     const totalBytes = exactSize ?? expectedFileSize.size;
 
     if (isUnavailableResponse(response)) {
-      throw new Error("Download returned the visuales unavailable-page response; retry later");
+      throw unavailableDownloadError();
     }
 
     if (!response.body) {

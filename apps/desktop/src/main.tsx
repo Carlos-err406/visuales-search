@@ -330,6 +330,8 @@ function App({ root }: { root?: string }) {
   const [message, setMessage] = useState("");
   const [taskErrors, setTaskErrors] = useState<Record<string, string>>({});
   const [interruptingAll, setInterruptingAll] = useState(false);
+  const [retryingAll, setRetryingAll] = useState(false);
+  const retryAllBusy = useRef(false);
   const [expanded, setExpanded] = useState(false);
   const { collapsed: savedGroups, setCollapsed: saveGroup } = useCollapsedGroups("visuales.download-groups");
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>({});
@@ -717,12 +719,33 @@ function App({ root }: { root?: string }) {
   }
 
   async function taskAction(command: TransferCommand, id: string, position?: QueueMove, paths?: string[]) {
-    if (interruptingAll) return;
+    if (interruptingAll || retryAllBusy.current) return;
     setTaskErrors((current) => ({ ...current, [id]: "" }));
     try {
       await act(command, id, position, paths);
     } catch (error) {
       setTaskErrors((current) => ({ ...current, [id]: String(error) }));
+    }
+  }
+
+  async function retryAllFailed(items: Task[]) {
+    if (retryAllBusy.current || interruptingAll || updates.blocksTransfers || pending.size) return;
+    const failed = items.filter((task) => task.status === "failed");
+    retryAllBusy.current = true;
+    setRetryingAll(true);
+    try {
+      for (const task of failed) {
+        setTaskErrors((current) => ({ ...current, [task.id]: "" }));
+        try {
+          await act("retry_failed_download_task", task.id);
+        } catch (error) {
+          setTaskErrors((current) => ({ ...current, [task.id]: String(error) }));
+          setGroupOverrides((current) => ({ ...current, attention: false }));
+        }
+      }
+    } finally {
+      retryAllBusy.current = false;
+      setRetryingAll(false);
     }
   }
 
@@ -751,7 +774,7 @@ function App({ root }: { root?: string }) {
       queuePosition={queuePositions.get(task.id) ?? 0}
       queueTotal={queuedCount}
       pending={pending.has(task.id)}
-      actionsBlocked={updates.blocksTransfers || interruptingAll}
+      actionsBlocked={updates.blocksTransfers || interruptingAll || retryingAll}
       error={taskErrors[task.id]}
       onAction={(command, id, position) => void taskAction(command, id, position)}
       onOpen={() => void openOutputFolder(task.output, task.id)}
@@ -1173,7 +1196,7 @@ function App({ root }: { root?: string }) {
           <div className="downloads-toolbar-actions">
             <InterruptAllButton
               tasks={tasks}
-              disabled={updates.blocksTransfers || pending.size > 0}
+              disabled={updates.blocksTransfers || pending.size > 0 || retryingAll}
               onPendingChange={setInterruptingAll}
               onChanged={() => refresh(true)}
             />
@@ -1203,24 +1226,41 @@ function App({ root }: { root?: string }) {
                       <TableBody>
                         <TableRow className="download-group">
                           <TableCell colSpan={5}>
-                            <Button
-                              variant="ghost"
-                              aria-label={`${group.label} downloads (${items.length})`}
-                              aria-expanded={!collapsed}
-                              aria-controls={`download-group-${group.id}`}
-                              onClick={() => {
-                                saveGroup(group.id, !collapsed);
-                                setGroupOverrides((current) => {
-                                  const next = { ...current };
-                                  delete next[group.id];
-                                  return next;
-                                });
-                              }}
-                            >
-                              <ChevronRight size={14} className={collapsed ? "" : "group-expanded"} />
-                              <span>{group.label}</span>
-                              <span className="secondary">{items.length}</span>
-                            </Button>
+                            <div className="download-group-header">
+                              <Button
+                                variant="ghost"
+                                className="group-toggle"
+                                aria-label={`${group.label} downloads (${items.length})`}
+                                aria-expanded={!collapsed}
+                                aria-controls={`download-group-${group.id}`}
+                                onClick={() => {
+                                  saveGroup(group.id, !collapsed);
+                                  setGroupOverrides((current) => {
+                                    const next = { ...current };
+                                    delete next[group.id];
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <ChevronRight size={14} className={collapsed ? "" : "group-expanded"} />
+                                <span>{group.label}</span>
+                                <span className="secondary">{items.length}</span>
+                              </Button>
+                              {group.id === "attention" && items.some((task) => task.status === "failed") && (
+                                <Button
+                                  variant="ghost"
+                                  className="group-retry"
+                                  aria-label="Retry all failed downloads"
+                                  disabled={
+                                    retryingAll || interruptingAll || updates.blocksTransfers || pending.size > 0
+                                  }
+                                  onClick={() => void retryAllFailed(items)}
+                                >
+                                  {retryingAll ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                                  Retry all
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       </TableBody>
@@ -1261,7 +1301,7 @@ function App({ root }: { root?: string }) {
             <TransferInspector
               task={inspectedTask}
               pending={pending.has(inspectedTask.id)}
-              blocked={updates.blocksTransfers || interruptingAll}
+              blocked={updates.blocksTransfers || interruptingAll || retryingAll}
               error={taskErrors[inspectedTask.id]}
               onClose={() => {
                 rememberDownloadAnchor();

@@ -139,6 +139,7 @@ function FileList({
               >
                 <Button
                   variant="ghost"
+                  className="group-toggle"
                   aria-label={`${row.label} files (${row.count})`}
                   aria-expanded={!collapsed[row.id]}
                   onClick={() => setCollapsed(row.id, !collapsed[row.id])}
@@ -147,6 +148,17 @@ function FileList({
                   <span>{row.label}</span>
                   <span className="secondary">{row.count}</span>
                 </Button>
+                {row.id === "attention" && files.some((file) => file.status === "failed") && (
+                  <Button
+                    variant="ghost"
+                    className="group-retry"
+                    aria-label="Retry all failed files"
+                    disabled={retryDisabled}
+                    onClick={() => onRetry()}
+                  >
+                    <RefreshCw size={14} /> Retry all
+                  </Button>
+                )}
               </li>
             );
           const file = row.file;
@@ -208,6 +220,11 @@ function FileList({
               )}
               {active && <Progress aria-label={`Progress for file ${file.path}`} value={percent} />}
               {file.error && <p className="task-error">{messageForDisplay(file.error)}</p>}
+              {file.status === "failed" && file.attempts !== undefined && file.maxRetries !== undefined && (
+                <p className="secondary file-retry-count">
+                  {Math.max(0, file.attempts - 1)} of {file.maxRetries} retries used
+                </p>
+              )}
             </li>
           );
         })}
@@ -406,11 +423,6 @@ export function TransferInspector({
       </section>
       <div className="inspector-files-heading">
         <h3>Files</h3>
-        {data?.files.some((file) => file.status === "failed") && (
-          <Button variant="ghost" disabled={pending || blocked || isActive(task)} onClick={() => onRetry()}>
-            <RefreshCw size={14} /> Retry failed
-          </Button>
-        )}
         <span className="secondary">{data?.files.length ?? ""}</span>
       </div>
       {loadError && (

@@ -2,11 +2,13 @@ import fs from "fs/promises";
 import { DownloadOptions } from "./types.js";
 import {
   createDownloadHeaders,
+  checkRetryableStatus,
   ExpectedFileSize,
   getRangeValidator,
   getRequestTimeoutSignal,
   isUnavailableResponse,
   parseContentRangeTotal,
+  unavailableDownloadError,
 } from "./http.js";
 import { getFileSize, isUnavailablePageFile } from "./file-state.js";
 import { downloadWithFetch, type FetchDownloadProgress } from "./fetch-download.js";
@@ -21,6 +23,8 @@ export interface RemoteFileProbe {
   /** False when the server ignored the Range header and replied 200. */
   acceptsRanges: boolean;
   validator?: string;
+  /** Preserve transient request failures so verification can use the file retry budget. */
+  error?: Error;
 }
 
 export interface VerifyDownloadRequest {
@@ -79,9 +83,12 @@ export async function probeRemoteCompletion(
     if (response.status === 206 && response.headers.get("content-length") === "1") await response.arrayBuffer();
     else await response.body?.cancel();
 
+    checkRetryableStatus(response);
+    if (response.ok && isUnavailableResponse(response)) throw unavailableDownloadError();
+
     return interpretProbeResponse(response, localSize);
-  } catch {
-    return UNKNOWN_PROBE;
+  } catch (error) {
+    return { ...UNKNOWN_PROBE, error: error instanceof Error ? error : new Error(String(error)) };
   }
 }
 
@@ -176,6 +183,7 @@ export async function verifyDownloadedFile(request: VerifyDownloadRequest): Prom
     const probe = await probeRemoteCompletion(url, localSize, options);
 
     if (!probe.known) {
+      if (probe.error) throw probe.error;
       throw new Error(
         `Could not verify download completion (${formatSize(localSize)} saved` +
           `${expectedFileSize.exact ? `; expected ${formatSize(expectedFileSize.size)}` : ""}). ` +
@@ -256,5 +264,5 @@ async function assertNotUnavailablePage(filePath: string): Promise<void> {
   if (!(await isUnavailablePageFile(filePath))) return;
 
   await fs.rm(filePath, { force: true });
-  throw new Error("Download returned the visuales unavailable-page response; retry later");
+  throw unavailableDownloadError();
 }

@@ -10,6 +10,7 @@ export type TransferCommand =
   | "cancel_download_task"
   | "delete_download_task"
   | "retry_download_files"
+  | "retry_failed_download_task"
   | "move_queued_download";
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;

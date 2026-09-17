@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 
 export async function testRetryAndReview({ page, screenshots }) {
+  const savedGroups = await page.evaluate(() => window.localStorage.getItem("visuales.download-groups"));
   await page.setViewportSize({ width: 1240, height: 820 });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
   await page.evaluate(() => {
@@ -106,6 +107,8 @@ export async function testRetryAndReview({ page, screenshots }) {
         totalBytes: 12000,
         downloadedBytes: 0,
         error: "Connection lost",
+        attempts: 6,
+        maxRetries: 5,
       })),
     };
   });
@@ -117,6 +120,11 @@ export async function testRetryAndReview({ page, screenshots }) {
     })
     .click();
   const inspector = page.getByRole("complementary", { name: "Transfer details" });
+  await inspector.getByText("5 of 5 retries used").first().waitFor();
+  await inspector.getByRole("button", { name: "Needs attention files (2)" }).click();
+  assert.ok(await inspector.getByRole("button", { name: "Retry all failed files", exact: true }).isVisible());
+  await inspector.getByRole("button", { name: "Needs attention files (2)" }).click();
+  await page.screenshot({ path: `${screenshots}/retry-all-files.png` });
   await inspector.getByRole("button", { name: "Retry one.srt", exact: true }).click();
   await inspector.getByRole("button", { name: "Retry one.srt", exact: true }).waitFor({ state: "detached" });
   const retry = await page.evaluate(() =>
@@ -126,15 +134,103 @@ export async function testRetryAndReview({ page, screenshots }) {
   await page.evaluate(() => {
     window.testBridge.fail = "retry_download_files";
   });
-  await inspector.getByRole("button", { name: "Retry failed", exact: true }).click();
+  await inspector.getByRole("button", { name: "Retry all failed files", exact: true }).click();
   await inspector.getByRole("alert").filter({ hasText: "Test failure" }).waitFor();
   await page.evaluate(() => {
     window.testBridge.fail = "";
   });
-  await inspector.getByRole("button", { name: "Retry failed", exact: true }).click();
-  await inspector.getByRole("button", { name: "Retry failed", exact: true }).waitFor({ state: "detached" });
+  await inspector.getByRole("button", { name: "Retry all failed files", exact: true }).click();
+  await inspector.getByRole("button", { name: "Retry all failed files", exact: true }).waitFor({ state: "detached" });
   const all = await page.evaluate(() =>
     window.testBridge.calls.filter((call) => call.command === "retry_download_files").at(-1)
   );
   assert.equal(all.args.paths, undefined);
+
+  await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  await page.evaluate(() => {
+    const failed = window.testBridge.tasks.find((task) => task.id === "task-2");
+    window.testBridge.tasks.push({
+      ...failed,
+      id: "another-failure",
+      url: "https://test/Another/",
+      output: "/tmp/Another",
+    });
+    window.testBridge.failRetryId = "task-2";
+    window.testBridge.holdRetryAll = true;
+  });
+  await page.getByRole("tab", { name: /Downloads/ }).click();
+  await page.getByRole("button", { name: "Refresh downloads", exact: true }).click();
+  const group = page.getByRole("button", { name: "Needs attention downloads (3)", exact: true });
+  await group.waitFor();
+  if ((await group.getAttribute("aria-expanded")) === "true") await group.click();
+  const retryAll = page.getByRole("button", { name: "Retry all failed downloads", exact: true });
+  assert.ok(await retryAll.isVisible(), "bulk retry stays available in a collapsed group");
+  for (const width of [1240, 900, 390]) {
+    await page.setViewportSize({ width, height: 820 });
+    const button = await retryAll.boundingBox();
+    const toggle = await group.boundingBox();
+    assert.ok(button.x >= toggle.x + toggle.width - 1, "retry and collapse controls do not overlap");
+    assert.ok(button.x + button.width <= width, "retry stays within the viewport");
+    await page.screenshot({ path: `${screenshots}/retry-all-downloads-${width}.png` });
+  }
+  await page.setViewportSize({ width: 1240, height: 820 });
+  await retryAll.click();
+  await page.waitForFunction(() => !!window.testBridge.finishRetryAll);
+  assert.equal(await retryAll.isDisabled(), true);
+  await retryAll.evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await page.evaluate(() => {
+    window.testBridge.holdRetryAll = false;
+    window.testBridge.finishRetryAll();
+  });
+  await page.getByRole("alert").filter({ hasText: "Test retry failure" }).waitFor();
+  await page.waitForFunction(
+    () => window.testBridge.tasks.find((task) => task.id === "another-failure").status === "queued"
+  );
+  const retries = await page.evaluate(() =>
+    window.testBridge.calls.filter((call) => call.command === "retry_failed_download_task")
+  );
+  assert.deepEqual(retries.map((call) => call.args.id).sort(), ["another-failure", "task-2"]);
+  assert.equal(
+    await page.evaluate(() => window.testBridge.tasks.find((task) => task.id === "task-3").status),
+    "interrupted"
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "Needs attention downloads (2)" }).getAttribute("aria-expanded"),
+    "true"
+  );
+  await page.evaluate(() => {
+    window.testBridge.failRetryId = "";
+  });
+  await retryAll.click();
+  await retryAll.waitFor({ state: "detached" });
+
+  // A group action follows the visible search scope; hidden failures stay untouched.
+  await page.evaluate(() => {
+    for (const id of ["task-2", "another-failure"])
+      window.testBridge.tasks.find((task) => task.id === id).status = "failed";
+    window.testBridge.calls = [];
+  });
+  await page.getByRole("button", { name: "Refresh downloads", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Filter downloads", exact: true }).fill("documentary");
+  await retryAll.click();
+  await retryAll.waitFor({ state: "detached" });
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.testBridge.calls
+        .filter((call) => call.command === "retry_failed_download_task")
+        .map((call) => call.args.id)
+    ),
+    ["task-2"]
+  );
+  assert.equal(
+    await page.evaluate(() => window.testBridge.tasks.find((task) => task.id === "another-failure").status),
+    "failed"
+  );
+  await page.evaluate((saved) => {
+    if (saved === null) window.localStorage.removeItem("visuales.download-groups");
+    else window.localStorage.setItem("visuales.download-groups", saved);
+  }, savedGroups);
 }

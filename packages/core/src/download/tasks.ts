@@ -419,9 +419,10 @@ export async function startDownloadTaskWithPid(
   options: DownloadOptions,
   pid: number,
   logFile?: string,
-  initialStatus: Extract<DownloadTaskStatus, "queued" | "running"> = "running"
+  initialStatus: Extract<DownloadTaskStatus, "queued" | "running"> = "running",
+  failedOnly = false
 ): Promise<DownloadTaskRecord> {
-  return withTaskLock(() => registerTask(urls, options, pid, logFile, initialStatus));
+  return withTaskLock(() => registerTask(urls, options, pid, logFile, initialStatus, failedOnly));
 }
 
 async function registerTask(
@@ -429,13 +430,16 @@ async function registerTask(
   options: DownloadOptions,
   pid: number,
   logFile: string | undefined,
-  initialStatus: Extract<DownloadTaskStatus, "queued" | "running">
+  initialStatus: Extract<DownloadTaskStatus, "queued" | "running">,
+  failedOnly = false
 ): Promise<DownloadTaskRecord> {
   const store = await loadTaskStore();
   const normalizedUrls = normalizeTaskUrls(urls);
   const id = createDownloadTaskId(normalizedUrls, options.output);
   const now = Date.now();
   const existing = store.tasks.find((task) => task.id === id);
+  if (failedOnly && existing?.status !== "failed")
+    throw new Error("This transfer is no longer failed. Refresh downloads before retrying.");
   if (
     existing &&
     existing.retryPaths?.length &&

@@ -77,10 +77,11 @@ export async function testTransferInspector({ page, screenshots }) {
   assert.equal(await inspector.getByText("Unverified", { exact: true }).count(), 1);
   assert.deepEqual(
     await inspector
-      .locator(".inspector-file-group button")
+      .locator(".inspector-file-group .group-toggle")
       .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
     ["Downloading files (1)", "Pending files (1)", "Needs attention files (2)", "Finished files (2)"]
   );
+  assert.ok(await inspector.getByRole("button", { name: "Retry all failed files", exact: true }).isDisabled());
   const finished = inspector.getByRole("button", { name: "Finished files (2)", exact: true });
   assert.equal(
     await finished.getAttribute("aria-expanded"),
