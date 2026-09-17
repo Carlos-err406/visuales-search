@@ -22,6 +22,12 @@ fn list_download_tasks() -> serde_json::Value {
 }
 
 #[cfg(target_os = "macos")]
+fn click_icon(app: &tauri::AppHandle, rect: tauri::Rect) -> Result<(), String> {
+    tray::handle_popup_click(app, tauri::tray::MouseButtonState::Down, rect)?;
+    tray::handle_popup_click(app, tauri::tray::MouseButtonState::Up, rect)
+}
+
+#[cfg(target_os = "macos")]
 fn main() {
     use std::{fs, path::PathBuf, time::Duration};
     use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -77,10 +83,44 @@ fn main() {
                     let snapshot = task_monitor::snapshot(&app).await?;
                     tray::update_status(&app, Some(&snapshot));
                     main.minimize().map_err(|e| e.to_string())?;
-                    tray::toggle_popup(&app, rect)?;
+                    click_icon(&app, rect)?;
                     tokio::time::sleep(Duration::from_millis(800)).await;
                     if !popup.is_visible().unwrap() || !popup.is_focused().unwrap() {
                         return Err("popup not visible and focused".into());
+                    }
+                    click_icon(&app, rect)?;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    if popup.is_visible().unwrap() || !main.is_minimized().unwrap() {
+                        return Err("second tray click should close popup without restoring main".into());
+                    }
+                    click_icon(&app, rect)?;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    // Reproduce a focus-loss callback queued before mouse-down.
+                    tray::handle_popup_focus(&app, false);
+                    click_icon(&app, rect)?;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    if popup.is_visible().unwrap() || !main.is_minimized().unwrap() {
+                        return Err("focus loss before a tray click reopened popup or main".into());
+                    }
+                    click_icon(&app, rect)?;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    // Keep the original close intent if the press outlasts blur dismissal.
+                    tray::handle_popup_click(&app, tauri::tray::MouseButtonState::Down, rect)?;
+                    tray::dismiss_tray(app.clone())?;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    tray::handle_popup_click(&app, tauri::tray::MouseButtonState::Up, rect)?;
+                    if popup.is_visible().unwrap() || !main.is_minimized().unwrap() {
+                        return Err("long tray press reopened popup or main".into());
+                    }
+                    click_icon(&app, rect)?;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    // A queued blur must not close a popup opened by a newer click.
+                    tray::handle_popup_focus(&app, false);
+                    click_icon(&app, rect)?;
+                    click_icon(&app, rect)?;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    if !popup.is_visible().unwrap() {
+                        return Err("stale blur closed the newly reopened popup".into());
                     }
                     tray::open_downloads(app.clone(), Some("fixture-task".into()))?;
                     tokio::time::sleep(Duration::from_millis(800)).await;
@@ -95,7 +135,7 @@ fn main() {
                     {
                         return Err("navigation not retained exactly once".into());
                     }
-                    tray::toggle_popup(&app, rect)?;
+                    click_icon(&app, rect)?;
                     tokio::time::sleep(Duration::from_millis(400)).await;
                     main.set_focus().map_err(|e| e.to_string())?;
                     tokio::time::sleep(Duration::from_millis(400)).await;
@@ -110,7 +150,7 @@ fn main() {
                     Ok(()) => {
                         fs::write(
                             directory.join("passed"),
-                            "tray, popup, focus dismissal, minimized Downloads navigation passed",
+                            "tray toggle, blur races, focus dismissal, minimized Downloads navigation passed",
                         )
                         .unwrap();
                         app.exit(0);
