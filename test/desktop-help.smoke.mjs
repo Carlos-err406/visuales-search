@@ -1,10 +1,12 @@
 /* global document, window */
 import assert from "node:assert/strict";
+import { settingsPage } from "./helpers/settings-navigation.mjs";
 
 export async function testSettingsHelp({ page, screenshots, checkLayout }) {
   await page.setViewportSize({ width: 1240, height: 820 });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420");
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "Settings");
   const connections = page.getByRole("button", { name: "About connections per file", exact: true });
   const ignore = page.getByRole("button", { name: "About ignore rules", exact: true });
   const help = page.getByRole("dialog");
@@ -39,13 +41,15 @@ export async function testSettingsHelp({ page, screenshots, checkLayout }) {
   await page.getByRole("dialog", { name: "About ignore rules" }).waitFor();
   assert.equal(await help.count(), 1, "switching info buttons replaces the previous help");
   assert.match(await help.textContent(), /!poster.jpg/);
-  await page.getByRole("textbox", { name: "Ignore rules", exact: true }).click();
+  await page.getByRole("heading", { name: "Settings", exact: true }).click();
   await help.waitFor({ state: "hidden" });
   assert.equal(await page.getByRole("button", { name: "Save changes", exact: true }).count(), 0);
 
   for (const theme of ["Light", "Dark"]) {
+    await settingsPage(page, "Settings");
     await page.getByRole("combobox", { name: "Theme", exact: true }).click();
     await page.getByRole("option", { name: theme, exact: true }).click();
+    await settingsPage(page, "Settings");
     for (const width of [1240, 390]) {
       await page.setViewportSize({ width, height: 820 });
       await ignore.click();

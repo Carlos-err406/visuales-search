@@ -191,7 +191,8 @@ export async function testLibraryWindows({ browser, screenshots, baseURL = proce
       "no leading separator for video"
     );
     await folder.keyboard.press("Escape");
-    assert.equal(await folder.getByRole("tab").count(), 3, "folder windows reuse main navigation");
+    assert.equal(await folder.getByRole("tab").count(), 4, "folder windows reuse main navigation");
+    assert.equal(await folder.getByRole("tab", { name: "About", exact: true }).isVisible(), true);
     await folder.getByRole("searchbox", { name: "Search library" }).fill("deep");
     await folder.getByRole("button", { name: "Search", exact: true }).click();
     await folder.getByRole("treeitem", { name: "deep.txt", exact: true }).waitFor();

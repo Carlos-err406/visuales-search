@@ -15,9 +15,13 @@ import { testTrayPopup } from "./desktop-tray.smoke.mjs";
 import { testQueueManagement } from "./desktop-queue.smoke.mjs";
 import { testTransferInspector } from "./desktop-inspector.smoke.mjs";
 import { testQueueResume } from "./desktop-queue-resume.smoke.mjs";
+import { testGroupState } from "./desktop-group-state.smoke.mjs";
+import { testSearchRevalidation } from "./desktop-search-revalidation.smoke.mjs";
 import { testRetryAndReview } from "./desktop-retry-review.smoke.mjs";
 import { testSearchCache } from "./desktop-search-cache.smoke.mjs";
 import { testInterruptAll } from "./desktop-interrupt-all.smoke.mjs";
+import { settingsPage } from "./helpers/settings-navigation.mjs";
+import { testSettingsLayout } from "./desktop-settings-layout.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -154,13 +158,30 @@ try {
       })),
     };
     window.testBridge = state;
-    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
+    const callbacks = new Map();
+    const listeners = new Map();
+    let callbackId = 0;
+    state.emit = (event) => {
+      for (const [id, listener] of listeners) {
+        if (listener.event === event) callbacks.get(listener.handler)?.({ event, id, payload: null });
+      }
+    };
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener(_event, id) {
+        listeners.delete(id);
+      },
+    };
     window.__TAURI_INTERNALS__ = {
-      transformCallback() {
-        return 1;
+      transformCallback(callback) {
+        callbacks.set(++callbackId, callback);
+        return callbackId;
       },
       async invoke(command, args) {
         state.calls.push({ command, args });
+        if (command === "plugin:event|listen") {
+          listeners.set(args.handler, args);
+          return args.handler;
+        }
         if (command === "open_library_window") return "library-1";
         if (command === "take_search_navigation") return null;
         if (command === "has_downloaded_library_file") return false;
@@ -228,6 +249,13 @@ try {
           return structuredClone({ settings: state.settings, defaults: state.settingsDefaults });
         }
         if (command === "search_content") {
+          if (args.noCache) {
+            if (state.holdRevalidation)
+              await new Promise((resolve) => {
+                state.releaseRevalidation = resolve;
+              });
+            state.emit("search-index-changed");
+          }
           const results = structuredClone(args.terms.length ? state.results : state.libraryResults);
           if (state.holdSearch && args.terms.length)
             await new Promise((resolve) => {
@@ -275,7 +303,7 @@ try {
             : "failed";
           return null;
         }
-        if (command === "open_output_folder") return null;
+        if (command === "open_output_folder" || command === "open_project_page") return null;
         if (command === "cancel_all_downloads") {
           if (state.holdCancelAll)
             await new Promise((resolve) => {
@@ -315,6 +343,29 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  if (process.env.DESKTOP_SMOKE_ONLY === "search-revalidation") {
+    await testSearchRevalidation({ page, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`Search cache revalidation checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
+  if (process.env.DESKTOP_SMOKE_ONLY === "settings-layout") {
+    await testSettingsLayout({ page, screenshots });
+    await testSearchRevalidation({ page, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`Compact Settings and About checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
+  if (process.env.DESKTOP_SMOKE_ONLY === "group-state") {
+    await testTransferInspector({ page, screenshots });
+    await testGroupState({ page, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`Persistent group state checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.DESKTOP_SMOKE_ONLY === "queue-resume") {
     await testQueueResume({ page, screenshots });
     await testTrayPopup({ browser, screenshots });
@@ -363,6 +414,7 @@ try {
   assert.equal(await page.locator(".results-toolbar").count(), 1, "library selection toolbar");
   await page.screenshot({ path: `${screenshots}/default-empty.png` });
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "Settings");
   await page.getByLabel("Default output folder", { exact: true }).waitFor();
   const settingsOutput = page.getByLabel("Default output folder", { exact: true });
   const concurrentFiles = page.getByLabel("Concurrent files", { exact: true });
@@ -380,6 +432,7 @@ try {
   await restoreDefaults.click();
   assert.equal(await settingsFooter.count(), 0, "restoring unchanged defaults stays clean");
   await page.screenshot({ path: `${screenshots}/settings-default.png` });
+  await settingsPage(page, "Settings");
   const completedAlerts = page.getByRole("checkbox", { name: "Completed downloads", exact: true });
   const failedAlerts = page.getByRole("checkbox", { name: "Failed downloads", exact: true });
   assert.equal(await completedAlerts.isChecked(), true);
@@ -402,6 +455,7 @@ try {
   await saveSettings.click();
   await page.getByText("Saved", { exact: true }).waitFor();
   assert.equal(await completedAlerts.isChecked(), true);
+  await settingsPage(page, "Settings");
   await concurrentFiles.fill("2");
   assert.equal(await settingsFooter.count(), 1, "editing shows actions");
   await concurrentFiles.fill("5");
@@ -436,6 +490,7 @@ try {
   await page.reload();
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#settings-concurrent")?.value === "2");
+  await settingsPage(page, "Settings");
   assert.equal(await retries.inputValue(), "0");
   assert.equal(await connections.inputValue(), "4");
   assert.equal(await settingsOutput.inputValue(), "/Users/carlos/Downloads/Chosen");
@@ -520,6 +575,7 @@ try {
   await page.screenshot({ path: `${screenshots}/selection-accents.png` });
   assert.equal(await page.getByLabel("Download destination").inputValue(), "/Users/carlos/Downloads/Visuales");
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "Settings");
   await settingsOutput.fill("/Users/carlos/Downloads/New default");
   await saveSettings.click();
   await page.getByText("Saved", { exact: true }).waitFor();
@@ -577,7 +633,7 @@ try {
   await page.locator(".results-list").evaluate((el) => {
     el.scrollTop = 500;
   });
-  await page.getByRole("tab", { name: /Downloads/ }).click();
+  await page.locator("#tab-downloads").click();
   await page.getByRole("table", { name: "Downloads", exact: true }).waitFor();
   const completedColors = await page.evaluate(() => {
     const completed = document.querySelector("#panel-downloads .transfer-row.completed");
@@ -668,7 +724,7 @@ try {
     await page.locator(".tray-toggle").click();
     await checkLayout(`${name}-expanded`);
     await page.locator(".tray-toggle").click();
-    await page.getByRole("tab", { name: /Downloads/ }).click();
+    await page.locator("#tab-downloads").click();
     await checkLayout(`${name}-downloads`);
     assert.equal(await page.locator(".download-count").textContent(), "6", "one unfiltered download count");
     await page.getByLabel("Cancel Planet Earth II", { exact: true }).hover({ position: { x: 15, y: 2 } });
@@ -730,7 +786,7 @@ try {
     await page.getByRole("tab", { name: "Search", exact: true }).click();
   }
   await page.setViewportSize({ width: 1240, height: 820 });
-  await page.getByRole("tab", { name: /Downloads/ }).click();
+  await page.locator("#tab-downloads").click();
   await page.evaluate(() => {
     window.testBridge.listDelay = 200;
     window.testBridge.tasks[0].overallProgress.downloadedBytes = 500000000;
@@ -841,7 +897,7 @@ try {
   assert.equal(await page.locator('.result-row[aria-selected="true"]').count(), 0);
   await page.getByRole("tab", { name: "Search", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
-  assert.equal(await page.getByRole("tab", { name: /Downloads/ }).getAttribute("aria-selected"), "true");
+  assert.equal(await page.locator("#tab-downloads").getAttribute("aria-selected"), "true");
   assert.equal(await page.getByRole("combobox", { name: "Download status" }).count(), 0);
   assert.deepEqual(await page.locator(".download-group button span:first-of-type").allTextContents(), [
     "Downloading",
@@ -918,17 +974,18 @@ try {
   });
   await page.getByLabel("Reconnect").click();
   await page.locator(".connection-error").waitFor({ state: "detached" });
-  await page.getByRole("tab", { name: /Downloads/ }).click();
+  await page.locator("#tab-downloads").click();
   await page.waitForFunction(() => document.querySelectorAll("#panel-downloads .transfer-row").length === 25);
   await page.locator(".downloads-list").evaluate((el) => {
     el.scrollTop = 450;
   });
   await page.getByRole("tab", { name: "Search", exact: true }).click();
-  await page.getByRole("tab", { name: /Downloads/ }).click();
+  await page.locator("#tab-downloads").click();
   assert.equal(await page.locator(".downloads-list").evaluate((el) => el.scrollTop), 450);
   assert.equal(await page.locator(".app-header .app-updates-button").count(), 0);
   assert.equal(await page.locator("#app-updates").count(), 0, "routine update status stays out of the workspace");
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "About");
   await page.getByText("Installed version: 1.3.10").waitFor();
   await page.getByRole("button", { name: "Check for updates", exact: true }).click();
   await page.getByText("You're up to date.").waitFor();
@@ -945,8 +1002,9 @@ try {
   });
   await page.getByRole("button", { name: "Check for updates", exact: true }).click();
   await page.getByText("Visuales 1.4.0 is available.").waitFor();
-  for (const name of ["Search", "Downloads", "Settings"]) {
+  for (const name of ["Search", "Downloads", "Settings", "About"]) {
     await page
+      .locator(".app-header")
       .getByRole("tab", { name: name === "Downloads" ? /Downloads/ : name, exact: name !== "Downloads" })
       .click();
     await page.locator("#app-updates").getByRole("button", { name: "Download update", exact: true }).waitFor();
@@ -969,7 +1027,7 @@ try {
   await page.locator(".settings-updates").getByRole("button", { name: "Download update", exact: true }).waitFor();
   await page.getByRole("tab", { name: "Search", exact: true }).click();
   assert.equal(await page.locator("#app-updates").count(), 0, "view changes preserve Later");
-  await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "About");
   await page.evaluate(() => {
     window.testBridge.fail = "download_app_update";
   });
@@ -995,8 +1053,9 @@ try {
     await page.getByRole("progressbar", { name: "App update download" }).getAttribute("aria-valuenow"),
     null
   );
-  for (const name of ["Search", "Downloads", "Settings"]) {
+  for (const name of ["Search", "Downloads", "Settings", "About"]) {
     await page
+      .locator(".app-header")
       .getByRole("tab", { name: name === "Downloads" ? /Downloads/ : name, exact: name !== "Downloads" })
       .click();
     await page.getByRole("progressbar", { name: "App update download" }).waitFor();
@@ -1006,8 +1065,9 @@ try {
   await page.evaluate(() => window.testBridge.releaseDownload());
   const restartUpdate = page.getByRole("button", { name: "Restart to update", exact: true });
   await restartUpdate.waitFor();
-  for (const name of ["Search", "Settings", "Downloads"]) {
+  for (const name of ["Search", "Settings", "About", "Downloads"]) {
     await page
+      .locator(".app-header")
       .getByRole("tab", { name: name === "Downloads" ? /Downloads/ : name, exact: name !== "Downloads" })
       .click();
     await restartUpdate.waitFor();
@@ -1131,6 +1191,7 @@ try {
   await page.waitForFunction(() => window.testBridge.calls.some((call) => call.command === "check_app_update"));
   assert.equal(await page.locator("#app-updates").count(), 0, "automatic network failures stay in Settings");
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "About");
   await page.getByRole("alert").filter({ hasText: "Test failure: check_app_update" }).waitFor();
   assert.equal(await page.getByText("You're up to date.").count(), 0, "offline is not reported as up to date");
   await page.evaluate(() => {
@@ -1142,6 +1203,7 @@ try {
   automaticUrl.searchParams.set("updates", "info-error");
   await page.goto(automaticUrl.href);
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "About");
   await page.getByRole("alert").filter({ hasText: "Test failure: app_update_info" }).waitFor();
   await page.evaluate(() => {
     window.testBridge.fail = "";
@@ -1152,6 +1214,7 @@ try {
   automaticUrl.searchParams.set("updates", "unsupported");
   await page.goto(automaticUrl.href);
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "About");
   await page.getByText("Use the AppImage for in-app updates.").waitFor();
   assert.equal(await page.getByRole("button", { name: "Check for updates", exact: true }).isDisabled(), true);
   assert.equal(
@@ -1162,6 +1225,7 @@ try {
   automaticUrl.searchParams.set("updates", "current");
   await page.goto(automaticUrl.href);
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
+  await settingsPage(page, "About");
   await page.getByText("You're up to date.").waitFor();
   await page.evaluate(() => {
     window.testBridge.updateVersion = "1.4.0";
@@ -1192,17 +1256,15 @@ try {
   await page.goto(automaticUrl.href);
   await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Test failure: get_desktop_settings" }).waitFor();
+  await settingsPage(page, "About");
   await page.getByRole("button", { name: "Check for updates", exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   await checkLayout("settings-unavailable-updates");
-  const unavailableLayout = await page.evaluate(() => ({
-    updateTop: document.querySelector(".settings-updates").getBoundingClientRect().top,
-    errorBottom: document.querySelector('.settings-loading [role="alert"]').getBoundingClientRect().bottom,
-  }));
-  assert.ok(unavailableLayout.updateTop >= unavailableLayout.errorBottom);
+  assert.equal(await page.locator(".settings-loading").isVisible(), false, "About is independent of Settings loading");
   await page.evaluate(() => {
     window.testBridge.fail = "";
   });
+  await settingsPage(page, "Settings");
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.getByLabel("Concurrent files", { exact: true }).waitFor();
   await testAppearance({ page, screenshots, checkLayout });
@@ -1230,6 +1292,7 @@ try {
     await preview.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420");
     await preview.getByRole("tab", { name: "Settings", exact: true }).click();
     await preview.getByText("Transfer settings are read-only in browser preview.", { exact: true }).waitFor();
+    await settingsPage(preview, "Settings");
     for (const label of [
       "Default output folder",
       "Concurrent files",
@@ -1249,6 +1312,7 @@ try {
       true
     );
     assert.equal(await preview.locator(".settings-footer").count(), 0, "browser preview cannot create unsavable edits");
+    await settingsPage(preview, "Settings");
     assert.equal(await preview.getByRole("combobox", { name: "Theme", exact: true }).isEnabled(), true);
     await preview.screenshot({ path: `${screenshots}/settings-browser-preview.png` });
   } finally {
@@ -1258,6 +1322,9 @@ try {
   await testRetryAndReview({ page, screenshots });
   await testInterruptAll({ page, screenshots });
   await testQueueResume({ page, screenshots });
+  await testGroupState({ page, screenshots });
+  await testSearchRevalidation({ page, screenshots });
+  await testSettingsLayout({ page, screenshots });
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log(`Desktop UI smoke checks passed. Screenshots: ${screenshots}`);
 } catch (error) {

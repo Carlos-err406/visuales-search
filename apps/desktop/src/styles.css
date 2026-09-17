@@ -210,10 +210,6 @@ h3 {
 .settings-update-row > button {
   flex-shrink: 0;
 }
-.settings-loading .settings-section {
-  width: 100%;
-  flex: 0 0 100%;
-}
 .settings-loading > [role="status"] {
   display: inline-flex;
   align-items: center;
@@ -303,7 +299,7 @@ h3 {
   align-items: center;
   flex-wrap: wrap;
   gap: 14px;
-  padding: 24px 0 20px;
+  padding: 16px 0;
   border-bottom: 1px solid var(--border);
 }
 .settings-restore {
@@ -311,8 +307,147 @@ h3 {
 }
 .settings-scroll {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  padding: 20px 0;
+  scrollbar-gutter: stable;
+}
+.settings-category {
+  width: 100%;
+}
+.settings-preferences {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  min-height: 100%;
+  align-items: stretch;
+  gap: 32px;
+}
+.settings-general {
+  min-width: 0;
+  padding-left: 32px;
+  border-left: 1px solid var(--border);
+}
+.settings-downloads > .settings-section:first-child,
+.settings-general > .settings-section:first-child {
+  padding-top: 0;
+}
+.settings-downloads > .settings-section:last-child,
+.settings-general > .settings-section:last-child {
+  border-bottom: 0;
+}
+.settings-category .settings-row {
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 16px;
+  padding: 6px 0;
+}
+.settings-category .settings-output-row,
+.settings-category .settings-exclusions-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+.settings-category .settings-label {
+  font-size: 13px;
+}
+.about-panel .settings-update-row {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.settings-category .settings-search-cache .settings-control {
+  width: 100%;
+}
+.settings-category .settings-search-cache button {
+  width: 100%;
+}
+.workspace-panel.about-page {
+  overflow-y: auto;
+  padding: 36px 28px;
+}
+.about-panel {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  background: var(--surface);
+}
+.about-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  padding: 4px 0 24px;
+}
+.about-identity img {
+  flex-shrink: 0;
+}
+.about-identity h2 {
+  font-size: 24px;
+}
+.about-author {
+  margin: 4px 0;
+  font-size: 13px;
+}
+.about-author span {
+  color: var(--muted);
+}
+.about-author p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+.about-project-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--primary);
+  text-decoration: none;
+  font-size: 13px;
+}
+.about-project-link:hover {
+  text-decoration: underline;
+}
+.about-panel .settings-updates {
+  padding: 20px 0 0;
+  border-bottom: 0;
+}
+.about-panel .app-update-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.about-license {
+  padding: 16px 0;
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.about-license summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--primary);
+}
+.about-license pre {
+  margin: 14px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.6;
+  color: var(--muted);
+}
+@media (max-width: 1000px) {
+  .settings-preferences {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: auto;
+    gap: 24px;
+  }
+  .settings-general {
+    padding-left: 0;
+    padding-top: 20px;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
 }
 .settings-fields {
   border: 0;
@@ -363,6 +498,21 @@ h3 {
 .settings-control {
   min-width: 0;
 }
+.settings-search-cache button {
+  min-width: 180px;
+  max-width: 100%;
+}
+.settings-cache-status {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-cache-status:not(:empty) {
+  margin-top: 8px;
+}
+.settings-search-cache .settings-field-error {
+  overflow-wrap: anywhere;
+}
 .settings-control [data-slot="input-group"],
 .settings-control [data-slot="input"],
 .settings-control [data-slot="textarea"] {
@@ -374,8 +524,9 @@ h3 {
 .settings-control [data-slot="textarea"] {
   field-sizing: fixed;
   min-height: 80px;
-  max-height: 200px;
-  resize: vertical;
+  max-height: none;
+  overflow-y: hidden;
+  resize: none;
   line-height: 1.5;
 }
 .settings-control [data-slot="input-group-control"] {
@@ -437,7 +588,8 @@ h3 {
   min-height: 0;
   gap: 12px;
   align-items: center;
-  padding: 24px 0;
+  padding: 12px 0;
+  flex-shrink: 0;
   font-size: 13px;
 }
 .settings-loading [role="alert"] {
@@ -1957,13 +2109,19 @@ h3 {
   gap: 0;
 }
 .app-header [data-slot="tabs-list"] {
+  flex: 1;
+  min-width: 0;
   height: auto;
   padding: 0;
   border-radius: 1px;
 }
 .app-header [data-slot="tabs-trigger"] {
+  flex: 0 0 auto;
   height: 100%;
   font-weight: 400;
+}
+.app-header .about-tab {
+  margin-left: auto;
 }
 .app-header [data-slot="tabs-trigger"]::after {
   display: none;
@@ -2201,20 +2359,36 @@ h3 {
     min-height: 38px;
   }
   .settings-heading {
-    padding: 18px 0 14px;
+    padding: 12px 0;
     gap: 8px;
   }
-  .settings-row {
+  .workspace-panel.about-page {
+    padding: 20px 14px;
+  }
+  .about-panel {
+    padding: 20px;
+  }
+  .about-panel .settings-update-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .settings-row,
+  .settings-category .settings-row {
     grid-template-columns: minmax(0, 1fr) 90px;
     gap: 12px;
   }
   .settings-output-row,
-  .settings-exclusions-row {
+  .settings-exclusions-row,
+  .settings-category .settings-output-row,
+  .settings-category .settings-exclusions-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
   }
-  .settings-appearance .settings-row {
+  .settings-category .settings-appearance .settings-row {
     grid-template-columns: minmax(0, 1fr) 158px;
+  }
+  .settings-category .settings-search-cache .settings-row {
+    grid-template-columns: minmax(0, 1fr) 180px;
   }
   .settings-number > input {
     width: 90px;
