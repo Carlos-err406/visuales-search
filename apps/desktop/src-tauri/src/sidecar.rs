@@ -118,16 +118,20 @@ impl Bridge {
             .map_err(|error| error.to_string())?
             .join("resources/sidecar.cjs");
         let app = app.clone();
-        Self::spawn_process(runtime, script, move || {
-            app.state::<crate::task_monitor::TaskMonitor>().invalidate();
-            let _ = app.emit("tasks-changed", ());
+        Self::spawn_process(runtime, script, move |method| {
+            if method == "index.changed" {
+                let _ = app.emit("file-index-changed", ());
+            } else {
+                app.state::<crate::task_monitor::TaskMonitor>().invalidate();
+                let _ = app.emit("tasks-changed", ());
+            }
         })
     }
 
     fn spawn_process(
         runtime: std::path::PathBuf,
         script: std::path::PathBuf,
-        changed: impl Fn() + Send + 'static,
+        changed: impl Fn(&str) + Send + 'static,
     ) -> Result<Self, String> {
         let mut command = Command::new(runtime);
         command
@@ -137,6 +141,8 @@ impl Bridge {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
         command.env_remove("NODE_OPTIONS").env_remove("NODE_PATH");
+        #[cfg(test)]
+        command.env("VISUALES_INDEX_AUTOSTART", "0");
         #[cfg(windows)]
         command.creation_flags(0x08000000);
         let mut child = command
@@ -168,8 +174,10 @@ impl Bridge {
                         };
                         let _ = reply.send(result);
                     }
-                } else if message["method"] == "tasks.changed" {
-                    changed();
+                } else if let Some(method @ ("tasks.changed" | "index.changed")) =
+                    message["method"].as_str()
+                {
+                    changed(method);
                 }
             }
             reader_alive.store(false, Ordering::SeqCst);
@@ -269,7 +277,7 @@ mod tests {
             .unwrap()
             .join(format!("visuales-node{}", std::env::consts::EXE_SUFFIX));
         let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/sidecar.cjs");
-        let bridge = Arc::new(Bridge::spawn_process(runtime, script, || {}).unwrap());
+        let bridge = Arc::new(Bridge::spawn_process(runtime, script, |_| {}).unwrap());
         let (hello, invalid) = tokio::join!(
             bridge.call("hello", json!({})),
             bridge.call("invalid", json!({}))

@@ -513,6 +513,43 @@ h3 {
 .settings-search-cache .settings-field-error {
   overflow-wrap: anywhere;
 }
+.settings-file-index {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.settings-file-index [data-slot="progress"] {
+  margin-top: 12px;
+  height: 4px;
+}
+.index-current {
+  overflow-wrap: anywhere;
+}
+.index-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.settings-category .index-controls button {
+  min-width: 0;
+  width: auto;
+}
+.search-index-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.search-index-status button {
+  font-size: 11px;
+  white-space: normal;
+  height: auto;
+  min-height: 28px;
+  text-align: right;
+}
 .settings-control [data-slot="input-group"],
 .settings-control [data-slot="input"],
 .settings-control [data-slot="textarea"] {

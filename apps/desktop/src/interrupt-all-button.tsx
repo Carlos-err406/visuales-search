@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
 import { Square } from "lucide-react";
 import type { CancelAllDownloadsResult } from "@visuales/core";
@@ -83,7 +84,7 @@ export function InterruptAllButton({
           </p>
           {error && (
             <p className="task-error" role="alert">
-              {error}
+              {messageForDisplay(error)}
             </p>
           )}
           <footer>

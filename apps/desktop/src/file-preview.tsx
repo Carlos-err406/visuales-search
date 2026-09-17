@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { messageForDisplay, urlPathForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
@@ -297,7 +298,7 @@ export function FilePreview({ file }: { file: LibraryResource }) {
       <header className="aux-heading">
         <div className="file-copy">
           <h1>{file.name}</h1>
-          <p className="secondary truncate">{decodeURI(new URL(file.url).pathname)}</p>
+          <p className="secondary truncate">{urlPathForDisplay(file.url)}</p>
         </div>
         <IconButton label="Show in Search" onClick={() => action("show_in_search")}>
           <Search size={16} />
@@ -355,7 +356,7 @@ export function FilePreview({ file }: { file: LibraryResource }) {
       </div>
       {(error || transfer.error) && (
         <p role="alert" className="aux-error">
-          {error || transfer.error}
+          {messageForDisplay(error || transfer.error)}
         </p>
       )}
       {transfer.message && (

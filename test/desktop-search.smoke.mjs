@@ -235,8 +235,11 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
   await otherMenuRow.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Open Folder in New Window", exact: true }).click();
   assert.equal(await otherMenuRow.getAttribute("aria-expanded"), "false");
+  await page.getByRole("menu").waitFor({ state: "hidden" });
   await note.focus();
-  await page.keyboard.press("Shift+F10");
+  // macOS Chrome does not reliably map Shift+F10 to a native contextmenu event.
+  if (process.platform === "darwin") await note.dispatchEvent("contextmenu", { button: 2 });
+  else await page.keyboard.press("Shift+F10");
   await page.getByRole("menu").waitFor();
   await page.keyboard.press("Escape");
   await page.evaluate(() => {

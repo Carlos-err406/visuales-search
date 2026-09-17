@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { formatDistanceToNow } from "date-fns";
 import colors from "ansi-colors";
 import { CONFIG, type CacheData, type CacheIndex, type CacheEntry, type SearchAliasCache } from "./types.js";
+import { withCacheLock, readJson, writeJson } from "./cache-io.js";
 
 export async function ensureCacheDirectory(): Promise<void> {
   if (!fs.existsSync(CONFIG.CACHE_DIR)) {
@@ -18,6 +19,15 @@ export async function registerPreviewCache(): Promise<void> {
     type: "directory",
     path: "previews",
     description: "Cached image and text previews (24 hours, up to 32 MB)",
+  });
+}
+
+export async function registerFileIndexCache(): Promise<void> {
+  await updateCacheEntry("file-index", {
+    name: "Search File Index",
+    type: "directory",
+    path: "file-index",
+    description: "Indexed filenames and resumable library indexing progress",
   });
 }
 
@@ -62,29 +72,31 @@ async function saveCacheIndex(index: CacheIndex): Promise<void> {
 }
 
 async function updateCacheEntry(id: string, updates: Partial<CacheEntry>): Promise<void> {
-  const index = await loadCacheIndex();
-  const existingEntryIndex = index.entries.findIndex((entry) => entry.id === id);
+  return withCacheLock(CONFIG.CACHE_INDEX_FILE, async () => {
+    const index = await loadCacheIndex();
+    const existingEntryIndex = index.entries.findIndex((entry) => entry.id === id);
 
-  if (existingEntryIndex >= 0) {
-    index.entries[existingEntryIndex] = {
-      ...index.entries[existingEntryIndex],
-      ...updates,
-    };
-  } else {
-    // Create new entry
-    const newEntry: CacheEntry = {
-      id,
-      name: updates.name || id,
-      type: updates.type || "file",
-      path: updates.path || "",
-      size: updates.size || 0,
-      created: updates.created || Date.now(),
-      description: updates.description,
-    };
-    index.entries.push(newEntry);
-  }
+    if (existingEntryIndex >= 0) {
+      index.entries[existingEntryIndex] = {
+        ...index.entries[existingEntryIndex],
+        ...updates,
+      };
+    } else {
+      // Create new entry
+      const newEntry: CacheEntry = {
+        id,
+        name: updates.name || id,
+        type: updates.type || "file",
+        path: updates.path || "",
+        size: updates.size || 0,
+        created: updates.created || Date.now(),
+        description: updates.description,
+      };
+      index.entries.push(newEntry);
+    }
 
-  await saveCacheIndex(index);
+    await saveCacheIndex(index);
+  });
 }
 
 function calculateFileSize(filePath: string): number {
@@ -108,6 +120,7 @@ function calculateDirectorySize(dirPath: string): number {
 
 // Public cache management functions
 export async function listCaches(): Promise<CacheEntry[]> {
+  if (fs.existsSync(path.join(CONFIG.CACHE_DIR, "file-index"))) await registerFileIndexCache();
   if (fs.existsSync(path.join(CONFIG.CACHE_DIR, "previews"))) await registerPreviewCache();
   const index = await loadCacheIndex();
 
@@ -171,54 +184,62 @@ export async function listCaches(): Promise<CacheEntry[]> {
 }
 
 export async function clearCacheById(id: string): Promise<void> {
-  const index = await loadCacheIndex();
-  const entry = index.entries.find((e) => e.id === id);
+  return withCacheLock(CONFIG.CACHE_INDEX_FILE, async () => {
+    const index = await loadCacheIndex();
+    const entry = index.entries.find((e) => e.id === id);
 
-  if (!entry) {
-    throw new Error(`Cache with ID '${id}' not found`);
-  }
-
-  const fullPath = path.join(CONFIG.CACHE_DIR, entry.path);
-
-  try {
-    if (entry.type === "file" && fs.existsSync(fullPath)) {
-      fs.unlinkSync(fullPath);
-    } else if (entry.type === "directory" && fs.existsSync(fullPath)) {
-      fs.rmSync(fullPath, { recursive: true, force: true });
+    if (!entry) {
+      throw new Error(`Cache with ID '${id}' not found`);
     }
 
-    // Remove entry from index
-    index.entries = index.entries.filter((e) => e.id !== id);
-    await saveCacheIndex(index);
+    const fullPath = path.join(CONFIG.CACHE_DIR, entry.path);
 
-    logger.log(colors.green(`✅ Cleared cache: ${entry.name}`));
-  } catch (e: unknown) {
-    throw new Error(`Failed to clear cache '${entry.name}': ${e instanceof Error ? e.message : e}`);
-  }
-}
-
-export async function clearAllCaches(): Promise<void> {
-  const index = await loadCacheIndex();
-
-  for (const entry of index.entries) {
     try {
-      const fullPath = path.join(CONFIG.CACHE_DIR, entry.path);
-
-      if (entry.type === "file" && fs.existsSync(fullPath)) {
+      if (id === "file-index") {
+        await import("../search-file-index.js").then((module) => module.clearFileIndex());
+      } else if (entry.type === "file" && fs.existsSync(fullPath)) {
         fs.unlinkSync(fullPath);
       } else if (entry.type === "directory" && fs.existsSync(fullPath)) {
         fs.rmSync(fullPath, { recursive: true, force: true });
       }
-    } catch (e) {
-      logger.log(colors.yellow(`⚠️  Failed to clear cache '${entry.name}': ${e instanceof Error ? e.message : e}`));
+
+      // Remove entry from index
+      index.entries = index.entries.filter((e) => e.id !== id);
+      await saveCacheIndex(index);
+
+      logger.log(colors.green(`✅ Cleared cache: ${entry.name}`));
+    } catch (e: unknown) {
+      throw new Error(`Failed to clear cache '${entry.name}': ${e instanceof Error ? e.message : e}`);
     }
-  }
+  });
+}
 
-  // Clear index
-  index.entries = [];
-  await saveCacheIndex(index);
+export async function clearAllCaches(): Promise<void> {
+  return withCacheLock(CONFIG.CACHE_INDEX_FILE, async () => {
+    const index = await loadCacheIndex();
 
-  logger.log(colors.green("✅ Cleared all caches"));
+    for (const entry of index.entries) {
+      try {
+        const fullPath = path.join(CONFIG.CACHE_DIR, entry.path);
+
+        if (entry.id === "file-index") {
+          await import("../search-file-index.js").then((module) => module.clearFileIndex());
+        } else if (entry.type === "file" && fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath);
+        } else if (entry.type === "directory" && fs.existsSync(fullPath)) {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        }
+      } catch (e) {
+        logger.log(colors.yellow(`⚠️  Failed to clear cache '${entry.name}': ${e instanceof Error ? e.message : e}`));
+      }
+    }
+
+    // Clear index
+    index.entries = [];
+    await saveCacheIndex(index);
+
+    logger.log(colors.green("✅ Cleared all caches"));
+  });
 }
 
 export async function getCacheInfo(id: string): Promise<CacheEntry | null> {
@@ -340,31 +361,35 @@ function findAvailableSearchAliasId(url: string, entries: Record<string, string>
 
 export async function saveSearchAliases(urls: string[]): Promise<Map<string, string>> {
   await ensureCacheDirectory();
-  const cache = loadSearchAliasCache();
-  const aliases = new Map<string, string>();
+  const aliases = await withCacheLock(CONFIG.SEARCH_ALIAS_FILE, async () => {
+    const cache = loadSearchAliasCache();
+    const aliases = new Map<string, string>();
+    let changed = false;
 
-  for (const url of urls) {
-    const id = findAvailableSearchAliasId(url, cache.entries);
-    cache.entries[id] = url;
-    aliases.set(url, id);
-  }
+    for (const url of urls) {
+      const id = findAvailableSearchAliasId(url, cache.entries);
+      if (cache.entries[id] !== url) changed = true;
+      cache.entries[id] = url;
+      aliases.set(url, id);
+    }
 
-  cache.updated = Date.now();
+    cache.updated = Date.now();
 
-  try {
-    writeJsonFileAtomic(CONFIG.SEARCH_ALIAS_FILE, cache);
-    await updateCacheEntry("search-aliases", {
-      id: "search-aliases",
-      name: "Search Download Aliases",
-      type: "file",
-      path: "search-aliases.json",
-      created: cache.updated,
-      description: "Short ids for URLs shown by visuales search",
-    });
-  } catch {
-    logger.log(colors.yellow("⚠️  Failed to cache search download aliases"));
-  }
-
+    try {
+      if (changed) writeJsonFileAtomic(CONFIG.SEARCH_ALIAS_FILE, cache);
+    } catch {
+      logger.log(colors.yellow("⚠️  Failed to cache search download aliases"));
+    }
+    return aliases;
+  });
+  await updateCacheEntry("search-aliases", {
+    id: "search-aliases",
+    name: "Search Download Aliases",
+    type: "file",
+    path: "search-aliases.json",
+    created: Date.now(),
+    description: "Short ids for URLs shown by visuales search",
+  });
   return aliases;
 }
 
@@ -458,7 +483,7 @@ export async function getDiscoveryCache(): Promise<Record<string, unknown> | nul
 export async function setDiscoveryCache(data: Record<string, unknown>): Promise<void> {
   await ensureCacheDirectory();
   try {
-    writeJsonFileAtomic(CONFIG.DISCOVERY_CACHE_FILE, data);
+    await withCacheLock(CONFIG.DISCOVERY_CACHE_FILE, () => writeJson(CONFIG.DISCOVERY_CACHE_FILE, data));
 
     // Update index
     await updateCacheEntry("discovery", {
@@ -472,4 +497,19 @@ export async function setDiscoveryCache(data: Record<string, unknown>): Promise<
   } catch {
     // Silently fail
   }
+}
+
+export async function mergeDiscoveryCache(
+  merge: (current: Record<string, unknown>) => Record<string, unknown>
+): Promise<void> {
+  await withCacheLock(CONFIG.DISCOVERY_CACHE_FILE, async () => {
+    const current = (await readJson<Record<string, unknown>>(CONFIG.DISCOVERY_CACHE_FILE)) ?? {};
+    await writeJson(CONFIG.DISCOVERY_CACHE_FILE, merge(current));
+  });
+  await updateCacheEntry("discovery", {
+    name: "Directory Discovery Cache",
+    type: "file",
+    path: "discovery.json",
+    description: "Cached directory listings for faster discovery",
+  });
 }

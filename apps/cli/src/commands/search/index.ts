@@ -3,6 +3,8 @@ import colors from "ansi-colors";
 import { searchContent } from "@visuales/core";
 import { buildTree } from "./tree-builder.js";
 import { displayResults } from "./display.js";
+import { getSearchIndexStatus } from "@visuales/core/search-indexer";
+import { searchIndexLabel } from "@visuales/core/search-index-types";
 
 // Helper functions for Search
 export function printUsage(): void {
@@ -49,6 +51,9 @@ async function searchCommand(terms: string[], options: SearchCommandOptions = {}
 
   try {
     const { results: searchResults, allResults } = await searchContent(terms, { noCache: options.cache === false });
+    const indexing = await getSearchIndexStatus();
+    if (indexing.phase !== "complete")
+      console.log(colors.gray(`${searchIndexLabel(indexing)}. File coverage is incomplete; use visuales index.`));
     console.log();
 
     if (searchResults.length === 0) {

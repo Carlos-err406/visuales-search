@@ -7,6 +7,7 @@ import { setupSearchCommand } from "./commands/search/index.js";
 import { setupDownloadCommand } from "./commands/download/index.js";
 import { setupCacheCommand } from "./commands/cache/index.js";
 import { setupTasksCommand } from "./commands/tasks/index.js";
+import { setupIndexCommand } from "./commands/index/index.js";
 
 function readPackageVersion(): string {
   try {
@@ -44,6 +45,7 @@ async function main(): Promise<void> {
     setupDownloadCommand(program);
     setupTasksCommand(program);
     setupCacheCommand(program);
+    setupIndexCommand(program);
 
     // Parse command line arguments
     await program.parseAsync(process.argv);

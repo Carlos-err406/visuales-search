@@ -1,4 +1,5 @@
 import { Download, RefreshCw } from "lucide-react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { formatBytes } from "./task-view";
@@ -28,7 +29,7 @@ export function AppUpdatesPanel({ updates, activeTransfers }: { updates: AppUpda
         {phase === "downloading" && <Progress value={percent} aria-label="App update download" />}
         {updates.error && (
           <span className="app-update-error" role="alert">
-            {updates.error}
+            {messageForDisplay(updates.error)}
           </span>
         )}
       </div>
@@ -86,7 +87,7 @@ export function AppUpdatesSettings({ updates }: { updates: AppUpdates }) {
           <span>Installed version{info ? `: ${info.currentVersion}` : ": unavailable"}</span>
           {status && (
             <span className="secondary" role="status">
-              {status}
+              {messageForDisplay(status)}
             </span>
           )}
           {lastChecked && (
@@ -97,7 +98,7 @@ export function AppUpdatesSettings({ updates }: { updates: AppUpdates }) {
           )}
           {updates.error && !updates.noticeVisible && (
             <span className="app-update-error" role="alert">
-              {updates.error}
+              {messageForDisplay(updates.error)}
             </span>
           )}
         </div>

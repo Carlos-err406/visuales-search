@@ -1,11 +1,16 @@
 import { useRef, useState } from "react";
+import { messageForDisplay, urlPathForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
-import { RefreshCw } from "lucide-react";
+import { Pause, Play, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { isDesktop } from "./use-transfers";
+import { searchIndexLabel } from "@visuales/core/search-index-types";
+import type { SearchIndexController } from "./use-search-index";
 
-export function SearchCacheSettings() {
+export function SearchCacheSettings({ indexing }: { indexing: SearchIndexController }) {
+  const { status, control } = indexing;
   const busy = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [updated, setUpdated] = useState(false);
@@ -30,7 +35,9 @@ export function SearchCacheSettings() {
 
   return (
     <section className="settings-section settings-search-cache" aria-labelledby="settings-search-heading">
-      <h3 id="settings-search-heading">Search</h3>
+      <h3 id="settings-search-heading" tabIndex={-1}>
+        Search
+      </h3>
       <div className="settings-row">
         <span className="settings-label">Search index</span>
         <div className="settings-control">
@@ -48,10 +55,71 @@ export function SearchCacheSettings() {
           </span>
           {error && (
             <span className="settings-field-error" role="alert">
-              {error}
+              {messageForDisplay(error)}
             </span>
           )}
         </div>
+      </div>
+      <div className="settings-file-index">
+        <div className="settings-label">File index</div>
+        <div className="settings-cache-status" role="status">
+          {status ? searchIndexLabel(status) : "File index unavailable"}
+        </div>
+        {status && (
+          <>
+            {status.total > 0 && (
+              <Progress value={(100 * status.completed) / status.total} aria-label="File indexing progress" />
+            )}
+            <div className="settings-cache-status">
+              {status.files.toLocaleString()} files · {status.completed.toLocaleString()} /{" "}
+              {status.total.toLocaleString()} folders
+              {status.failed > 0 ? ` · ${status.failed} failed` : ""}
+              {status.skipped > 0 ? ` · ${status.skipped} excluded by server` : ""}
+            </div>
+            {status.lastUpdated && (
+              <div className="settings-cache-status">Last scan: {new Date(status.lastUpdated).toLocaleString()}</div>
+            )}
+            {status.current && (
+              <div className="settings-cache-status index-current">{urlPathForDisplay(status.current)}</div>
+            )}
+            {status.error && (
+              <div className="settings-field-error" role="alert">
+                {messageForDisplay(status.error)}
+              </div>
+            )}
+          </>
+        )}
+        <div className="index-controls">
+          {status && ["offline", "partial"].includes(status.phase) && (
+            <Button type="button" variant="outline" disabled={indexing.busy} onClick={() => void control("resume")}>
+              <RefreshCw size={15} />
+              Retry indexing
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!status || indexing.busy}
+            onClick={() => void control(status?.phase === "paused" ? "resume" : "pause")}
+          >
+            {status?.phase === "paused" ? <Play size={15} /> : <Pause size={15} />}
+            {status?.phase === "paused" ? "Resume indexing" : "Pause indexing"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!status || indexing.busy}
+            onClick={() => void control("refresh")}
+          >
+            <RefreshCw size={15} />
+            Refresh file index
+          </Button>
+        </div>
+        {indexing.error && (
+          <div className="settings-field-error" role="alert">
+            {messageForDisplay(indexing.error)}
+          </div>
+        )}
       </div>
     </section>
   );

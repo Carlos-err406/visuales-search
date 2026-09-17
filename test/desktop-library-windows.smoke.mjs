@@ -64,7 +64,7 @@ export async function testLibraryWindows({ browser, screenshots, baseURL = proce
       mime: url.endsWith(".png") ? "image/png" : "text/plain",
       content: url.endsWith(".png")
         ? "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
-        : "<script>window.remoteExecuted = true</script>\nHello library\nHello again",
+        : "<script>window.remoteExecuted = true</script>\nHello library\nHello again\nLiteral %20 stays in preview content",
       bytes: 72,
       cached,
       fetchedAt: Date.now(),
@@ -149,6 +149,26 @@ export async function testLibraryWindows({ browser, screenshots, baseURL = proce
     await text.getByRole("button", { name: "Show in Search", exact: true }).click();
     assert.ok(await text.evaluate(() => window.libraryTest.calls.some((call) => call.command === "show_in_search")));
     await text.screenshot({ path: `${screenshots}/detached-text.png` });
+
+    const encoded = "https://visuales.uclv.cu/Cursos/Part%201/notes%20%23%20caf%C3%A9%20%2520.txt";
+    await text.evaluate((url) => {
+      window.libraryTest.resource = {
+        url,
+        name: "notes # caf\u00e9 %20.txt",
+        kind: "preview",
+        revision: 1,
+      };
+      window.libraryTest.emit("library-window-changed");
+    }, encoded);
+    await text.getByRole("heading", { name: "notes # caf\u00e9 %20.txt", exact: true }).waitFor();
+    await text.getByText("/Cursos/Part 1/notes # caf\u00e9 %20.txt", { exact: true }).waitFor();
+    await text.getByText("Literal %20 stays in preview content", { exact: false }).waitFor();
+    await text.getByRole("button", { name: "Download now", exact: true }).click();
+    await text.getByText("Transfer started", { exact: true }).waitFor();
+    const previewCalls = await text.evaluate(() => window.libraryTest.calls);
+    assert.equal(previewCalls.filter((call) => call.command === "preview_library_file").at(-1).args.url, encoded);
+    assert.deepEqual(previewCalls.filter((call) => call.command === "start_download").at(-1).args.urls, [encoded]);
+    await text.screenshot({ path: `${screenshots}/decoded-preview-path.png` });
 
     const image = await context.newPage();
     await image.goto(`${baseURL}?library-window&image`);

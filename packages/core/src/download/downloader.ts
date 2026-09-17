@@ -2,18 +2,18 @@ import { logger } from "../logger.js";
 import EasyDl from "easydl";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { clean as cleanDownloadParts } from "easydl/dist/utils.js";
-import * as cheerio from "cheerio";
 import { execFile } from "node:child_process";
 import path from "path";
 import fs from "fs/promises";
 import colors from "ansi-colors";
 import pLimit from "p-limit";
 import { DownloadOptions, DownloadProgress, type DownloadActiveFileProgress } from "./types.js";
-import { formatSize, parseSize } from "./utils.js";
+import { formatSize } from "./utils.js";
+import { parseDirectoryListing } from "../library-listing.js";
+import { fileIndexGeneration, publishIndexedDirectory } from "../search-file-index.js";
 import { createIgnoreMatcher } from "./ignore-rules.js";
 import { reportDownloadFile, recordedFileCompletion, FILE_VERIFICATION_VERSION } from "./file-details.js";
 import {
-  DIRECTORY_LISTING_PARSER_VERSION,
   dirListingCache,
   getCachedFileSizeInfo,
   loadDiscoveryCache,
@@ -130,10 +130,6 @@ function isExistingFileComplete(existingSize: number, expectedSize: ExpectedFile
   if (!expectedSize.size || !expectedSize.exact) return false;
 
   return existingSize === expectedSize.size;
-}
-
-function getListingSizeExactness(sizeText: string): boolean {
-  return /^\d+\s*B?$/i.test(sizeText.trim());
 }
 
 function hidePartsDirectory(directory: string): void {
@@ -899,42 +895,6 @@ async function downloadFileContents(
   }
 }
 
-function isRelativeListingHref(href: string): boolean {
-  return href !== "../" && !href.startsWith("?") && !href.startsWith("/") && !href.includes("://");
-}
-
-function getPreformattedListingSize(text: string | undefined): string {
-  const fields = text?.trim().split(/\s+/) ?? [];
-
-  return fields.at(-1) ?? "";
-}
-
-function addDirectoryListingEntry(
-  href: string | undefined,
-  sizeText: string,
-  baseUrl: string,
-  listing: DirectoryListing,
-  seenUrls: Set<string>
-): void {
-  if (!href || !isRelativeListingHref(href)) return;
-
-  const fullUrl = new URL(href, baseUrl).toString();
-  if (seenUrls.has(fullUrl)) return;
-  seenUrls.add(fullUrl);
-
-  if (href.endsWith("/")) {
-    listing.dirs.push(fullUrl);
-    return;
-  }
-
-  const parsedSize = parseSize(sizeText);
-  listing.files.push({
-    url: fullUrl,
-    size: parsedSize,
-    exact: parsedSize > 0 && getListingSizeExactness(sizeText),
-  });
-}
-
 export async function getDirectoryListing(
   url: string,
   options: {
@@ -948,6 +908,9 @@ export async function getDirectoryListing(
     return cached;
   }
 
+  const fetchedAt = Date.now();
+  const generation = await fileIndexGeneration().catch(() => undefined);
+
   const response = await (options.fetcher
     ? options.fetcher(url)
     : fetch(url, {
@@ -960,34 +923,14 @@ export async function getDirectoryListing(
   }
 
   const html = await response.text();
-  const $ = cheerio.load(html);
-  if (options.allowEmptyCache && (!$("pre, table").length || /URL not available/i.test($("title").text()))) {
-    throw new Error("The library did not return a directory listing");
-  }
-  const result: DirectoryListing = { files: [], dirs: [], parserVersion: DIRECTORY_LISTING_PARSER_VERSION };
   const baseUrl = url.endsWith("/") ? url : url + "/";
-  const seenUrls = new Set<string>();
-
-  $("tr").each((_, element) => {
-    const $row = $(element);
-    const $link = $row.find("td a").first();
-    const sizeText = $row.find("td").eq(3).text().trim();
-
-    addDirectoryListingEntry($link.attr("href"), sizeText, baseUrl, result, seenUrls);
-  });
-
-  $("pre a").each((_, element) => {
-    const href = $(element).attr("href");
-    const nextSibling = element.nextSibling;
-    const nextText = nextSibling?.type === "text" ? nextSibling.data : undefined;
-    const sizeText = getPreformattedListingSize(nextText);
-
-    addDirectoryListingEntry(href, sizeText, baseUrl, result, seenUrls);
-  });
+  const result = { ...parseDirectoryListing(html, baseUrl, options.allowEmptyCache), fetchedAt };
 
   if (options.allowEmptyCache || result.files.length > 0 || result.dirs.length > 0) {
     dirListingCache.set(url, result);
     await saveDiscoveryCache();
+    // Indexing is auxiliary: its storage failure must not fail a download.
+    await publishIndexedDirectory(url, result, fetchedAt, generation).catch(() => {});
   }
   return result;
 }

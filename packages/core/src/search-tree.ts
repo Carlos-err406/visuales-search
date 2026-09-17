@@ -1,4 +1,5 @@
 import type { LibraryEntry } from "./library-types.js";
+import { decodeUriForDisplay } from "./uri-display.js";
 
 export interface SearchTreeNode {
   url: string;
@@ -49,19 +50,15 @@ export function buildSearchTree(entries: LibraryEntry[]): SearchTreeNode[] {
       const url = leaf ? parsed.href : `${parsed.origin}/${parts.slice(0, index + 1).join("/")}/`;
       let node = nodes.get(url);
       if (!node) {
-        let name = parts[index];
-        try {
-          name = decodeURIComponent(name);
-        } catch {
-          /* Keep malformed escapes readable. */
-        }
+        const name = decodeUriForDisplay(parts[index]);
         node = { url, name, directory, parent: parent?.url, children: [] };
         nodes.set(url, node);
         (parent ? parent.children : roots).push(node);
       }
       if (leaf) {
         node.entry = entry;
-        node.name = entry.text || node.name;
+        // Human-readable labels may themselves contain literal percent escapes.
+        node.name = entry.text && entry.text !== parts[index] ? entry.text : decodeUriForDisplay(parts[index]);
       }
       parent = node;
     }

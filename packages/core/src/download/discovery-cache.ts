@@ -1,27 +1,53 @@
-import { getDiscoveryCache, setDiscoveryCache } from "../lib/cache.js";
+import { getDiscoveryCache, mergeDiscoveryCache } from "../lib/cache.js";
 
 export interface DirectoryListing {
   files: { url: string; size: number; exact?: boolean }[];
   dirs: string[];
   parserVersion?: number;
+  fetchedAt?: number;
 }
 
 export const DIRECTORY_LISTING_PARSER_VERSION = 4;
 
 export const dirListingCache = new Map<string, DirectoryListing>();
+const baseline = new Map<string, string>();
 
 export async function loadDiscoveryCache() {
   const data = await getDiscoveryCache();
   if (data) {
     for (const [url, entries] of Object.entries(data)) {
-      dirListingCache.set(url, normalizeDirectoryListing(entries as DirectoryListing));
+      try {
+        const listing = normalizeDirectoryListing(entries as DirectoryListing);
+        dirListingCache.set(url, listing);
+        baseline.set(url, JSON.stringify(listing));
+      } catch {
+        /* One corrupt directory must not discard healthy cache entries. */
+      }
     }
   }
 }
 
 export async function saveDiscoveryCache() {
-  const data = Object.fromEntries(dirListingCache.entries());
-  await setDiscoveryCache(data);
+  const dirty = [...dirListingCache].filter(([url, listing]) => baseline.get(url) !== JSON.stringify(listing));
+  if (!dirty.length) return;
+  await mergeDiscoveryCache((current) => {
+    for (const [url, listing] of dirty) {
+      const stored = current[url] as DirectoryListing | undefined;
+      if (!stored || (listing.fetchedAt ?? 0) > (stored.fetchedAt ?? 0)) current[url] = listing;
+      else if (stored.fetchedAt === listing.fetchedAt && Array.isArray(stored.files)) {
+        const previous = baseline.get(url);
+        const old = previous ? (JSON.parse(previous) as DirectoryListing) : undefined;
+        for (const file of listing.files) {
+          const before = old?.files.find((item) => item.url === file.url);
+          const target = stored.files.find((item) => item.url === file.url);
+          if (before && target && file.exact && (before.size !== file.size || before.exact !== file.exact))
+            Object.assign(target, { size: file.size, exact: true });
+        }
+      }
+    }
+    return current;
+  });
+  for (const [url, listing] of dirty) baseline.set(url, JSON.stringify(listing));
 }
 
 export function updateCachedFileSize(fileUrl: string, bytes: number) {
@@ -74,6 +100,7 @@ function normalizeDirectoryListing(listing: DirectoryListing): DirectoryListing 
     })),
     dirs: listing.dirs,
     parserVersion: DIRECTORY_LISTING_PARSER_VERSION,
+    fetchedAt: listing.fetchedAt,
   };
 }
 

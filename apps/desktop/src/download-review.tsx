@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Download, File, Folder, ListPlus, RefreshCw, X } from "lucide-react";
@@ -129,7 +130,7 @@ export function DownloadReview({
         </DialogDescription>
         {error && (
           <p role="alert" className="review-notice task-error">
-            {error}
+            {messageForDisplay(error)}
           </p>
         )}
         {!review && !error && (

@@ -41,7 +41,7 @@ test("scoped search includes only its indexed branch and root files, with stable
     );
     assert.equal((await searchContent(["Other"], { root })).totalResults, 0);
     assert.equal(calls.length, 1, "branch browsing and searches reuse the directory cache");
-    assert.equal((await searchContent(["Example"])).totalResults, 5, "unscoped CLI search stays unchanged");
+    assert.equal((await searchContent(["Example"])).totalResults, 6, "global search also includes the discovered file");
     await assert.rejects(searchContent([], { root: `${base}/Movies/file.txt` }), /directory/);
     await assert.rejects(searchContent([], { root: "https://example.com/Movies/" }), /library|visuales/i);
   } finally {

@@ -1,4 +1,5 @@
 import React, { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -61,6 +62,8 @@ import { orderedQueue, compareTransferOrder, type QueueMove } from "@visuales/co
 import { useAppUpdates } from "./use-app-updates";
 import { AppUpdatesPanel } from "./app-updates";
 import { useDesktopSettings } from "./use-desktop-settings";
+import { useSearchIndex } from "./use-search-index";
+import { searchIndexLabel } from "@visuales/core/search-index-types";
 import { SettingsView } from "./settings-view";
 import { AboutView } from "./about-view";
 import { useAppearance } from "./use-appearance";
@@ -281,7 +284,7 @@ function TaskRow({
           <TableCell colSpan={5}>
             <Alert variant="destructive" className="task-error">
               <AlertCircle size={14} aria-hidden="true" />
-              <AlertDescription>{error || task.lastError}</AlertDescription>
+              <AlertDescription>{messageForDisplay(error || task.lastError)}</AlertDescription>
             </Alert>
           </TableCell>
         </TableRow>
@@ -335,6 +338,13 @@ function App({ root }: { root?: string }) {
   const [inspectedId, setInspectedId] = useState<string | null>(null);
   const updates = useAppUpdates();
   const settings = useDesktopSettings();
+  const indexing = useSearchIndex();
+  const [newResults, setNewResults] = useState<SearchResult[] | null>(null);
+  const currentResults = useRef(results);
+  currentResults.current = results;
+  const currentSelection = useRef(selected);
+  currentSelection.current = selected;
+  const resultRevision = useRef<string | null>(null);
   const { tasks, refresh, refreshManually, refreshing, connectionError, pending, act } = useTransfers(
     updates.blocksTransfers
   );
@@ -379,6 +389,62 @@ function App({ root }: { root?: string }) {
   }, [inspectedId, view]);
   useQueueReorderAnimation(downloadsList, JSON.stringify([view, collapsedGroups, taskQuery]));
   const scrollPositions = useRef({ search: 0, downloads: 0 });
+
+  useEffect(() => {
+    const revision = searchedQuery === "" && !root ? indexing.status?.libraryRevision : indexing.status?.revision;
+    if (!revision || revision === resultRevision.current || view !== "search" || searchedQuery === null || searching)
+      return;
+    let stopped = false;
+    const request = searchRequest.current;
+    const timer = window.setTimeout(() => {
+      void invoke<{ results: SearchResult[] }>("search_content", {
+        terms: searchedQuery ? searchedQuery.split(/\s+/) : [],
+        noCache: false,
+        root,
+      })
+        .then((response) => {
+          if (stopped || request !== searchRequest.current) return;
+          resultRevision.current = revision;
+          if (JSON.stringify(response.results) === JSON.stringify(currentResults.current)) {
+            setNewResults(null);
+            return;
+          }
+          if (
+            currentSelection.current.size ||
+            (searchList.current?.scrollTop ?? 0) > 0 ||
+            searchList.current?.contains(document.activeElement)
+          ) {
+            setNewResults(response.results);
+          } else {
+            searchBrowser.reconcile(currentResults.current, response.results);
+            setResults(response.results);
+            setNewResults(null);
+          }
+          if (searchedQuery === "") libraryIndex.current = Promise.resolve(response.results);
+        })
+        .catch(() => {});
+    }, 500);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [indexing.status?.revision, indexing.status?.libraryRevision, view, searchedQuery, searching]);
+
+  function applyNewResults() {
+    if (!newResults) return;
+    searchBrowser.reconcile(results, newResults);
+    setResults(newResults);
+    setNewResults(null);
+  }
+
+  function showIndexSettings() {
+    switchView("settings");
+    requestAnimationFrame(() => {
+      const heading = document.getElementById("settings-search-heading");
+      heading?.scrollIntoView({ block: "nearest" });
+      heading?.focus({ preventScroll: true });
+    });
+  }
 
   useEffect(() => {
     if (!isDesktop() || root) return;
@@ -544,6 +610,9 @@ function App({ root }: { root?: string }) {
     setSearching(true);
     setSearchError("");
     setMessage("");
+    setNewResults(null);
+    resultRevision.current =
+      (!value.trim() && !root ? indexing.status?.libraryRevision : indexing.status?.revision) ?? null;
     if (!terms.length) {
       searchBrowser.reset();
       setResults([]);
@@ -753,7 +822,7 @@ function App({ root }: { root?: string }) {
       {connectionError && !updates.blocksTransfers && (
         <Alert variant="destructive" className="connection-error">
           <AlertCircle size={15} />
-          <AlertDescription>{connectionError}</AlertDescription>
+          <AlertDescription>{messageForDisplay(connectionError)}</AlertDescription>
           <IconButton
             label="Reconnect"
             tooltip="Reconnect to download engine"
@@ -832,7 +901,7 @@ function App({ root }: { root?: string }) {
         {searchError && (
           <Alert variant="destructive" className="inline-error">
             <AlertCircle size={15} />
-            <AlertDescription>{searchError}</AlertDescription>
+            <AlertDescription>{messageForDisplay(searchError)}</AlertDescription>
             <Button
               variant="link"
               disabled={searching || Boolean(submitting)}
@@ -842,7 +911,7 @@ function App({ root }: { root?: string }) {
             </Button>
           </Alert>
         )}
-        {searchedQuery !== null && results.length > 0 && (
+        {searchedQuery !== null && (results.length > 0 || indexing.status) && (
           <div className="results-toolbar">
             <div className="results-count">
               <span>
@@ -855,6 +924,24 @@ function App({ root }: { root?: string }) {
             <span className="secondary truncate" role="status">
               {searchedQuery === "" ? "Library" : query.trim() !== searchedQuery ? `for "${searchedQuery}"` : ""}
             </span>
+            {indexing.status && (
+              <div className="search-index-status">
+                {newResults && (
+                  <Button variant="link" onClick={applyNewResults}>
+                    <RefreshCw size={13} />
+                    New results
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  onClick={showIndexSettings}
+                  aria-label={`File indexing: ${searchIndexLabel(indexing.status)}`}
+                >
+                  {indexing.status.phase === "indexing" && <Spinner />}
+                  {searchIndexLabel(indexing.status)}
+                </Button>
+              </div>
+            )}
             {message && (
               <Alert className="success-message" role="status">
                 <Check size={14} />
@@ -866,7 +953,7 @@ function App({ root }: { root?: string }) {
         {selectionError && selected.size === 0 && (
           <Alert variant="destructive">
             <AlertCircle size={14} />
-            <AlertDescription>{selectionError}</AlertDescription>
+            <AlertDescription>{messageForDisplay(selectionError)}</AlertDescription>
           </Alert>
         )}
         <div
@@ -996,7 +1083,7 @@ function App({ root }: { root?: string }) {
             {selectionError && (
               <Alert variant="destructive" className="selection-error">
                 <AlertCircle size={14} />
-                <AlertDescription>{selectionError}</AlertDescription>
+                <AlertDescription>{messageForDisplay(selectionError)}</AlertDescription>
               </Alert>
             )}
           </div>
@@ -1212,7 +1299,7 @@ function App({ root }: { root?: string }) {
         id="panel-settings"
         className="workspace-panel settings-panel"
       >
-        <SettingsView controller={settings} appearance={appearance} />
+        <SettingsView controller={settings} appearance={appearance} indexing={indexing} />
       </TabsContent>
       <TabsContent
         value="about"

@@ -1,4 +1,5 @@
 import { Monitor, Moon, Sun } from "lucide-react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { AppearanceController } from "./use-appearance";
@@ -36,7 +37,7 @@ export function AppearanceSettings({ controller }: { controller: AppearanceContr
       </div>
       {controller.error && (
         <p id="appearance-error" className="settings-appearance-error" role="alert">
-          {controller.error}
+          {messageForDisplay(controller.error)}
         </p>
       )}
     </section>

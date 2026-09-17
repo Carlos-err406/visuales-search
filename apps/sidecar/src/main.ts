@@ -39,8 +39,12 @@ import {
 } from "@visuales/core/library";
 import { downloadedLibraryFile } from "@visuales/core/library-local";
 import { canonicalTreeUrl } from "@visuales/core/search-tree";
+import { decodeUriForDisplay } from "@visuales/core/uri-display";
 import { previewKind } from "@visuales/core/library-types";
 import { recordDownloadFiles, readDownloadFileDetails } from "@visuales/core/download/file-details";
+import { runSearchIndexer, getSearchIndexStatus, controlSearchIndex } from "@visuales/core/search-indexer";
+import type { SearchIndexAction } from "@visuales/core/search-index-types";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const PROTOCOL_VERSION = 1;
 const MAX_NOTICE_AGE_MS = 5 * 60 * 1000;
@@ -126,6 +130,24 @@ async function runServer() {
     if (!process.stdout.destroyed) process.stdout.write(`${JSON.stringify(value)}\n`);
   };
   const changed = () => send({ jsonrpc: "2.0", method: "tasks.changed", params: {} });
+  const indexAbort = new AbortController();
+  let indexNotice: ReturnType<typeof setTimeout> | undefined;
+  const indexChanged = () => {
+    if (indexNotice || shuttingDown) return;
+    indexNotice = setTimeout(() => {
+      indexNotice = undefined;
+      if (!shuttingDown) send({ jsonrpc: "2.0", method: "index.changed", params: {} });
+    }, 300);
+  };
+  const indexing = (async () => {
+    if (process.env.VISUALES_INDEX_AUTOSTART === "0") return;
+    while (!indexAbort.signal.aborted) {
+      await runSearchIndexer({ signal: indexAbort.signal, continuous: true, onChange: indexChanged }).catch(
+        console.error
+      );
+      await sleep(2000, undefined, { signal: indexAbort.signal }).catch(() => {});
+    }
+  })();
 
   async function start(urls: string[], options: DownloadOptions, queue = false, retry?: { paths?: string[] }) {
     const taskId = createDownloadTaskId(urls, options.output);
@@ -214,14 +236,23 @@ async function runServer() {
     switch (method) {
       case "hello":
         return { protocolVersion: PROTOCOL_VERSION, runtime: process.version };
+      case "index.status":
+        return getSearchIndexStatus();
+      case "index.control": {
+        const action = string(params.action, "action");
+        if (!["pause", "resume", "refresh"].includes(action)) throw new Error("Unknown indexing action");
+        const status = await controlSearchIndex(action as SearchIndexAction);
+        indexChanged();
+        return status;
+      }
       case "search": {
         const terms = strings(params.terms, "terms", true);
         if (params.root != null && typeof params.root !== "string") throw new Error("Search root must be a URL");
-        const { results, totalResults } = await searchContent(terms, {
+        const { results, totalResults, indexRevision } = await searchContent(terms, {
           noCache: params.noCache === true,
           root: typeof params.root === "string" ? params.root : undefined,
         });
-        return { results, totalResults };
+        return { results, totalResults, indexRevision };
       }
       case "settings.get":
         return loadDesktopSettings(
@@ -242,7 +273,7 @@ async function runServer() {
         const folder = url.endsWith("/");
         if (!folder && !previewKind(url)) throw new Error("Preview is not available for this file type");
         const segment = new URL(url).pathname.replace(/\/$/, "").split("/").at(-1);
-        return { url, name: segment ? decodeURIComponent(segment) : "Visuales", kind: folder ? "folder" : "preview" };
+        return { url, name: segment ? decodeUriForDisplay(segment) : "Visuales", kind: folder ? "folder" : "preview" };
       }
       case "settings.save":
         return saveDesktopSettings(
@@ -406,6 +437,7 @@ async function runServer() {
       if (shuttingDown) throw new Error("Sidecar is shutting down");
       const readOnly = [
         "hello",
+        "index.status",
         "search",
         "tasks.list",
         "tasks.snapshot",
@@ -435,6 +467,9 @@ async function runServer() {
   async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
+    indexAbort.abort();
+    clearTimeout(indexNotice);
+    await indexing;
     await mutations;
     const active = [...workers.values()];
     for (const { child } of active) child.kill();

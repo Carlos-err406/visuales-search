@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AlertCircle, Check, FolderOpen, Info, RefreshCw, RotateCcw, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { downloadDefaults } from "@visuales/core/download/defaults";
 import { AppearanceSettings } from "./appearance-settings";
 import type { AppearanceController } from "./use-appearance";
 import { SearchCacheSettings } from "./search-cache-settings";
+import type { SearchIndexController } from "./use-search-index";
 
 type Draft = {
   output: string;
@@ -45,9 +47,11 @@ const toDraft = (settings: DesktopSettings): Draft => ({
 export function SettingsView({
   controller,
   appearance,
+  indexing,
 }: {
   controller: ReturnType<typeof useDesktopSettings>;
   appearance: AppearanceController;
+  indexing: SearchIndexController;
 }) {
   const { snapshot, loading, error, saving, save, reload } = controller;
   const desktop = isDesktop();
@@ -192,7 +196,7 @@ export function SettingsView({
             <>
               <Alert variant="destructive">
                 <AlertCircle />
-                <AlertDescription>{error || "Settings are unavailable."}</AlertDescription>
+                <AlertDescription>{messageForDisplay(error) || "Settings are unavailable."}</AlertDescription>
               </Alert>
               <Button type="button" variant="outline" onClick={reload}>
                 <RefreshCw /> Retry
@@ -393,14 +397,14 @@ export function SettingsView({
                 </div>
               </section>
             </fieldset>
-            <SearchCacheSettings />
+            <SearchCacheSettings indexing={indexing} />
           </div>
         </div>
       </div>
       {saveError && (
         <Alert variant="destructive" className="settings-save-error">
           <AlertCircle />
-          <AlertDescription>{saveError}</AlertDescription>
+          <AlertDescription>{messageForDisplay(saveError)}</AlertDescription>
         </Alert>
       )}
       {desktop && snapshot && dirty && (

@@ -1,4 +1,5 @@
 import { useState, type MouseEvent } from "react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowUpRight } from "lucide-react";
 import { AppUpdatesSettings } from "./app-updates";
@@ -40,7 +41,7 @@ export function AboutView({ updates }: { updates: AppUpdates }) {
         </a>
         {linkError && (
           <p className="app-update-error" role="alert">
-            {linkError}
+            {messageForDisplay(linkError)}
           </p>
         )}
       </div>

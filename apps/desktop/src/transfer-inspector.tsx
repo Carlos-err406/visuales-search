@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { messageForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -206,7 +207,7 @@ function FileList({
                 </div>
               )}
               {active && <Progress aria-label={`Progress for file ${file.path}`} value={percent} />}
-              {file.error && <p className="task-error">{file.error}</p>}
+              {file.error && <p className="task-error">{messageForDisplay(file.error)}</p>}
             </li>
           );
         })}
@@ -399,7 +400,7 @@ export function TransferInspector({
         </div>
         {(error || task.lastError) && (
           <p role="alert" className="task-error">
-            {error || task.lastError}
+            {messageForDisplay(error || task.lastError)}
           </p>
         )}
       </section>
@@ -414,7 +415,7 @@ export function TransferInspector({
       </div>
       {loadError && (
         <div role="alert" className="inspector-notice">
-          <p>{loadError}</p>
+          <p>{messageForDisplay(loadError)}</p>
           <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>
             <RefreshCw size={14} />
             Retry
