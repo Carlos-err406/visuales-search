@@ -24,7 +24,7 @@ import { useAppearance } from "./use-appearance";
 import { isDesktop } from "./use-transfers";
 import { formatBytes, isActive, type Task } from "./task-view";
 import { selectTrayTasks, trayFilters, type TrayFilter } from "./tray-view";
-import appIcon from "../app-icon.svg?no-inline";
+import { appIcon, appIconLabel } from "./app-icon";
 import "./tray-popup.css";
 
 type TaskAction = "open_output_folder" | "cancel_download_task" | "resume_download_task" | "queue_download_task";
@@ -134,7 +134,7 @@ export function TrayPopup() {
     <main className="tray-popup" aria-label="Visuales transfers">
       <header className="tray-header">
         <h1>
-          <img src={appIcon} alt="" />
+          <img src={appIcon} alt={appIconLabel} />
           Visuales
         </h1>
         <div className="tray-header-actions">

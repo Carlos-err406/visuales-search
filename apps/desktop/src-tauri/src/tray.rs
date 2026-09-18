@@ -71,7 +71,10 @@ pub fn setup(app: &tauri::AppHandle) -> tauri::Result<()> {
             &quit,
         ],
     )?;
-    let icon = small_icon(app.default_window_icon().expect("Visuales app icon"));
+    let icon = status_icon(
+        tauri::is_dev(),
+        app.default_window_icon().expect("Visuales app icon"),
+    );
     let tray = TrayIconBuilder::with_id("visuales-tray")
         .icon(icon)
         .icon_as_template(cfg!(target_os = "macos"))
@@ -148,6 +151,16 @@ pub fn setup(app: &tauri::AppHandle) -> tauri::Result<()> {
         });
     }
     Ok(())
+}
+
+fn status_icon(development: bool, default: &Image<'_>) -> Image<'static> {
+    if development {
+        #[cfg(target_os = "macos")]
+        return tauri::include_image!("icons/dev/tray.png");
+        #[cfg(not(target_os = "macos"))]
+        return small_icon(&tauri::include_image!("icons/dev/icon.png"));
+    }
+    small_icon(default)
 }
 
 // Downsample the existing brand asset. On macOS its white mark becomes an
@@ -377,6 +390,35 @@ pub fn update_status(app: &tauri::AppHandle, snapshot: Option<&Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn development_tray_has_an_integrated_mark_without_changing_production() {
+        let source = tauri::include_image!("icons/icon.png");
+        let production = status_icon(false, &source);
+        let development = status_icon(true, &source);
+        assert_eq!(production.rgba(), small_icon(&source).rgba());
+        assert_ne!(production.rgba(), development.rgba());
+        assert_eq!(development.height(), 32);
+        if cfg!(target_os = "macos") {
+            assert_eq!(development.width(), 54);
+            let width = development.width() as usize;
+            for (left, right, minimum) in [(0, 10, 12), (10, 44, 100), (44, 54, 12)] {
+                let visible = development
+                    .rgba()
+                    .chunks_exact(4)
+                    .enumerate()
+                    .filter(|(index, pixel)| {
+                        (left..right).contains(&(index % width)) && pixel[3] > 128
+                    })
+                    .count();
+                assert!(visible > minimum, "the V and both brackets must be visible");
+            }
+            assert!(development.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
+        } else {
+            assert_eq!(development.width(), 32);
+            assert!(development.rgba().chunks_exact(4).any(|pixel| pixel[3] > 128));
+        }
+    }
+
     #[test]
     fn tray_click_closes_even_if_blur_hides_popup_before_release() {
         let mut interaction = PopupInteraction::default();

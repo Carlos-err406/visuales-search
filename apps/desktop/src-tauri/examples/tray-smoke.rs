@@ -38,6 +38,11 @@ fn main() {
     )
     .unwrap();
     let mut context = tauri::generate_context!();
+    assert_eq!(
+        context.default_window_icon().expect("dev window icon").rgba(),
+        tauri::include_image!("icons/dev/icon.png").rgba(),
+        "native development context must select the dev icon"
+    );
     context.config_mut().app.windows.clear();
     context.config_mut().identifier = "cu.uclv.visuales.tray-test".into();
     tauri::Builder::default()
@@ -80,6 +85,9 @@ fn main() {
                         .rect()
                         .map_err(|e| e.to_string())?
                         .ok_or("missing tray bounds")?;
+                    if rect.size.to_logical::<f64>(popup.scale_factor().unwrap()).width < 25.0 {
+                        return Err("dev tray is too narrow for the V and code marker".into());
+                    }
                     let snapshot = task_monitor::snapshot(&app).await?;
                     tray::update_status(&app, Some(&snapshot));
                     main.minimize().map_err(|e| e.to_string())?;
@@ -150,7 +158,7 @@ fn main() {
                     Ok(()) => {
                         fs::write(
                             directory.join("passed"),
-                            "tray toggle, blur races, focus dismissal, minimized Downloads navigation passed",
+                            "dev window/tray icons, tray toggle, blur races, focus dismissal, minimized Downloads navigation passed",
                         )
                         .unwrap();
                         app.exit(0);

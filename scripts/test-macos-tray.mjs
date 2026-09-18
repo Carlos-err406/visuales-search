@@ -6,7 +6,11 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 if (process.platform !== "darwin") throw new Error("Native tray smoke testing requires macOS");
-execFileSync("cargo", ["build", "--locked", "--example", "tray-smoke"], { stdio: "inherit" });
+const devConfig = JSON.parse(await readFile("apps/desktop/src-tauri/tauri.dev.conf.json", "utf8"));
+execFileSync("cargo", ["build", "--locked", "--example", "tray-smoke"], {
+  stdio: "inherit",
+  env: { ...process.env, TAURI_CONFIG: JSON.stringify(devConfig) },
+});
 const directory = await realpath(await mkdtemp(join(tmpdir(), "visuales-tray-")));
 const app = join(directory, "Visuales Tray Test.app");
 const executable = join(app, "Contents/MacOS/tray-smoke");
