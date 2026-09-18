@@ -11,6 +11,14 @@ export async function testSettingsHelp({ page, screenshots, checkLayout }) {
   const ignore = page.getByRole("button", { name: "About ignore rules", exact: true });
   const help = page.getByRole("dialog");
 
+  await page.getByRole("button", { name: "About concurrent files", exact: true }).click();
+  await page.getByRole("dialog", { name: "About concurrent files" }).waitFor();
+  assert.match(await help.textContent(), /Increasing starts pending files immediately/);
+  assert.match(await help.textContent(), /decreasing lets active files finish/);
+  await page.screenshot({ path: `${screenshots}/settings-live-concurrency-help.png` });
+  await page.keyboard.press("Escape");
+  await help.waitFor({ state: "hidden" });
+
   await connections.hover();
   await page.waitForTimeout(650);
   assert.equal(await page.getByRole("tooltip").count(), 0, "help buttons no longer open hover tooltips");

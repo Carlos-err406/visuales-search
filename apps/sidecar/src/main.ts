@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
+import pLimit from "p-limit";
 import {
   searchContent,
   downloadUrl,
@@ -16,6 +17,7 @@ import {
   cancelAllDownloadTasks,
   deleteDownloadTask,
   updateDownloadTaskProgress,
+  updateDownloadTaskConcurrency,
   waitForQueueSlot,
   moveQueuedDownloadTask,
   type QueueMove,
@@ -45,6 +47,7 @@ import { recordDownloadFiles, readDownloadFileDetails } from "@visuales/core/dow
 import { runSearchIndexer, getSearchIndexStatus, controlSearchIndex } from "@visuales/core/search-indexer";
 import type { SearchIndexAction } from "@visuales/core/search-index-types";
 import { setTimeout as sleep } from "node:timers/promises";
+import { setWorkerConcurrency, type ConcurrencyUpdate, type ConcurrencyReply } from "./worker-control.js";
 
 const PROTOCOL_VERSION = 1;
 const MAX_NOTICE_AGE_MS = 5 * 60 * 1000;
@@ -52,12 +55,28 @@ setLogger({ log: (...values) => console.error(...values), error: (...values) => 
 
 type WorkerConfig = { taskId: string; urls: string[]; options: DownloadOptions; queue: boolean; retry?: boolean };
 type WorkerMessage = { type: "ready" } | { type: "finished"; taskId: string; status: "completed" | "failed" };
-type TransferNotice = { taskId: string; name: string; status: "completed" | "failed"; at: number };
+type TransferNotice = { taskId: string; name: string; status: "completed" | "failed"; at: number; output?: string };
 
 async function runWorker(config: WorkerConfig) {
   const { taskId, urls, queue } = config;
   // JSON transports Infinity as null; task records use the explicit string "Infinity".
   const options = { ...config.options, timeout: config.options.timeout ?? Infinity };
+  const fileLimit = pLimit(options.concurrent);
+  let controls = Promise.resolve();
+  const onControl = (message: ConcurrencyUpdate) => {
+    if (message?.type !== "concurrency") return;
+    controls = controls.then(async () => {
+      const reply: ConcurrencyReply = { type: "concurrency-updated", requestId: message.requestId };
+      try {
+        if (await updateDownloadTaskConcurrency(taskId, message.concurrent, process.pid))
+          fileLimit.concurrency = message.concurrent;
+      } catch (error) {
+        reply.error = error instanceof Error ? error.message : String(error);
+      }
+      process.send?.(reply, undefined, undefined, () => {});
+    });
+  };
+  process.on("message", onControl);
   let progressWrites = Promise.resolve();
   let status: "completed" | "failed" = "completed";
   const onProgress = (progress: DownloadProgress) => {
@@ -72,14 +91,14 @@ async function runWorker(config: WorkerConfig) {
     if (config.retry) {
       const task = await findDownloadTask(taskId);
       if (!task) throw new Error("Download task not found");
-      await runDownloadFileRetry(task);
+      await runDownloadFileRetry(task, fileLimit);
     } else {
       await recordDownloadFiles(
         taskId,
         options.output,
         async () => {
-          if (urls.length === 1) await downloadUrl(urls[0], options, onProgress);
-          else await downloadUrls(createDownloadTargets(urls, options.output), options, onProgress);
+          if (urls.length === 1) await downloadUrl(urls[0], options, onProgress, fileLimit);
+          else await downloadUrls(createDownloadTargets(urls, options.output), options, onProgress, fileLimit);
         },
         { resume: options.resume }
       );
@@ -90,6 +109,9 @@ async function runWorker(config: WorkerConfig) {
     await progressWrites.catch(() => {});
     await failDownloadTask(taskId, error);
     status = "failed";
+  } finally {
+    process.removeListener("message", onControl);
+    await controls;
   }
   // Flush the terminal event before exiting, including transfers faster than a poll.
   await new Promise<void>((resolve) => {
@@ -122,6 +144,8 @@ if (process.argv.includes("--worker")) {
 
 async function runServer() {
   const workers = new Map<string, { child: ChildProcess; closed: Promise<void>; silence: () => void }>();
+  const pendingConcurrency = new Set<string>();
+  let observedConcurrent: number | undefined;
   const notices: TransferNotice[] = [];
   const reviews = new Map<string, { urls: string[]; options: DownloadOptions; expires: number }>();
   const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -182,6 +206,7 @@ async function runServer() {
             }
           }
           workers.delete(taskId);
+          pendingConcurrency.delete(taskId);
           changed();
         })()
           .catch(console.error)
@@ -227,7 +252,13 @@ async function runServer() {
           !shuttingDown
         ) {
           notificationAllowed = false;
-          notices.push({ taskId, name: transferName(task), status: message.status, at: Date.now() });
+          notices.push({
+            taskId,
+            name: transferName(task),
+            status: message.status,
+            at: Date.now(),
+            ...(message.status === "completed" ? { output: task.output } : {}),
+          });
           // Session-only, bounded outbox: never replay task history after launch.
           if (notices.length > 100) notices.shift();
         }
@@ -269,12 +300,15 @@ async function runServer() {
         });
         return { results, totalResults, indexRevision };
       }
-      case "settings.get":
-        return loadDesktopSettings(
+      case "settings.get": {
+        const snapshot = await loadDesktopSettings(
           params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput)
         );
+        observedConcurrent ??= snapshot.settings.concurrent;
+        return snapshot;
+      }
       case "library.list":
-        return listLibraryDirectory(string(params.url, "url"), params.refresh === true);
+        return listLibraryDirectory(string(params.url, "url"), params.refresh === true, params.requireDates === true);
       case "library.preview":
         return previewLibraryFile(string(params.url, "url"), params.refresh === true);
       case "library.preview.cached":
@@ -290,11 +324,29 @@ async function runServer() {
         const segment = new URL(url).pathname.replace(/\/$/, "").split("/").at(-1);
         return { url, name: segment ? decodeUriForDisplay(segment) : "Visuales", kind: folder ? "folder" : "preview" };
       }
-      case "settings.save":
-        return saveDesktopSettings(
-          params.settings,
-          params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput)
+      case "settings.save": {
+        const output = params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput);
+        const previous = await loadDesktopSettings(output);
+        const next = await saveDesktopSettings(params.settings, output);
+        // Another app instance can save the same value first; compare this instance's last applied setting.
+        if ((observedConcurrent ?? previous.settings.concurrent) !== next.settings.concurrent)
+          for (const id of workers.keys()) pendingConcurrency.add(id);
+        observedConcurrent = next.settings.concurrent;
+        const results = await Promise.allSettled(
+          [...pendingConcurrency].map(async (id) => {
+            const worker = workers.get(id);
+            if (worker) await setWorkerConcurrency(worker.child, next.settings.concurrent);
+            pendingConcurrency.delete(id);
+          })
         );
+        changed();
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected")
+          throw new Error(
+            `Settings saved, but a download could not apply the file limit. Save again to retry. ${String(failed.reason)}`
+          );
+        return next;
+      }
       // Not in the read-only allowlist: updater snapshots wait behind pending starts/resumes.
       case "tasks.prepareUpdate":
       case "tasks.list":
@@ -352,6 +404,7 @@ async function runServer() {
         const { settings } = await loadDesktopSettings(
           params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput)
         );
+        observedConcurrent ??= settings.concurrent;
         const destination = params.output == null ? settings.output : resolveDesktopOutput(params.output);
         // Desktop destinations are parent folders. Store the resolved single target
         // once so resume keeps both new and legacy tasks at their original paths.

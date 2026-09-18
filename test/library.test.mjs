@@ -43,6 +43,10 @@ before(async () => {
       return res.end(
         '<pre><a href="../">Parent Directory</a><a href="Part%201/">Part 1</a> -\n<a href="notes.txt">notes.txt</a> 10-Sep-2026 10:00 42\n<a href="notes.txt">duplicate</a><a href="../../escape.txt">escape</a><a href="https://evil.test/file">outside</a></pre>'
       );
+    if (req.url === "/LegacyDates/")
+      return res.end(
+        '<pre><a href="Alpha/">Alpha</a> 2026-09-17 10:00 -\n<a href="Zulu/">Zulu</a> 2026-09-18 10:00 -\n<a href="unknown.txt">unknown.txt</a> - 42\n</pre>'
+      );
     if (req.url.endsWith(".png")) {
       res.setHeader("content-type", "image/png");
       return res.end(png);
@@ -105,6 +109,39 @@ test("directory browsing reuses core discovery, deduplicates children and handle
   await assert.rejects(library.listLibraryDirectory(`${base}/blocked/`), /did not return/);
   await fs.writeFile(path.join(home, ".visuales-cli-cache", "discovery.json"), JSON.stringify({ broken: {} }));
   assert.deepEqual(await library.listLibraryDirectory(`${base}/empty/`, true), []);
+});
+
+test("date sorting upgrades only the requested legacy listing and reuses checked dates", async () => {
+  const url = `${base}/LegacyDates/`;
+  const { publishIndexedDirectory, cachedIndexedDirectory } =
+    await import("../packages/core/dist/search-file-index.js");
+  const { setDiscoveryCache } = cache;
+  const legacy = {
+    files: [{ url: url + "unknown.txt", size: 42 }],
+    dirs: [url + "Alpha/", url + "Zulu/"],
+    fetchedAt: 100,
+  };
+  await setDiscoveryCache({ [url]: legacy });
+  await publishIndexedDirectory(url, legacy, 100);
+  assert.ok((await library.listLibraryDirectory(url)).every((entry) => entry.modifiedCheckedAt === undefined));
+  assert.equal(calls.get("/LegacyDates/"), undefined, "ordinary browsing still uses the existing cache");
+  const listings = await Promise.all([
+    library.listLibraryDirectory(url, false, true),
+    library.listLibraryDirectory(url, false, true),
+  ]);
+  for (const entries of listings) {
+    assert.equal(entries.find((entry) => entry.text === "Zulu").modifiedLocal, "2026-09-18T10:00");
+    assert.ok(entries.every((entry) => entry.modifiedCheckedAt > 100));
+    assert.equal(entries.find((entry) => entry.text === "unknown.txt").modifiedLocal, undefined);
+  }
+  assert.equal(calls.get("/LegacyDates/"), 1, "concurrent windows share one date backfill");
+  await library.listLibraryDirectory(url, false, true);
+  assert.equal(calls.get("/LegacyDates/"), 1, "a checked but unavailable date does not cause repeated requests");
+  assert.equal(
+    (await cachedIndexedDirectory(url)).entries.find((entry) => entry.text === "Zulu").modifiedLocal,
+    "2026-09-18T10:00"
+  );
+  assert.equal(calls.get("/LegacyDates/Alpha/"), undefined, "does not crawl descendants");
 });
 
 test("image and text previews persist, refresh, coalesce and participate in CLI cache management", async () => {

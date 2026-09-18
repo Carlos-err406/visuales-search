@@ -10,17 +10,18 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { FILE_BODY, startTestServer } from "./helpers/test-server.mjs";
+import { controlledDownloadServer, waitUntil } from "./helpers/controlled-download-server.mjs";
 
 let home, rpc, server, slowServer, slowUrl;
 const sleeps = new Set();
 const heldDownloads = new Set();
 
-async function startRpc({ indexing = false } = {}) {
+async function startRpc({ indexing = false, preload } = {}) {
   const script = path.join(home, "packaged engine", "sidecar.cjs");
   await fs.mkdir(path.dirname(script), { recursive: true });
   await fs.copyFile("apps/sidecar/dist/sidecar.cjs", script);
   // Run outside the repository so accidental runtime imports cannot find node_modules.
-  const child = spawn(process.execPath, [script], {
+  const child = spawn(process.execPath, [...(preload ? ["--import", preload] : []), script], {
     cwd: home,
     env: {
       ...process.env,
@@ -237,6 +238,145 @@ after(async () => {
 });
 
 describe("packaged Node sidecar", () => {
+  it("retries an unacknowledged file limit on Save without restarting the worker", async () => {
+    const fixture = await controlledDownloadServer(["files/1.bin", "files/2.bin"]);
+    const rpc = await startRpc({ preload: new URL("./helpers/drop-first-worker-control.mjs", import.meta.url).href });
+    const initial = await rpc.request("settings.get");
+    const settings = { ...initial.settings, concurrent: 1, connections: 1, maxRetries: 0, exclude: [] };
+    let task;
+    try {
+      await rpc.request("settings.save", { settings });
+      task = await rpc.request("download.start", {
+        urls: [fixture.url + "files/"],
+        output: path.join(home, "live-timeout"),
+      });
+      await waitUntil(() => fixture.started.length === 1, "first worker payload");
+      const save = () => rpc.request("settings.save", { settings: { ...settings, concurrent: 2 } });
+      await assert.rejects(save(), /Settings saved.*Save again to retry/);
+      assert.equal(
+        (await rpc.request("settings.get")).settings.concurrent,
+        2,
+        "default was saved despite delivery timeout"
+      );
+      assert.equal((await rpc.request("tasks.list")).find((entry) => entry.id === task.id).options.concurrent, 1);
+      await save();
+      await waitUntil(() => fixture.started.length === 2, "retry fills the additional slot");
+      const updated = (await rpc.request("tasks.list")).find((entry) => entry.id === task.id);
+      assert.equal(updated.pid, task.pid);
+      assert.equal(updated.options.concurrent, 2);
+      assert.deepEqual(fixture.aborted, []);
+      fixture.releaseAll();
+      await waitForTask(task.id, "completed", rpc);
+    } finally {
+      if (task) await rpc.request("tasks.cancel", { id: task.id }).catch(() => {});
+      fixture.releaseAll();
+      await rpc.request("settings.save", { settings: initial.settings });
+      await rpc.close();
+      await fixture.close();
+    }
+  });
+
+  for (const mode of ["folder", "batch", "retry"]) {
+    it(`applies saved concurrency to real ${mode} payloads and queued workers, not other instances`, async () => {
+      const names = Array.from({ length: 9 }, (_, index) => `files/${index}.bin`);
+      const queuedNames = Array.from({ length: 6 }, (_, index) => `queued/${index}.bin`);
+      const fixture = await controlledDownloadServer([...names, ...queuedNames, "foreign.bin"]);
+      const initial = await rpc.request("settings.get");
+      const settings = { ...initial.settings, concurrent: 5, connections: 1, maxRetries: 0, exclude: [] };
+      const ids = [];
+      let other;
+      try {
+        await rpc.request("settings.save", { settings });
+        if (mode === "retry") fixture.fail(true);
+        const task = await rpc.request("download.start", {
+          urls: mode === "batch" ? names.map((name) => fixture.url + name) : [fixture.url + "files/"],
+          output: path.join(home, `live-${mode}`),
+        });
+        ids.push(task.id);
+        let running = task;
+        if (mode === "retry") {
+          await waitForTask(task.id, "failed");
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          fixture.fail(false);
+          running = await rpc.request("tasks.retry", { id: task.id });
+        }
+        const payloads = () => fixture.started.filter((name) => name.startsWith("files/"));
+        await waitUntil(() => payloads().length === 5, "five worker payloads");
+        const queued = await rpc.request("download.start", {
+          urls: [fixture.url + "queued/"],
+          output: path.join(home, `live-queued-${mode}`),
+          queue: true,
+        });
+        ids.push(queued.id);
+        other = await startRpc();
+        const foreign = await other.request("download.start", {
+          urls: [fixture.url + "foreign.bin"],
+          output: path.join(home, `live-foreign-${mode}`),
+        });
+        await waitUntil(() => fixture.held.has("foreign.bin"), "foreign worker payload");
+        const save = (concurrent) => rpc.request("settings.save", { settings: { ...settings, concurrent } });
+        await assert.rejects(save(0), /concurrent/);
+        assert.equal((await rpc.request("settings.get")).settings.concurrent, 5);
+        await save(3);
+        let snapshot = await rpc.request("tasks.list");
+        assert.equal(snapshot.find((entry) => entry.id === task.id).pid, running.pid, "worker was not restarted");
+        for (const id of ids) assert.equal(snapshot.find((entry) => entry.id === id).options.concurrent, 3);
+        assert.equal(
+          snapshot.find((entry) => entry.id === foreign.id).options.concurrent,
+          5,
+          "foreign worker untouched"
+        );
+        assert.equal(snapshot.find((entry) => entry.id === queued.id).queueOrder, queued.queueOrder);
+        assert.equal(payloads().length, 5);
+        for (let index = 0; index < 2; index++) {
+          fixture.finish(payloads()[index]);
+          await waitUntil(async () => {
+            const details = await rpc.request("tasks.files", { id: task.id });
+            return details.files.filter((file) => file.status === "completed").length >= index + 1;
+          }, "file completion");
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          assert.equal(payloads().length, 5, "lower limit does not replace the first two completions");
+        }
+        await save(5);
+        await waitUntil(() => payloads().length === 7, "two immediately filled slots");
+        await save(3);
+        await save(32);
+        await waitUntil(() => payloads().length === 9, "only remaining files start");
+        await save(3);
+        assert.deepEqual(fixture.aborted, [], "no payload was interrupted by settings changes");
+        for (const name of names) if (fixture.held.has(name)) fixture.finish(name);
+        await waitForTask(task.id, "completed");
+        const files = await rpc.request("tasks.files", { id: task.id });
+        assert.equal(files.files.length, names.length);
+        assert.ok(files.files.every((file) => file.status === "completed"));
+        assert.equal(new Set(payloads()).size, 9, "each file starts once");
+        await other.request("settings.save", { settings: { ...settings, concurrent: 3 } });
+        assert.equal(
+          (await other.request("tasks.list")).find((entry) => entry.id === foreign.id).options.concurrent,
+          3,
+          "saving in another instance applies even when that value is already persisted"
+        );
+        fixture.finish("foreign.bin");
+        await waitForTask(foreign.id, "completed", other);
+        await waitUntil(
+          () => fixture.started.filter((name) => name.startsWith("queued/")).length === 3,
+          "queue starts at updated concurrency"
+        );
+        assert.equal((await rpc.request("tasks.list")).find((entry) => entry.id === queued.id).pid, queued.pid);
+        fixture.releaseAll();
+        await waitForTask(queued.id, "completed");
+        snapshot = await rpc.request("tasks.list");
+        assert.equal(snapshot.find((entry) => entry.id === task.id).options.concurrent, 3, "applied limit persists");
+      } finally {
+        fixture.releaseAll();
+        for (const id of ids) await rpc.request("tasks.cancel", { id }).catch(() => {});
+        await other?.close();
+        await rpc.request("settings.save", { settings: initial.settings });
+        await fixture.close();
+      }
+    });
+  }
+
   it("exposes shared indexing controls without changing preferences or starting transfers", async () => {
     const tasks = await rpc.request("tasks.list");
     const settings = await rpc.request("settings.get");
@@ -488,7 +628,7 @@ describe("packaged Node sidecar", () => {
       await new Promise((resolve) => fixture.close(resolve));
     }
   });
-  it("persists desktop defaults and snapshots new tasks without changing queued or resumed tasks", async () => {
+  it("persists live file limits while keeping other queued and resumed settings unchanged", async () => {
     const initial = await rpc.request("settings.get");
     const changed = {
       ...initial.settings,
@@ -532,7 +672,7 @@ describe("packaged Node sidecar", () => {
       await rpc.request("settings.save", { settings: later });
       for (const id of ids) {
         const task = (await rpc.request("tasks.list")).find((entry) => entry.id === id);
-        assert.equal(task.options.concurrent, 2);
+        assert.equal(task.options.concurrent, 7);
         assert.equal(task.options.maxRetries, 4);
         assert.equal(task.options.connections, 4);
         assert.deepEqual(task.options.exclude, changed.exclude);
@@ -540,7 +680,7 @@ describe("packaged Node sidecar", () => {
       await rpc.request("tasks.cancel", { id: queued.id });
       const resumed = await rpc.request("tasks.resume", { id: queued.id, queue: true });
       assert.equal(resumed.output, queued.output);
-      assert.equal(resumed.options.concurrent, 2);
+      assert.equal(resumed.options.concurrent, 7);
       assert.equal(resumed.options.maxRetries, 4);
       assert.equal(resumed.options.connections, 4);
       assert.deepEqual(resumed.options.exclude, changed.exclude);
@@ -1194,10 +1334,26 @@ describe("packaged Node sidecar", () => {
       assert.equal(notice.taskId, task.id);
       assert.equal(notice.status, "completed");
       assert.equal(notice.name, "notification.bin");
+      assert.equal(notice.output, task.output, "completion captures its actual output directory");
       assert.ok(Date.now() - notice.at < 10000);
       await settled(task.id, "completed");
       await client.request("tasks.snapshot");
       assert.deepEqual(await drain(), [], "polls and worker close do not repeat notifications");
+      const newDefault = path.join(home, "new-notification-default");
+      await client.request("settings.save", {
+        settings: { ...original, output: newDefault, notifyCompleted: true, notifyFailed: true, maxRetries: 0 },
+      });
+      const secondTask = await client.request("download.start", {
+        urls: [server.url("normal", "second-notification.bin")],
+        output: path.join(home, "second-completed-output"),
+      });
+      const [secondNotice] = await waitForNotice();
+      assert.equal(secondNotice.taskId, secondTask.id);
+      assert.equal(secondNotice.output, secondTask.output);
+      assert.notEqual(secondNotice.output, notice.output, "each completion has its own destination");
+      assert.notEqual(secondNotice.output, newDefault, "explicit destinations override new defaults");
+      assert.equal(notice.output, task.output, "later settings and transfers cannot change an older action target");
+      await settled(secondTask.id, "completed");
       const observer = await startRpc();
       try {
         assert.deepEqual(await observer.request("notifications.take"), [], "another desktop session stays quiet");
@@ -1209,7 +1365,9 @@ describe("packaged Node sidecar", () => {
         urls: [server.url("unavailable", "notification-blocked.bin")],
         output: path.join(home, "notification-failed"),
       });
-      assert.equal((await waitForNotice())[0].status, "failed");
+      const [failureNotice] = await waitForNotice();
+      assert.equal(failureNotice.status, "failed");
+      assert.equal(failureNotice.output, undefined, "failed notifications do not offer a completion reveal");
       await settled(failed.id, "failed");
       await client.request("tasks.resume", { id: failed.id });
       assert.equal((await waitForNotice())[0].taskId, failed.id, "a resumed run can notify again");

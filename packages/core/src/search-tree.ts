@@ -1,7 +1,9 @@
 import type { LibraryEntry } from "./library-types.js";
 import { decodeUriForDisplay } from "./uri-display.js";
+import { mergeLibraryEntry, parseLibraryDate } from "./library-date.js";
+import { defaultSearchSort, type SearchSort } from "./search-sort.js";
 
-export interface SearchTreeNode {
+export interface SearchTreeNode extends Pick<LibraryEntry, "modifiedLocal" | "modifiedCheckedAt"> {
   url: string;
   name: string;
   directory: boolean;
@@ -31,7 +33,11 @@ export function canonicalTreeUrl(value: string): string {
   }
 }
 
-export function buildSearchTree(entries: LibraryEntry[]): SearchTreeNode[] {
+export function buildSearchTree(
+  entries: LibraryEntry[],
+  order: SearchSort = defaultSearchSort,
+  metadata: ReadonlyMap<string, LibraryEntry> = new Map()
+): SearchTreeNode[] {
   const nodes = new Map<string, SearchTreeNode>();
   const roots: SearchTreeNode[] = [];
   const names = new Intl.Collator(undefined, { numeric: true });
@@ -52,11 +58,17 @@ export function buildSearchTree(entries: LibraryEntry[]): SearchTreeNode[] {
       if (!node) {
         const name = decodeUriForDisplay(parts[index]);
         node = { url, name, directory, parent: parent?.url, children: [] };
+        const date = metadata.get(url);
+        node.modifiedLocal = parseLibraryDate(date?.modifiedLocal);
+        node.modifiedCheckedAt = date?.modifiedCheckedAt;
         nodes.set(url, node);
         (parent ? parent.children : roots).push(node);
       }
       if (leaf) {
         node.entry = entry;
+        const date = mergeLibraryEntry(metadata.get(url), entry);
+        node.modifiedLocal = parseLibraryDate(date.modifiedLocal);
+        node.modifiedCheckedAt = date.modifiedCheckedAt;
         // Human-readable labels may themselves contain literal percent escapes.
         node.name = entry.text && entry.text !== parts[index] ? entry.text : decodeUriForDisplay(parts[index]);
       }
@@ -64,7 +76,20 @@ export function buildSearchTree(entries: LibraryEntry[]): SearchTreeNode[] {
     }
   }
   function sort(nodes: SearchTreeNode[]) {
-    nodes.sort((a, b) => Number(b.directory) - Number(a.directory) || names.compare(a.name, b.name));
+    nodes.sort((a, b) => {
+      const directory = Number(b.directory) - Number(a.directory);
+      if (directory) return directory;
+      if (order.startsWith("modified")) {
+        const left = a.modifiedLocal;
+        const right = b.modifiedLocal;
+        const known = Number(Boolean(right)) - Number(Boolean(left));
+        if (known) return known;
+        if (left && right && left !== right) return left.localeCompare(right) * (order === "modified-asc" ? 1 : -1);
+      }
+      return (
+        names.compare(a.name, b.name) * (order === "name-desc" ? -1 : 1) || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0)
+      );
+    });
     nodes.forEach((node) => sort(node.children));
   }
   sort(roots);

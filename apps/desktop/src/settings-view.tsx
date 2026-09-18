@@ -257,7 +257,14 @@ export function SettingsView({
             <section className="settings-section" aria-labelledby="transfers-heading">
               <h3 id="transfers-heading">Transfers</h3>
               <div className="settings-row">
-                <Label htmlFor="settings-concurrent">Concurrent files</Label>
+                <div className="settings-label">
+                  <Label htmlFor="settings-concurrent">Concurrent files</Label>
+                  <HelpButton
+                    handle={helpHandle}
+                    label="About concurrent files"
+                    description="Maximum files downloading at once per transfer. Saving applies to this app's running and queued downloads. Increasing starts pending files immediately; decreasing lets active files finish. Other transfer settings and CLI downloads are unchanged."
+                  />
+                </div>
                 <div className="settings-control settings-number">
                   <Input
                     id="settings-concurrent"

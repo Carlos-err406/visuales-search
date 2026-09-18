@@ -36,7 +36,10 @@ async function retryOutput(root: string, file: DownloadFileDetail): Promise<stri
 }
 
 /** Runs only a previously claimed selection, retaining all untouched records and the original task identity. */
-export async function runDownloadFileRetry(task: DownloadTaskRecord): Promise<void> {
+export async function runDownloadFileRetry(
+  task: DownloadTaskRecord,
+  fileLimit?: ReturnType<typeof pLimit>
+): Promise<void> {
   const current = await findDownloadTask(task.id);
   if (!current || current.pid !== process.pid || current.status !== "running" || !current.retryPaths?.length)
     throw new Error("The retry must be claimed by this worker first.");
@@ -63,7 +66,7 @@ export async function runDownloadFileRetry(task: DownloadTaskRecord): Promise<vo
       resume: true,
       timeout: task.options.timeout === "Infinity" ? Infinity : task.options.timeout,
     };
-    const limit = pLimit(options.concurrent);
+    const limit = fileLimit ?? pLimit(options.concurrent);
     await recordDownloadFiles(
       task.id,
       task.output,

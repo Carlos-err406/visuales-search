@@ -71,6 +71,7 @@ import { useCollapsedGroups } from "./use-collapsed-groups";
 import { SearchTree, useSearchBrowser } from "./search-tree";
 import { distinctDownloadUrls, treeSelectionStates } from "@visuales/core/search-tree";
 import { appIcon, appIconLabel } from "./app-icon";
+import { SearchSortControl, useSearchSort } from "./search-sort-control";
 
 type View = "search" | "downloads" | "settings" | "about";
 const taskGroups = [
@@ -313,7 +314,8 @@ function App({ root }: { root?: string }) {
   const [query, setQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState<string | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
-  const searchBrowser = useSearchBrowser(results, searchedQuery !== "", root);
+  const { sort, changeSort } = useSearchSort();
+  const searchBrowser = useSearchBrowser(results, searchedQuery !== "", root, "", sort);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectionStates = useMemo(
     () => treeSelectionStates(searchBrowser.tree, selected),
@@ -393,7 +395,10 @@ function App({ root }: { root?: string }) {
   const scrollPositions = useRef({ search: 0, downloads: 0 });
 
   useEffect(() => {
-    const revision = searchedQuery === "" && !root ? indexing.status?.libraryRevision : indexing.status?.revision;
+    const revision =
+      searchedQuery === "" && !root && !sort.startsWith("modified")
+        ? indexing.status?.libraryRevision
+        : indexing.status?.revision;
     if (!revision || revision === resultRevision.current || view !== "search" || searchedQuery === null || searching)
       return;
     let stopped = false;
@@ -430,7 +435,7 @@ function App({ root }: { root?: string }) {
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [indexing.status?.revision, indexing.status?.libraryRevision, view, searchedQuery, searching]);
+  }, [indexing.status?.revision, indexing.status?.libraryRevision, view, searchedQuery, searching, sort]);
 
   function applyNewResults() {
     if (!newResults) return;
@@ -614,7 +619,9 @@ function App({ root }: { root?: string }) {
     setMessage("");
     setNewResults(null);
     resultRevision.current =
-      (!value.trim() && !root ? indexing.status?.libraryRevision : indexing.status?.revision) ?? null;
+      (!value.trim() && !root && !sort.startsWith("modified")
+        ? indexing.status?.libraryRevision
+        : indexing.status?.revision) ?? null;
     if (!terms.length) {
       searchBrowser.reset();
       setResults([]);
@@ -971,6 +978,7 @@ function App({ root }: { root?: string }) {
                 {message}
               </Alert>
             )}
+            <SearchSortControl sort={sort} onChange={changeSort} dates={searchBrowser.dates} />
           </div>
         )}
         {selectionError && selected.size === 0 && (

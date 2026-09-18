@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -10,7 +11,7 @@ import {
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import { messageForDisplay } from "@visuales/core/uri-display";
-import { Download, File, FileImage, FileText, Folder, FolderOpen, ListPlus, RefreshCw } from "lucide-react";
+import { Download, File, FileImage, FileText, Folder, FolderOpen, ListPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { IconButton } from "./icon-button";
@@ -26,6 +27,9 @@ import {
   type TreeCheckState,
 } from "@visuales/core/search-tree";
 import { previewKind, type LibraryEntry } from "@visuales/core/library-types";
+import { mergeLibraryEntry } from "@visuales/core/library-date";
+import { defaultSearchSort, type SearchSort } from "@visuales/core/search-sort";
+import { useSearchDates } from "./use-search-dates";
 
 type Listing = { loading?: boolean; error?: string };
 
@@ -33,7 +37,14 @@ function normalizeEntries(entries: LibraryEntry[]) {
   return entries.map((entry) => ({ ...entry, encodedUrl: canonicalTreeUrl(entry.encodedUrl) }));
 }
 
-export function useSearchBrowser(results: LibraryEntry[], autoExpand = true, root?: string, filter = "") {
+export function useSearchBrowser(
+  results: LibraryEntry[],
+  autoExpand = true,
+  root?: string,
+  filter = "",
+  sort: SearchSort = defaultSearchSort
+) {
+  const dates = useSearchDates(sort.startsWith("modified"));
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [contents, setContents] = useState<Record<string, LibraryEntry[]>>({});
   const [opened, setOpened] = useState<Set<string>>(new Set());
@@ -44,8 +55,7 @@ export function useSearchBrowser(results: LibraryEntry[], autoExpand = true, roo
   const entries = useMemo(() => {
     const all = new Map<string, LibraryEntry>();
     function merge(entry: LibraryEntry) {
-      const size = entry.size ?? all.get(entry.encodedUrl)?.size;
-      all.set(entry.encodedUrl, size === entry.size ? entry : { ...entry, size });
+      all.set(entry.encodedUrl, mergeLibraryEntry(all.get(entry.encodedUrl), entry));
     }
     Object.values(contents).forEach((listing) => listing.forEach(merge));
     indexedEntries.forEach(merge);
@@ -60,7 +70,9 @@ export function useSearchBrowser(results: LibraryEntry[], autoExpand = true, roo
               .split(/\s+/)
               .every((term) => entry.text.toLowerCase().includes(term))
           )
-        : entries
+        : entries,
+      sort,
+      dates.entries
     );
     if (!root) return tree;
     function find(nodes: SearchTreeNode[]): SearchTreeNode[] | undefined {
@@ -73,7 +85,7 @@ export function useSearchBrowser(results: LibraryEntry[], autoExpand = true, roo
       }
     }
     return find(tree) ?? [];
-  }, [entries, root, filter]);
+  }, [entries, root, filter, sort, dates.entries]);
   const isOpen = (node: SearchTreeNode) =>
     !collapsed.has(node.url) && (opened.has(node.url) || (autoExpand && node.children.length > 0));
   async function load(node: SearchTreeNode, refresh = false) {
@@ -141,7 +153,7 @@ export function useSearchBrowser(results: LibraryEntry[], autoExpand = true, roo
       )
     );
   }
-  return { tree, entries, listings, contents, isOpen, toggle, load, showContents, reset, reconcile };
+  return { tree, entries, listings, contents, dates, isOpen, toggle, load, showContents, reset, reconcile };
 }
 
 export function SearchTree({
@@ -214,6 +226,40 @@ export function SearchTree({
     ? virtualizer.getVirtualItems().map((item) => ({ ...visible[item.index], index: item.index, item }))
     : visible.map((row, index) => ({ ...row, index, item: null }));
   const focusUrl = visible.some(({ node }) => node.url === focused) ? focused : visible[0]?.node.url;
+  useEffect(() => {
+    const list = container.current?.parentElement;
+    if (!list || disabled || !browser.dates.enabled) return;
+    let timer: number | undefined;
+    const byUrl = new Map(rows.map(({ node }) => [node.url, node]));
+    function schedule() {
+      if (timer !== undefined) return;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        const viewport = list!.getBoundingClientRect();
+        // Backfill one visible sibling group at a time, never collapsed/offscreen branches.
+        for (const row of container.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? []) {
+          const rect = row.getBoundingClientRect();
+          if (rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
+          const node = byUrl.get(row.dataset.url ?? "");
+          if (!node || node.modifiedCheckedAt !== undefined) continue;
+          const parent = new URL(node.directory ? ".." : ".", node.url).href;
+          if (!browser.dates.requests[parent]) {
+            void browser.dates.load(parent);
+            break;
+          }
+        }
+      }, 50);
+    }
+    schedule();
+    list.addEventListener("scroll", schedule, { passive: true });
+    const resize = new ResizeObserver(schedule);
+    resize.observe(list);
+    return () => {
+      window.clearTimeout(timer);
+      list.removeEventListener("scroll", schedule);
+      resize.disconnect();
+    };
+  }, [browser.tree, browser.dates, disabled, rows]);
   useLayoutEffect(() => {
     const list = container.current?.parentElement;
     if (!list) return;
@@ -371,7 +417,6 @@ export function SearchTree({
           const bytes = node.directory ? undefined : node.entry?.size;
           const transfer = statusesUnavailable ? undefined : downloadStatus(node.url, node.directory);
           const loadingEmpty = listing?.loading && node.children.length === 0;
-          const refreshing = listing?.loading && node.children.length > 0;
           return (
             <div
               key={node.url}
@@ -434,22 +479,21 @@ export function SearchTree({
                       </span>
                     )}
                     {bytes !== undefined && <span className="secondary tree-size">{formatBytes(bytes)}</span>}
+                    {node.modifiedLocal ? (
+                      <time
+                        className="secondary tree-modified"
+                        dateTime={node.modifiedLocal.slice(0, 10)}
+                        aria-label={`Modified ${node.modifiedLocal.slice(0, 10)}`}
+                      >
+                        {node.modifiedLocal.slice(0, 10)}
+                      </time>
+                    ) : (
+                      <span className="secondary tree-modified" aria-label="Modified date unavailable">
+                        --
+                      </span>
+                    )}
                   </span>
                   <div className="tree-actions">
-                    {refreshing ? (
-                      <Spinner size={14} aria-label="Refreshing folder contents" className="tree-refresh-spinner" />
-                    ) : node.directory && contents ? (
-                      <IconButton
-                        label={`Refresh ${node.name}`}
-                        tooltip="Refresh folder"
-                        disabled={disabled || listing?.loading}
-                        onClick={() => {
-                          browser.showContents(node, true);
-                        }}
-                      >
-                        {listing?.loading ? <Spinner size={14} /> : <RefreshCw size={14} />}
-                      </IconButton>
-                    ) : null}
                     <IconButton
                       label={`Queue ${node.name}`}
                       tooltip="Add to queue"

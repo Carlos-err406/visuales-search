@@ -54,11 +54,12 @@ async fn list_library_directory(
     app: tauri::AppHandle,
     url: String,
     refresh: bool,
+    require_dates: Option<bool>,
 ) -> Result<Value, String> {
     sidecar::request(
         &app,
         "library.list",
-        json!({ "url": url, "refresh": refresh }),
+        json!({ "url": url, "refresh": refresh, "requireDates": require_dates.unwrap_or(false) }),
     )
     .await
 }
@@ -252,9 +253,11 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .manage(quit::QuitState::default())
         .manage(task_monitor::TaskMonitor::default())
+        .manage(notifications::NotificationActions::default())
         .manage(tray::TrayState::default())
         .manage(library_windows::LibraryWindows::default())
         .setup(|app| {
+            notifications::setup(app.handle());
             if let Err(error) = tray::setup(app.handle()) {
                 eprintln!("Tray unavailable; use the Downloads view: {error}");
             }
