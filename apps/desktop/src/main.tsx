@@ -70,7 +70,7 @@ import { useAppearance } from "./use-appearance";
 import { useCollapsedGroups } from "./use-collapsed-groups";
 import { SearchTree, useSearchBrowser } from "./search-tree";
 import { distinctDownloadUrls, treeSelectionStates } from "@visuales/core/search-tree";
-import appIcon from "../app-icon.svg?no-inline";
+import { appIcon, appIconLabel } from "./app-icon";
 
 type View = "search" | "downloads" | "settings" | "about";
 const taskGroups = [
@@ -799,7 +799,7 @@ function App({ root }: { root?: string }) {
       )}
       <header className="app-header">
         <div className="brand">
-          <span className="brand-mark">
+          <span className="brand-mark" role={appIconLabel ? "img" : undefined} aria-label={appIconLabel || undefined}>
             <svg viewBox="64 64 896 896" width="100%" height="100%" aria-hidden="true" focusable="false">
               <use href={`${appIcon}#visuales-mark`} />
             </svg>

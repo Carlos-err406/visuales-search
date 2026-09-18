@@ -5,7 +5,7 @@ import { ArrowUpRight } from "lucide-react";
 import { AppUpdatesSettings } from "./app-updates";
 import type { AppUpdates } from "./use-app-updates";
 import { isDesktop } from "./use-transfers";
-import appIcon from "../app-icon.svg?no-inline";
+import { appIcon, appIconLabel } from "./app-icon";
 import license from "../../../LICENSE?raw";
 
 export function AboutView({ updates }: { updates: AppUpdates }) {
@@ -24,7 +24,7 @@ export function AboutView({ updates }: { updates: AppUpdates }) {
   return (
     <section className="about-panel" aria-labelledby="about-title">
       <div className="about-identity">
-        <img src={appIcon} alt="" width={64} height={64} />
+        <img src={appIcon} alt={appIconLabel} width={64} height={64} />
         <h2 id="about-title">Visuales</h2>
         <div className="about-author">
           <span>Created by</span>
