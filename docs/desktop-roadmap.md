@@ -27,7 +27,7 @@ On the Downloads tab, the task table replaces the tray so the same transfers are
 
 ## Completed: Desktop Settings
 
-[005: Settings page](../.context/compound-engineering/todos/005-complete-p3-desktop-settings.md) adds persistent desktop-only defaults for output folder, concurrent files, connections per file (1-8), and retries per file. The shared Node engine supports resumable parallel range downloads with safe single-stream fallback. Explicit destinations override the default; existing, queued, and resumed tasks keep their recorded options. CLI defaults are unchanged; its existing connection option is now honored.
+[005: Settings page](../.context/compound-engineering/todos/005-complete-p3-desktop-settings.md) adds persistent desktop-only defaults for output folder, concurrent files, connections per file (1-8), and retries per file. The shared Node engine supports resumable parallel range downloads with safe single-stream fallback. Explicit destinations override the default; tasks retain their recorded options except for explicitly saved live file-concurrency changes described below. CLI defaults are unchanged; its existing connection option is now honored.
 
 ## Completed: CI Performance
 
@@ -109,15 +109,21 @@ Implemented [017: Dev app icons](../.context/compound-engineering/todos/017-comp
 
 [018: Search and library date sorting](../.context/compound-engineering/todos/018-complete-p3-index-date-sorting.md) adds a remembered sort menu for Name A-Z/Z-A and modification date newest/oldest in Search and folder-rooted windows. Shared core captures Apache dates during ordinary listing refreshes; date mode backfills missing dates for visible groups with loading/retry feedback, without clearing caches or crawling collapsed branches. Folders stay first, unknown dates last within each group, and indexing traversal and CLI defaults remain unchanged. All 270 core/CLI/sidecar tests, 19 native tests, and the full desktop UI suite passed. See [research and verification](research/2026-09-18-index-date-sorting.md). Not released.
 
+## Implemented Locally: Live File Concurrency
+
+[019: Live file concurrency](../.context/compound-engineering/todos/019-complete-p3-live-file-concurrency.md) applies saved Concurrent files changes to this desktop instance's running and queued workers through the shared Node scheduler. Increasing three to five starts up to two pending files immediately; decreasing five to three leaves all active files running and skips replacements until the count drops below three. Recursive folders, batches, and selective retries use the same behavior. The new limit is persisted for resume; connections, other options, progress, task identity, and queue order are preserved. CLI workers and other app instances are not controlled. Failed acknowledgements are reported and can be retried with Save. All 281 core/CLI/sidecar tests, 19 native tests, and the desktop UI suite passed. Not released.
+
+## Implemented Locally: Completion Notification Actions
+
+[020: Completion notification action](../.context/compound-engineering/todos/020-complete-p3-completion-notification-reveal.md) adds Show in Finder / Show in File Explorer / Open containing folder using each completion's saved destination. Native actions are single-use and session-only, with bounded expiry and a graceful missing-folder warning. Preferences, foreground suppression, CLI behavior, and transfer lifetime are unchanged. The macOS bundled preview's button was confirmed by the user; Windows/Linux native runtime QA remains pending. See [behavior and verification](desktop-notifications.md). Not released.
+
 ## Later
 
 Desktop download notifications are included in the 3.2.0 release work; see [behavior and platform verification](desktop-notifications.md). This is separately authorized from tray progress.
 
-| Bucket | Feature                                                                                                                   | Status                                             | Notes                                                                                                                                                                                      |
-| ------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md)                             | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md). |
-| 2      | [Live file concurrency](../.context/compound-engineering/todos/019-pending-p3-live-file-concurrency.md)                   | Deferred                                           | Apply concurrency changes to active downloads: increases immediately fill new slots; decreases let current files finish without interruption before enforcing the lower limit.             |
-| 3      | [Completion notification action](../.context/compound-engineering/todos/020-pending-p3-completion-notification-reveal.md) | Deferred                                           | Add Show in Finder or OS-appropriate wording to completion notifications, revealing the completed download in the local file manager. Verify native action support and fallbacks.          |
+| Bucket | Feature                                                                                       | Status                                             | Notes                                                                                                                                                                                      |
+| ------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md) | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md). |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 
@@ -130,6 +136,8 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 
 ## Decisions
 
+- 2026-09-18: Implement completion notification actions with OS-specific labels and immutable destination snapshots. User confirmed the isolated macOS preview opens Downloads. Windows/Linux manual QA remains; no release requested.
+- 2026-09-18: Implement live file concurrency from bucket #2. Saving a changed limit updates only this instance's running/queued workers and their stored limits; other transfer settings and CLI workers are unchanged. Verified locally, no release requested.
 - 2026-09-18: User confirmed date sorting for visible Search/library results only. Research and implementation are complete locally; indexing remains in listado order, with no extra date crawl or release.
 - 2026-09-17: Bucket a completion-notification action to reveal the download in Finder or the platform's file manager, with OS-specific wording. No implementation requested.
 - 2026-09-17: Bucket live file-concurrency updates. Reducing five to three keeps all active files and skips replacements for the first two completions; increasing three to five immediately starts two more pending files when available. No implementation requested.

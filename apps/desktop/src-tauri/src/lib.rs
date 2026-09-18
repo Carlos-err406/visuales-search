@@ -253,9 +253,11 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .manage(quit::QuitState::default())
         .manage(task_monitor::TaskMonitor::default())
+        .manage(notifications::NotificationActions::default())
         .manage(tray::TrayState::default())
         .manage(library_windows::LibraryWindows::default())
         .setup(|app| {
+            notifications::setup(app.handle());
             if let Err(error) = tray::setup(app.handle()) {
                 eprintln!("Tray unavailable; use the Downloads view: {error}");
             }

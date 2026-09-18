@@ -53,6 +53,15 @@ workspace = true
 [dependencies.notify-rust]
 version = "=4.17.0"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSBundle", "NSError", "NSSet", "NSString", "NSObject"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationAction", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+block2 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri-winrt-notification = "=0.7.3"
+
 [dev-dependencies]
 base64 = "0.22"
 minisign-verify = "0.2"

@@ -302,6 +302,22 @@ export async function findDownloadTask(idOrUrl: string): Promise<DownloadTaskRec
   return tasks.find((task) => task.id === idOrUrl || task.url === idOrUrl || task.urls?.includes(idOrUrl)) ?? null;
 }
 
+/** Persist a live worker's file limit without altering its queue position or other options. */
+export async function updateDownloadTaskConcurrency(id: string, concurrent: number, pid: number): Promise<boolean> {
+  if (!Number.isSafeInteger(concurrent) || concurrent < 1)
+    throw new Error("File concurrency must be a positive whole number.");
+  return withTaskLock(async () => {
+    const store = await loadTaskStore();
+    const task = store.tasks.find((item) => item.id === id);
+    if (!task || task.pid !== pid || (task.status !== "running" && task.status !== "queued")) return false;
+    if (task.options.concurrent !== concurrent) {
+      task.options.concurrent = concurrent;
+      await saveTaskStore(store);
+    }
+    return true;
+  });
+}
+
 /** Claim the original task before launching a selective retry; never share its recorder with another worker. */
 export async function claimDownloadFileRetry(
   id: string,

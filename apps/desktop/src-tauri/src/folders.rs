@@ -12,6 +12,10 @@ fn output_directory(value: &str) -> Result<PathBuf, String> {
     } else {
         PathBuf::from(value)
     };
+    existing_directory(&path)
+}
+
+fn existing_directory(path: &std::path::Path) -> Result<PathBuf, String> {
     if !path.is_absolute() {
         return Err("Enter an absolute output folder path".into());
     }
@@ -25,7 +29,15 @@ fn output_directory(value: &str) -> Result<PathBuf, String> {
     if !metadata.is_dir() {
         return Err("The output path is not a folder".into());
     }
-    Ok(path)
+    Ok(path.to_path_buf())
+}
+
+pub fn open_notified_folder(path: PathBuf) -> Result<(), String> {
+    // Notification destinations are literal filesystem paths, never decoded, trimmed, or treated as URLs.
+    let folder = existing_directory(&path).map_err(|_| {
+        "The download folder is no longer available. It may have been moved or deleted.".to_string()
+    })?;
+    tauri_plugin_opener::open_path(folder, None::<&str>).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -72,5 +84,25 @@ mod tests {
             assert_eq!(output_directory("~/").unwrap(), home);
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notification_destinations_are_literal_existing_folders() {
+        let root =
+            std::env::temp_dir().join(format!("visuales-notified-folder-{}", std::process::id()));
+        let folder = root.join("Literal %20 # (folder) ");
+        std::fs::create_dir_all(&folder).unwrap();
+        assert_eq!(existing_directory(&folder).unwrap(), folder);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(open_notified_folder(folder)
+            .unwrap_err()
+            .contains("moved or deleted"));
+        for invalid in ["relative", "https://example.com", "file:///tmp", "--help"] {
+            assert!(open_notified_folder(PathBuf::from(invalid)).is_err());
+        }
+        assert!(
+            !root.exists(),
+            "a stale notification must not recreate its destination"
+        );
     }
 }

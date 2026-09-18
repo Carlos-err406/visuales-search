@@ -1274,18 +1274,19 @@ export async function downloadRecursive(
 export async function downloadUrls(
   targets: DownloadTarget[],
   options: DownloadOptions,
-  onProgress?: (progress: DownloadProgress) => void
+  onProgress?: (progress: DownloadProgress) => void,
+  fileLimit = pLimit(options.concurrent)
 ): Promise<void> {
-  return downloadSession.run(new Set(), () => downloadMany(targets, options, onProgress));
+  return downloadSession.run(new Set(), () => downloadMany(targets, options, fileLimit, onProgress));
 }
 
 async function downloadMany(
   targets: DownloadTarget[],
   options: DownloadOptions,
+  limit: ReturnType<typeof pLimit>,
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<void> {
   await loadDiscoveryCache();
-  const limit = pLimit(options.concurrent);
   const summary: DownloadPlanSummary = {
     fileCount: 0,
     totalBytes: 0,
@@ -1435,18 +1436,19 @@ export async function stopProgress(): Promise<void> {
 export async function downloadUrl(
   url: string,
   options: DownloadOptions,
-  onProgress?: (progress: DownloadProgress) => void
+  onProgress?: (progress: DownloadProgress) => void,
+  fileLimit = pLimit(options.concurrent)
 ): Promise<void> {
-  return downloadSession.run(new Set(), () => downloadSingle(url, options, onProgress));
+  return downloadSession.run(new Set(), () => downloadSingle(url, options, fileLimit, onProgress));
 }
 
 async function downloadSingle(
   url: string,
   options: DownloadOptions,
+  limit: ReturnType<typeof pLimit>,
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<void> {
   await loadDiscoveryCache();
-  const limit = pLimit(options.concurrent);
 
   try {
     if (url.endsWith("/")) {
