@@ -16,12 +16,12 @@ let home, rpc, server, slowServer, slowUrl;
 const sleeps = new Set();
 const heldDownloads = new Set();
 
-async function startRpc({ indexing = false } = {}) {
+async function startRpc({ indexing = false, preload } = {}) {
   const script = path.join(home, "packaged engine", "sidecar.cjs");
   await fs.mkdir(path.dirname(script), { recursive: true });
   await fs.copyFile("apps/sidecar/dist/sidecar.cjs", script);
   // Run outside the repository so accidental runtime imports cannot find node_modules.
-  const child = spawn(process.execPath, [script], {
+  const child = spawn(process.execPath, [...(preload ? ["--import", preload] : []), script], {
     cwd: home,
     env: {
       ...process.env,
@@ -238,55 +238,43 @@ after(async () => {
 });
 
 describe("packaged Node sidecar", () => {
-  it(
-    "retries an unacknowledged file limit on Save without restarting the worker",
-    { skip: process.platform === "win32" },
-    async () => {
-      const fixture = await controlledDownloadServer(["files/1.bin", "files/2.bin"]);
-      const initial = await rpc.request("settings.get");
-      const settings = { ...initial.settings, concurrent: 1, connections: 1, maxRetries: 0, exclude: [] };
-      let task;
-      try {
-        await rpc.request("settings.save", { settings });
-        task = await rpc.request("download.start", {
-          urls: [fixture.url + "files/"],
-          output: path.join(home, "live-timeout"),
-        });
-        await waitUntil(() => fixture.started.length === 1, "first worker payload");
-        // Suspend only this fixture's isolated worker to exercise a real missing IPC acknowledgement.
-        process.kill(task.pid, "SIGSTOP");
-        const save = () => rpc.request("settings.save", { settings: { ...settings, concurrent: 2 } });
-        await assert.rejects(save(), /Settings saved.*Save again to retry/);
-        assert.equal(
-          (await rpc.request("settings.get")).settings.concurrent,
-          2,
-          "default was saved despite delivery timeout"
-        );
-        assert.equal((await rpc.request("tasks.list")).find((entry) => entry.id === task.id).options.concurrent, 1);
-        process.kill(task.pid, "SIGCONT");
-        await save();
-        await waitUntil(() => fixture.started.length === 2, "retry fills the additional slot");
-        const updated = (await rpc.request("tasks.list")).find((entry) => entry.id === task.id);
-        assert.equal(updated.pid, task.pid);
-        assert.equal(updated.options.concurrent, 2);
-        assert.deepEqual(fixture.aborted, []);
-        fixture.releaseAll();
-        await waitForTask(task.id, "completed");
-      } finally {
-        if (task) {
-          try {
-            process.kill(task.pid, "SIGCONT");
-          } catch {
-            /* The fixture may have finished already. */
-          }
-          await rpc.request("tasks.cancel", { id: task.id }).catch(() => {});
-        }
-        fixture.releaseAll();
-        await rpc.request("settings.save", { settings: initial.settings });
-        await fixture.close();
-      }
+  it("retries an unacknowledged file limit on Save without restarting the worker", async () => {
+    const fixture = await controlledDownloadServer(["files/1.bin", "files/2.bin"]);
+    const rpc = await startRpc({ preload: new URL("./helpers/drop-first-worker-control.mjs", import.meta.url).href });
+    const initial = await rpc.request("settings.get");
+    const settings = { ...initial.settings, concurrent: 1, connections: 1, maxRetries: 0, exclude: [] };
+    let task;
+    try {
+      await rpc.request("settings.save", { settings });
+      task = await rpc.request("download.start", {
+        urls: [fixture.url + "files/"],
+        output: path.join(home, "live-timeout"),
+      });
+      await waitUntil(() => fixture.started.length === 1, "first worker payload");
+      const save = () => rpc.request("settings.save", { settings: { ...settings, concurrent: 2 } });
+      await assert.rejects(save(), /Settings saved.*Save again to retry/);
+      assert.equal(
+        (await rpc.request("settings.get")).settings.concurrent,
+        2,
+        "default was saved despite delivery timeout"
+      );
+      assert.equal((await rpc.request("tasks.list")).find((entry) => entry.id === task.id).options.concurrent, 1);
+      await save();
+      await waitUntil(() => fixture.started.length === 2, "retry fills the additional slot");
+      const updated = (await rpc.request("tasks.list")).find((entry) => entry.id === task.id);
+      assert.equal(updated.pid, task.pid);
+      assert.equal(updated.options.concurrent, 2);
+      assert.deepEqual(fixture.aborted, []);
+      fixture.releaseAll();
+      await waitForTask(task.id, "completed", rpc);
+    } finally {
+      if (task) await rpc.request("tasks.cancel", { id: task.id }).catch(() => {});
+      fixture.releaseAll();
+      await rpc.request("settings.save", { settings: initial.settings });
+      await rpc.close();
+      await fixture.close();
     }
-  );
+  });
 
   for (const mode of ["folder", "batch", "retry"]) {
     it(`applies saved concurrency to real ${mode} payloads and queued workers, not other instances`, async () => {
