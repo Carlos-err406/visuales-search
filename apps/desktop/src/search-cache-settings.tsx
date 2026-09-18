@@ -74,7 +74,7 @@ export function SearchCacheSettings({ indexing }: { indexing: SearchIndexControl
               {status.files.toLocaleString()} files · {status.completed.toLocaleString()} /{" "}
               {status.total.toLocaleString()} folders
               {status.failed > 0 ? ` · ${status.failed} failed` : ""}
-              {status.skipped > 0 ? ` · ${status.skipped} excluded by server` : ""}
+              {status.skipped > 0 ? ` · ${status.skipped} skipped (unavailable or excluded)` : ""}
             </div>
             {status.lastUpdated && (
               <div className="settings-cache-status">Last scan: {new Date(status.lastUpdated).toLocaleString()}</div>

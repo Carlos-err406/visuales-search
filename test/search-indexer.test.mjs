@@ -9,7 +9,7 @@ import {
   controlSearchIndex,
   indexSeedUrls,
 } from "../packages/core/dist/search-indexer.js";
-import { readFileIndex } from "../packages/core/dist/search-file-index.js";
+import { readFileIndex, publishIndexedDirectory } from "../packages/core/dist/search-file-index.js";
 import { startDownloadTask, listDownloadTasks } from "../packages/core/dist/download/tasks.js";
 import { fetchInteractiveLibraryResource, LibraryRequestError } from "../packages/core/dist/library-listing.js";
 import { searchIndexLabel } from "../packages/core/dist/search-index-types.js";
@@ -281,3 +281,253 @@ for (const throttled of [false, true]) {
     if (throttled) assert.ok(status.retryAt >= retryAt, "honor the server's retry delay");
   });
 }
+
+for (const statusCode of [403, 404, 410]) {
+  test(`a folder ${statusCode} does not stop unrelated indexing or claim the server is offline`, async () => {
+    const calls = [];
+    const states = [];
+    await runSearchIndexer({
+      ...defaults(),
+      signal: AbortSignal.timeout(1500),
+      seeds: async () => [`${base}/Unavailable/`, `${base}/Available/`],
+      listing: async (url) => {
+        calls.push(url);
+        if (url.endsWith("/Unavailable/"))
+          throw new LibraryRequestError(`Library request failed (${statusCode})`, statusCode);
+        return listing(url);
+      },
+      onChange: () => states.push(getSearchIndexStatus()),
+    });
+    assert.deepEqual(calls, [`${base}/Unavailable/`, `${base}/Available/`]);
+    const status = await getSearchIndexStatus();
+    assert.equal(status.completed, 1);
+    assert.equal(status.failed, 1);
+    assert.equal(status.phase, "partial");
+    assert.equal(status.retryAt, undefined);
+    assert.ok((await Promise.all(states)).every((state) => state.phase !== "offline"));
+  });
+}
+
+test("missing branches defer descendants, retain cached files, and retry descendants when the parent returns", async () => {
+  const missing = `${base}/Missing/`;
+  const child = `${missing}Child/`;
+  await publishIndexedDirectory(child, listing(child));
+  const calls = [];
+  await runSearchIndexer({
+    ...defaults(),
+    signal: AbortSignal.timeout(1500),
+    seeds: async () => [missing, child, `${base}/MissingSibling/`],
+    listing: async (url) => {
+      calls.push(url);
+      if (url === missing) throw new LibraryRequestError("Library request failed (404)", 404);
+      return listing(url);
+    },
+  });
+  assert.deepEqual(calls, [missing, `${base}/MissingSibling/`]);
+  const status = await getSearchIndexStatus();
+  assert.equal(status.total, 3);
+  assert.equal(status.failed, 1);
+  assert.equal(status.skipped, 1);
+  assert.equal(status.completed, 1);
+  assert.equal(status.files, 2, "a 404 never erases cached search results");
+  await controlSearchIndex("resume");
+  await runSearchIndexer({ ...defaults(), listing: async (url) => listing(url) });
+  const recovered = await getSearchIndexStatus();
+  assert.equal(recovered.phase, "complete");
+  assert.equal(recovered.total, 3, "recovery must not duplicate queue entries");
+  assert.equal(recovered.completed, 3);
+  assert.equal(recovered.failed, 0);
+  assert.equal(recovered.skipped, 0);
+});
+
+test("legacy missing-branch failures resume without the old global backoff or child requests", async () => {
+  await readFileIndex();
+  const directory = path.join(home, ".visuales-cli-cache", "file-index");
+  const meta = JSON.parse(await fs.readFile(path.join(directory, "meta.json"), "utf8"));
+  const root = `${base}/Gone/`;
+  const child = `${root}Child/`;
+  const grandchild = `${child}Nested/`;
+  await fs.writeFile(
+    path.join(directory, "scan.json"),
+    JSON.stringify({
+      generation: meta.generation,
+      run: "legacy",
+      paused: false,
+      phase: "offline",
+      queue: [root, child, grandchild, `${base}/Available/`],
+      cursor: 2,
+      errors: Object.fromEntries(
+        [root, child].map((url) => [url, { message: "Library request failed (404)", retryAt: Date.now() + 86400000 }])
+      ),
+      skipped: [],
+      startedAt: Date.now(),
+      forceSince: 0,
+      error: "Library request failed (404)",
+      retryAt: Date.now() + 300000,
+    })
+  );
+  const calls = [];
+  await runSearchIndexer({
+    ...defaults(),
+    signal: AbortSignal.timeout(1500),
+    listing: async (url) => {
+      calls.push(url);
+      return listing(url);
+    },
+  });
+  assert.deepEqual(calls, [`${base}/Available/`]);
+  const status = await getSearchIndexStatus();
+  assert.equal(status.failed, 1);
+  assert.equal(status.skipped, 2);
+  assert.equal(status.completed, 1);
+  assert.equal(status.phase, "partial");
+});
+
+test("a missing branch skips hundreds of consecutive descendants in one checkpoint", async (t) => {
+  const root = `${base}/Missing/`;
+  const children = Array.from({ length: 411 }, (_, i) => `${root}Folder${i}/`);
+  const calls = [];
+  let changes = 0;
+  const started = performance.now();
+  await runSearchIndexer({
+    ...defaults(),
+    signal: AbortSignal.timeout(3000),
+    seeds: async () => [root, ...children, `${base}/Available/`],
+    listing: async (url) => {
+      calls.push(url);
+      if (url === root) throw new LibraryRequestError("Library request failed (404)", 404);
+      return listing(url);
+    },
+    onChange: () => changes++,
+  });
+  assert.deepEqual(calls, [root, `${base}/Available/`]);
+  assert.ok(changes < 10, "skipped descendants must not rewrite the entire queue for each folder");
+  const status = await getSearchIndexStatus();
+  assert.equal(status.failed, 1);
+  assert.equal(status.skipped, 411);
+  assert.equal(status.completed, 1);
+  t.diagnostic(
+    `412-folder missing branch: ${calls.length} requests including healthy sibling, ${(performance.now() - started).toFixed(1)} ms`
+  );
+});
+
+test("missing descendants separated by healthy folders are still deferred, but 403 does not prune a subtree", async () => {
+  const calls = [];
+  const gone = `${base}/Gone/`;
+  const denied = `${base}/Denied/`;
+  await runSearchIndexer({
+    ...defaults(),
+    seeds: async () => [gone, `${base}/Healthy/`, `${gone}Nested/`, denied, `${denied}Accessible/`],
+    listing: async (url) => {
+      calls.push(url);
+      if (url === gone) throw new LibraryRequestError("Not found", 410);
+      if (url === denied) throw new LibraryRequestError("Forbidden", 403);
+      return listing(url);
+    },
+  });
+  assert.deepEqual(calls, [gone, `${base}/Healthy/`, denied, `${denied}Accessible/`]);
+  const status = await getSearchIndexStatus();
+  assert.equal(status.completed, 2);
+  assert.equal(status.failed, 2);
+  assert.equal(status.skipped, 1);
+});
+
+test("an unavailable parent can recover across a restart without resetting completed coverage", async () => {
+  const root = `${base}/Gone/`;
+  const child = `${root}Child/`;
+  const controller = new AbortController();
+  const remaining = `${base}/Remaining/`;
+  const initial = {
+    ...defaults(),
+    seeds: async () => [root, child, remaining],
+    listing: async (url) => {
+      if (url === root) throw new LibraryRequestError("Not found", 404);
+      controller.abort();
+      return listing(url);
+    },
+  };
+  await runSearchIndexer({ ...initial, signal: controller.signal });
+  assert.equal((await getSearchIndexStatus()).skipped, 1);
+  await controlSearchIndex("resume");
+  const calls = [];
+  await runSearchIndexer({
+    ...defaults(),
+    listing: async (url) => {
+      calls.push(url);
+      return { ...listing(url), dirs: url === root ? [child, `${root}NewChild/`] : [] };
+    },
+  });
+  assert.deepEqual(calls, [remaining, root, child, `${root}NewChild/`]);
+  const status = await getSearchIndexStatus();
+  assert.equal(status.phase, "complete");
+  assert.equal(status.completed, 4);
+  assert.equal(status.total, 4);
+});
+
+test("slow listing responses already satisfy request pacing without an extra sleep", async () => {
+  const original = Date.now;
+  let elapsed = 0;
+  Date.now = () => original() + elapsed;
+  const calls = [];
+  try {
+    await runSearchIndexer({
+      ...defaults(),
+      signal: AbortSignal.timeout(1500),
+      interval: 2000,
+      seeds: async () => [`${base}/SlowA/`, `${base}/SlowB/`],
+      listing: async (url) => {
+        calls.push(url);
+        elapsed += 3000;
+        return listing(url);
+      },
+    });
+    assert.deepEqual(calls, [`${base}/SlowA/`, `${base}/SlowB/`]);
+    assert.equal((await getSearchIndexStatus()).phase, "complete");
+  } finally {
+    Date.now = original;
+  }
+});
+
+test("fast missing responses still respect crawl delay and cancellation during pacing", async () => {
+  const calls = [];
+  await runSearchIndexer({
+    ...defaults(),
+    signal: AbortSignal.timeout(1500),
+    policy: async () => ({ allowed: () => true, delay: 4000 }),
+    seeds: async () => [`${base}/MissingA/`, `${base}/MissingB/`],
+    listing: async (url) => {
+      calls.push(url);
+      throw new LibraryRequestError("Not found", 404);
+    },
+  });
+  assert.deepEqual(calls, [`${base}/MissingA/`]);
+  assert.equal((await getSearchIndexStatus()).failed, 1, "canceling a pacing wait is not another failure");
+});
+
+test("a completed partial pass can refresh its seeds the next day despite unavailable folders", async () => {
+  await runSearchIndexer({
+    ...defaults(),
+    seeds: async () => [`${base}/Gone/`],
+    listing: async () => {
+      throw new LibraryRequestError("Not found", 404);
+    },
+  });
+  const file = path.join(home, ".visuales-cli-cache/file-index/scan.json");
+  const checkpoint = JSON.parse(await fs.readFile(file, "utf8"));
+  checkpoint.startedAt = Date.now() - 86400001;
+  await fs.writeFile(file, JSON.stringify(checkpoint));
+  let seeded = false;
+  await runSearchIndexer({
+    ...defaults(),
+    seeds: async () => {
+      seeded = true;
+      return [`${base}/New/`];
+    },
+    listing: async (url) => listing(url),
+  });
+  assert.equal(seeded, true, "a stale missing branch must not prevent future library refreshes");
+  const status = await getSearchIndexStatus();
+  assert.equal(status.phase, "complete");
+  assert.equal(status.failed, 0);
+  assert.equal(status.completed, 1);
+});

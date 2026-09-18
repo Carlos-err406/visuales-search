@@ -87,6 +87,16 @@ export async function testFileIndex({ page, screenshots }) {
   await section.getByRole("button", { name: "Resume indexing", exact: true }).click();
   await section.getByRole("button", { name: "Pause indexing", exact: true }).waitFor();
   assert.equal(await page.locator(".settings-footer").count(), 0, "index controls do not dirty preferences");
+  await page.evaluate(() => {
+    Object.assign(window.testBridge.fileIndex, {
+      failed: 1,
+      skipped: 411,
+      revision: "test:unavailable",
+    });
+    window.testBridge.emit("file-index-changed");
+  });
+  await section.getByText(/411 skipped \(unavailable or excluded\)/).waitFor();
+  assert.equal(await section.getByText(/excluded by server/).count(), 0);
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme });
     for (const width of [1240, 390]) {
