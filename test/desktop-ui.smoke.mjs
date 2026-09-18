@@ -24,6 +24,7 @@ import { settingsPage } from "./helpers/settings-navigation.mjs";
 import { testSettingsLayout } from "./desktop-settings-layout.smoke.mjs";
 import { testFileIndex } from "./desktop-file-index.smoke.mjs";
 import { testUriDisplay } from "./desktop-uri-display.smoke.mjs";
+import { testSearchSort } from "./desktop-search-sort.smoke.mjs";
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const browser = await playwright[process.env.BROWSER || "chromium"].launch({
@@ -276,6 +277,14 @@ try {
           return { results };
         }
         if (command === "list_library_directory") {
+          if (args.requireDates) {
+            if (state.failDates?.includes(args.url)) throw new Error("Date listing unavailable");
+            if (state.holdDates === args.url)
+              await new Promise((resolve) => {
+                state.releaseDates = resolve;
+              });
+            return structuredClone(state.directoryDateEntries?.[args.url] ?? state.directoryEntries?.[args.url] ?? []);
+          }
           if (state.holdListing)
             await new Promise((resolve) => {
               state.releaseListing = resolve;
@@ -365,6 +374,14 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  if (process.env.DESKTOP_SMOKE_ONLY === "search-sort") {
+    await testSearchSort({ page, screenshots });
+    await testLibraryWindows({ browser, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`Search sorting UI checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.DESKTOP_SMOKE_ONLY === "uri-display") {
     await testUriDisplay({ page, screenshots });
     await testFileIndex({ page, screenshots });
@@ -429,6 +446,7 @@ try {
   }
   await page.getByRole("treeitem", { name: "Library", exact: true }).waitFor();
   await testSearchCache({ page });
+  await testSearchSort({ page, screenshots });
   await testTreeExpansion({ page, screenshots });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
   await page.getByRole("treeitem", { name: "Library", exact: true }).waitFor();

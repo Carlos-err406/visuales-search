@@ -2,6 +2,9 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 export interface SearchResult {
+  modifiedLocal?: string;
+  // A checked listing can explicitly have no date; newer observations replace older metadata.
+  modifiedCheckedAt?: number;
   url: string;
   text: string;
   directory: string;

@@ -5,6 +5,7 @@ export interface DirectoryListing {
   dirs: string[];
   parserVersion?: number;
   fetchedAt?: number;
+  modified?: Record<string, string>;
 }
 
 export const DIRECTORY_LISTING_PARSER_VERSION = 4;
@@ -101,6 +102,10 @@ function normalizeDirectoryListing(listing: DirectoryListing): DirectoryListing 
     dirs: listing.dirs,
     parserVersion: DIRECTORY_LISTING_PARSER_VERSION,
     fetchedAt: listing.fetchedAt,
+    modified:
+      listing.modified && typeof listing.modified === "object" && !Array.isArray(listing.modified)
+        ? listing.modified
+        : undefined,
   };
 }
 

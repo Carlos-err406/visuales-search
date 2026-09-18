@@ -274,7 +274,7 @@ async function runServer() {
           params.defaultOutput === undefined ? undefined : resolveDesktopOutput(params.defaultOutput)
         );
       case "library.list":
-        return listLibraryDirectory(string(params.url, "url"), params.refresh === true);
+        return listLibraryDirectory(string(params.url, "url"), params.refresh === true, params.requireDates === true);
       case "library.preview":
         return previewLibraryFile(string(params.url, "url"), params.refresh === true);
       case "library.preview.cached":

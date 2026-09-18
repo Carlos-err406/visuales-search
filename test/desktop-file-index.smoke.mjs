@@ -119,7 +119,7 @@ export async function testFileIndex({ page, screenshots }) {
     list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - 180;
   });
   await year.click();
-  await page.getByRole("button", { name: "Refresh 2013", exact: true }).waitFor();
+  await year.locator('css=:scope:not([aria-busy="true"])').waitFor();
   await page.waitForTimeout(200);
   const before = await year.boundingBox();
   await page.evaluate(() => {

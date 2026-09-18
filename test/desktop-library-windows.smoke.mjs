@@ -17,6 +17,8 @@ export async function testLibraryWindows({ browser, screenshots, baseURL = proce
       text: suffix.replace(/\/$/, "").split("/").at(-1),
       directory: base,
       isDirectoryLink: suffix.endsWith("/"),
+      modifiedLocal: suffix === "notes.txt" ? "2026-09-18T10:00" : undefined,
+      modifiedCheckedAt: 100,
     });
     const folder = new URLSearchParams(window.location.search).has("folder");
     const image = new URLSearchParams(window.location.search).has("image");
@@ -240,6 +242,20 @@ export async function testLibraryWindows({ browser, screenshots, baseURL = proce
     await folder.getByRole("tab", { name: "Settings", exact: true }).click();
     await folder.getByRole("heading", { name: "Settings", exact: true }).waitFor();
     await folder.getByRole("tab", { name: "Search", exact: true }).click();
+    await folder.getByRole("combobox", { name: "Sort search results" }).click();
+    await folder.getByRole("option", { name: "Modified: newest first", exact: true }).click();
+    assert.deepEqual(
+      await folder
+        .locator('[role="treeitem"][aria-level="1"]')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute("aria-label"))),
+      ["Extras", "notes.txt", "cover.png", "movie.mp4", "second.png"],
+      "folder windows apply the same cached date ordering within their root"
+    );
+    assert.equal(
+      await folder.getByRole("treeitem", { name: "notes.txt", exact: true }).locator("time").getAttribute("datetime"),
+      "2026-09-18",
+      "folder windows display the same server-local modified date"
+    );
     for (const target of [text, image, folder]) {
       for (const width of target === folder ? [1240, 760] : [820, 480]) {
         await target.setViewportSize({ width, height: 680 });

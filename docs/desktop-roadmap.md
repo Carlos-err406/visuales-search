@@ -105,6 +105,10 @@ Implemented shared CLI/desktop file search and automatic background indexing, in
 
 Implemented [017: Dev app icons](../.context/compound-engineering/todos/017-complete-p3-dev-app-icons.md): dev-only `<>` markers on app/Dock icons, the header, About page, popup, favicon, and tray. Slim brackets frame the original V without a separate badge; macOS uses a compact monochrome version and Windows/Linux use the square development icon. Production assets and rendering are unchanged. Start with `npm run desktop:dev`; see [icon generation and verification](../apps/desktop/ICON.md). Implemented locally, not released.
 
+## Implemented Locally: Search Date Sorting
+
+[018: Search and library date sorting](../.context/compound-engineering/todos/018-complete-p3-index-date-sorting.md) adds a remembered sort menu for Name A-Z/Z-A and modification date newest/oldest in Search and folder-rooted windows. Shared core captures Apache dates during ordinary listing refreshes; date mode backfills missing dates for visible groups with loading/retry feedback, without clearing caches or crawling collapsed branches. Folders stay first, unknown dates last within each group, and indexing traversal and CLI defaults remain unchanged. All 270 core/CLI/sidecar tests, 19 native tests, and the full desktop UI suite passed. See [research and verification](research/2026-09-18-index-date-sorting.md). Not released.
+
 ## Later
 
 Desktop download notifications are included in the 3.2.0 release work; see [behavior and platform verification](desktop-notifications.md). This is separately authorized from tray progress.
@@ -112,9 +116,8 @@ Desktop download notifications are included in the 3.2.0 release work; see [beha
 | Bucket | Feature                                                                                                                   | Status                                             | Notes                                                                                                                                                                                      |
 | ------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md)                             | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md). |
-| 2      | [Index date sorting](../.context/compound-engineering/todos/018-pending-p3-index-date-sorting.md)                         | Research first                                     | Investigate Apache date-sorted listings, available date metadata, and cache implications; confirm sorting scope before implementation.                                                     |
-| 3      | [Live file concurrency](../.context/compound-engineering/todos/019-pending-p3-live-file-concurrency.md)                   | Deferred                                           | Apply concurrency changes to active downloads: increases immediately fill new slots; decreases let current files finish without interruption before enforcing the lower limit.             |
-| 4      | [Completion notification action](../.context/compound-engineering/todos/020-pending-p3-completion-notification-reveal.md) | Deferred                                           | Add Show in Finder or OS-appropriate wording to completion notifications, revealing the completed download in the local file manager. Verify native action support and fallbacks.          |
+| 2      | [Live file concurrency](../.context/compound-engineering/todos/019-pending-p3-live-file-concurrency.md)                   | Deferred                                           | Apply concurrency changes to active downloads: increases immediately fill new slots; decreases let current files finish without interruption before enforcing the lower limit.             |
+| 3      | [Completion notification action](../.context/compound-engineering/todos/020-pending-p3-completion-notification-reveal.md) | Deferred                                           | Add Show in Finder or OS-appropriate wording to completion notifications, revealing the completed download in the local file manager. Verify native action support and fallbacks.          |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 
@@ -127,6 +130,7 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 
 ## Decisions
 
+- 2026-09-18: User confirmed date sorting for visible Search/library results only. Research and implementation are complete locally; indexing remains in listado order, with no extra date crawl or release.
 - 2026-09-17: Bucket a completion-notification action to reveal the download in Finder or the platform's file manager, with OS-specific wording. No implementation requested.
 - 2026-09-17: Bucket live file-concurrency updates. Reducing five to three keeps all active files and skips replacements for the first two completions; increasing three to five immediately starts two more pending files when available. No implementation requested.
 - 2026-09-17: Bucket dev-only `<>` icon markers and index date sorting. Apache date-sorting behavior needs research before implementation; no application changes requested in this pass.

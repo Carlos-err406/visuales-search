@@ -17,20 +17,31 @@ const pendingPreviews = new Map<string, Promise<FilePreview>>();
 const previewStates = new Map<string, "waiting" | "loading">();
 export { libraryUrl } from "./library-listing.js";
 
-export async function listLibraryDirectory(value: string, refresh = false): Promise<LibraryEntry[]> {
+export async function listLibraryDirectory(
+  value: string,
+  refresh = false,
+  requireDates = false
+): Promise<LibraryEntry[]> {
   const url = libraryUrl(value);
   if (!url.pathname.endsWith("/")) throw new Error("Choose a directory to browse");
   if (!refresh) {
     const indexed = await cachedIndexedDirectory(url.href);
-    if (indexed) return indexed.entries;
+    if (indexed && (!requireDates || indexed.entries.every((entry) => entry.modifiedCheckedAt !== undefined)))
+      return indexed.entries;
   }
   return listings(async () => {
+    // Another window may have filled the missing dates while this request waited.
+    if (requireDates && !refresh) {
+      const indexed = await cachedIndexedDirectory(url.href);
+      if (indexed && indexed.entries.every((entry) => entry.modifiedCheckedAt !== undefined)) return indexed.entries;
+    }
     // Re-read disk so clearing discovery through the CLI also invalidates the desktop view.
     dirListingCache.clear();
     await loadDiscoveryCache().catch(() => dirListingCache.clear());
     const listing = await getDirectoryListing(url.href, {
       refresh,
       allowEmptyCache: true,
+      requireDates,
       fetcher: (target) => fetchLibrary(target, 8 * 1024 * 1024),
     });
     return listingEntries(url.href, listing);

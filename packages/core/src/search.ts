@@ -5,6 +5,7 @@ import { canonicalTreeUrl } from "./search-tree.js";
 import { readFileIndex, fileIndexRevision, type IndexedDirectory } from "./search-file-index.js";
 import type { SearchResult } from "./lib/types.js";
 import { decodeUriForDisplay } from "./uri-display.js";
+import { mergeLibraryEntry } from "./library-date.js";
 
 function normalized(value: string) {
   return value
@@ -33,6 +34,7 @@ let files:
       directories: Map<IndexedDirectory, ReturnType<typeof searchable>[]>;
     }
   | undefined;
+let folderDates: { revision: string; entries: Map<string, SearchResult> } | undefined;
 
 export async function searchContent(terms: string[], options: { noCache?: boolean; root?: string } = {}) {
   const root = options.root === undefined ? undefined : canonicalTreeUrl(libraryUrl(options.root).href);
@@ -42,6 +44,15 @@ export async function searchContent(terms: string[], options: { noCache?: boolea
   const index = parsed.entries.map(({ entry }) => entry);
   const catalog = await readFileIndex();
   const revision = fileIndexRevision(catalog);
+  if (folderDates?.revision !== revision) {
+    const entries = new Map<string, SearchResult>();
+    for (const directory of catalog.directories.values())
+      for (const entry of directory.entries)
+        if (entry.isDirectoryLink && entry.modifiedCheckedAt !== undefined) entries.set(entry.encodedUrl, entry);
+    folderDates = { revision, entries };
+  }
+  const withDate = (entry: SearchResult) =>
+    mergeLibraryEntry(folderDates?.entries.get(canonicalTreeUrl(entry.encodedUrl)), entry);
   if (terms.length && files?.revision !== revision) {
     const directories = new Map<IndexedDirectory, ReturnType<typeof searchable>[]>();
     for (const directory of catalog.directories.values())
@@ -53,7 +64,9 @@ export async function searchContent(terms: string[], options: { noCache?: boolea
     const url = canonicalTreeUrl(entry.encodedUrl);
     return url !== root && url.startsWith(root);
   };
-  const allResults = new Map(index.filter(withinRoot).map((entry) => [canonicalTreeUrl(entry.encodedUrl), entry]));
+  const allResults = new Map(
+    index.filter(withinRoot).map((entry) => [canonicalTreeUrl(entry.encodedUrl), withDate(entry)])
+  );
   if (root) {
     const children = await listLibraryDirectory(root, options.noCache);
     for (const entry of children) allResults.set(canonicalTreeUrl(entry.encodedUrl), entry);
@@ -71,7 +84,7 @@ export async function searchContent(terms: string[], options: { noCache?: boolea
       if (!withinRoot(item.entry)) continue;
       const filename = query.every((term) => item.name.includes(term));
       if (filename || query.every((term) => `${item.name} ${item.path}`.includes(term)))
-        matches.set(canonicalTreeUrl(item.entry.encodedUrl), { entry: item.entry, filename });
+        matches.set(canonicalTreeUrl(item.entry.encodedUrl), { entry: withDate(item.entry), filename });
     }
     results = [...matches.values()].sort((a, b) => Number(b.filename) - Number(a.filename)).map(({ entry }) => entry);
     for (const entry of results) allResults.set(canonicalTreeUrl(entry.encodedUrl), entry);
@@ -81,13 +94,15 @@ export async function searchContent(terms: string[], options: { noCache?: boolea
     let parent = new URL(result.isDirectoryLink ? ".." : ".", result.encodedUrl).href;
     while (new URL(parent).pathname !== "/" && (!root || parent.startsWith(root))) {
       const key = canonicalTreeUrl(parent);
-      const ancestor = allResults.get(key) ?? {
-        encodedUrl: key,
-        url: key,
-        isDirectoryLink: true,
-        text: decodeUriForDisplay(new URL(key).pathname.split("/").filter(Boolean).at(-1)!),
-        directory: decodeUriForDisplay(new URL(key).pathname.replace(/\/$/, "")),
-      };
+      const ancestor =
+        allResults.get(key) ??
+        withDate({
+          encodedUrl: key,
+          url: key,
+          isDirectoryLink: true,
+          text: decodeUriForDisplay(new URL(key).pathname.split("/").filter(Boolean).at(-1)!),
+          directory: decodeUriForDisplay(new URL(key).pathname.replace(/\/$/, "")),
+        });
       allResults.set(key, ancestor);
       exposed.set(key, ancestor);
       parent = new URL("..", parent).href;

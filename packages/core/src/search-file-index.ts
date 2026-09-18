@@ -115,7 +115,7 @@ export async function publishIndexedDirectory(
 ): Promise<boolean> {
   const url = libraryUrl(value).href;
   if (!url.endsWith("/") || !validateListing(listing)) throw new Error("Invalid indexed directory");
-  const entries = listingEntries(url, listing);
+  const entries = listingEntries(url, listing, fetchedAt);
   const expected = generation ?? (await fileIndexGeneration());
   return withFileIndexLock(async () => {
     const state = await meta();

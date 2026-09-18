@@ -912,11 +912,18 @@ export async function getDirectoryListing(
   options: {
     refresh?: boolean;
     allowEmptyCache?: boolean;
+    requireDates?: boolean;
     fetcher?: (url: string) => Promise<Response>;
   } = {}
 ): Promise<DirectoryListing> {
   const cached = dirListingCache.get(url);
-  if (!options.refresh && cached && (options.allowEmptyCache || cached.files.length > 0 || cached.dirs.length > 0)) {
+  if (
+    !options.refresh &&
+    cached &&
+    (!options.requireDates ||
+      (cached.modified && typeof cached.modified === "object" && !Array.isArray(cached.modified))) &&
+    (options.allowEmptyCache || cached.files.length > 0 || cached.dirs.length > 0)
+  ) {
     return cached;
   }
 

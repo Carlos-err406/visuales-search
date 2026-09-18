@@ -6,6 +6,7 @@ import { DIRECTORY_LISTING_PARSER_VERSION } from "./download/discovery-cache.js"
 import { canonicalTreeUrl } from "./search-tree.js";
 import type { LibraryEntry } from "./library-types.js";
 import { decodeUriForDisplay } from "./uri-display.js";
+import { parseLibraryDate } from "./library-date.js";
 
 export function libraryUrl(value: string): URL {
   const url = new URL(value);
@@ -27,13 +28,16 @@ export function parseDirectoryListing(html: string, base: string, requireListing
   const $ = cheerio.load(html);
   if (requireListing && (!$("pre, table").length || /URL not available/i.test($("title").text())))
     throw new Error("The library did not return a directory listing");
-  const listing: DirectoryListing = { files: [], dirs: [], parserVersion: DIRECTORY_LISTING_PARSER_VERSION };
+  const modified: Record<string, string> = {};
+  const listing: DirectoryListing = { files: [], dirs: [], modified, parserVersion: DIRECTORY_LISTING_PARSER_VERSION };
   const seen = new Set<string>();
-  function add(href: string | undefined, sizeText: string) {
+  function add(href: string | undefined, sizeText: string, dateText = "") {
     if (!href || href === "../" || href.startsWith("?") || href.startsWith("/") || href.includes("://")) return;
     const url = new URL(href, base).href;
     if (seen.has(url)) return;
     seen.add(url);
+    const date = parseLibraryDate(dateText);
+    if (date) modified[canonicalTreeUrl(url)] = date;
     if (href.endsWith("/")) listing.dirs.push(url);
     else {
       const size = parseSize(sizeText);
@@ -42,16 +46,21 @@ export function parseDirectoryListing(html: string, base: string, requireListing
   }
   $("tr").each((_, element) => {
     const row = $(element);
-    add(row.find("td a").first().attr("href"), row.find("td").eq(3).text().trim());
+    add(row.find("td a").first().attr("href"), row.find("td").eq(3).text().trim(), row.find("td").eq(2).text().trim());
   });
   $("pre a").each((_, element) => {
     const next = element.nextSibling;
-    add($(element).attr("href"), next?.type === "text" ? (next.data.trim().split(/\s+/).at(-1) ?? "") : "");
+    const metadata = next?.type === "text" ? next.data.trim().split(/\s+/) : [];
+    add($(element).attr("href"), metadata.at(-1) ?? "", metadata.slice(0, 2).join(" "));
   });
   return listing;
 }
 
-export function listingEntries(value: string, listing: DirectoryListing): LibraryEntry[] {
+export function listingEntries(
+  value: string,
+  listing: DirectoryListing,
+  fetchedAt = listing.fetchedAt ?? 0
+): LibraryEntry[] {
   const parent = libraryUrl(value);
   if (!parent.pathname.endsWith("/")) throw new Error("Choose a directory to browse");
   const entries = new Map<string, LibraryEntry>();
@@ -74,6 +83,12 @@ export function listingEntries(value: string, listing: DirectoryListing): Librar
         directory,
         isDirectoryLink: item.directory,
         size: item.size,
+        ...(listing.modified && typeof listing.modified === "object" && !Array.isArray(listing.modified)
+          ? {
+              modifiedLocal: parseLibraryDate(listing.modified[url.href]),
+              modifiedCheckedAt: fetchedAt,
+            }
+          : {}),
       });
     } catch {
       /* Ignore links outside the supported library. */

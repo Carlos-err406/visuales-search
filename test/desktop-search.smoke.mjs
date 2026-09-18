@@ -107,15 +107,17 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
     0,
     "known children remain visible without a blocking loading row"
   );
-  await example.getByRole("status", { name: "Refreshing folder contents", exact: true }).waitFor();
+  assert.equal(await example.locator(".tree-actions button").count(), 2, "loading adds no inline refresh control");
+  assert.equal(await example.locator(".tree-actions [role=status]").count(), 0);
   await page.evaluate(() => {
     window.testBridge.holdListing = false;
     window.testBridge.releaseListing();
   });
   await page.getByRole("treeitem", { name: "cover.png", exact: true }).waitFor();
   assert.equal(await example.getAttribute("aria-busy"), null, "successful listing clears busy state");
-  assert.equal(await example.getByRole("status").count(), 0, "refresh spinner clears with loaded contents");
-  await page.getByRole("button", { name: "Refresh Example", exact: true }).waitFor();
+  assert.equal(await example.getByRole("status").count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Refresh Example", exact: true }).count(), 0);
+  assert.equal(await example.locator(".tree-actions button").count(), 2, "loaded folders have no refresh button");
   assert.equal(await example.getAttribute("aria-expanded"), "true");
   assert.equal(await example.locator(".lucide-folder-open").count(), 1);
   assert.equal(await page.getByRole("button", { name: "Refresh Extras", exact: true }).count(), 0);
@@ -297,7 +299,8 @@ export async function testSearchBrowsing({ page, screenshots, checkLayout }) {
   await page.evaluate(() => {
     window.testBridge.holdListing = true;
   });
-  await page.getByRole("button", { name: "Refresh Example", exact: true }).click();
+  await example.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Refresh Folder Contents", exact: true }).click();
   await page.waitForFunction(() => Boolean(window.testBridge.releaseListing));
   await page.evaluate(() => {
     window.testBridge.results = [];

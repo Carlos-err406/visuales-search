@@ -54,11 +54,12 @@ async fn list_library_directory(
     app: tauri::AppHandle,
     url: String,
     refresh: bool,
+    require_dates: Option<bool>,
 ) -> Result<Value, String> {
     sidecar::request(
         &app,
         "library.list",
-        json!({ "url": url, "refresh": refresh }),
+        json!({ "url": url, "refresh": refresh, "requireDates": require_dates.unwrap_or(false) }),
     )
     .await
 }

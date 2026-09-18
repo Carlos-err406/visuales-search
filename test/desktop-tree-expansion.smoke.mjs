@@ -36,7 +36,8 @@ export async function testTreeExpansion({ page, screenshots }) {
         window.testBridge.holdListing = false;
         window.testBridge.releaseListing();
       });
-      await page.getByRole("button", { name: "Refresh 2013", exact: true }).waitFor();
+      await year.locator('css=:scope:not([aria-busy="true"])').waitFor();
+      assert.equal(await year.locator(".tree-actions button").count(), 2);
       await page.waitForTimeout(200);
       assert.ok(
         Math.abs((await year.boundingBox()).y - before.y) < 2,
