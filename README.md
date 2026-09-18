@@ -280,6 +280,8 @@ Settings > Search > **Revalidate cache** still re-fetches only `listado.html`. *
 
 The disposable file catalog and scan checkpoint live in `~/.visuales-cli-cache/file-index/` and participate in `visuales cache`. Metadata from this catalog is not download-completion verification. Failed refreshes retain the last good listings, and multiple desktop/CLI processes share one indexing owner.
 
+Missing or inaccessible folders do not pause unrelated indexing. A 404/410 branch defers its descendants as skipped while preserving cached results; Retry indexing checks the parent again and restores deferred work if it becomes available. Network failures and server throttling still use backoff. Background listings remain serial and paced, with slow responses counting toward the interval instead of adding an extra delay afterward.
+
 Downloads and the tray popup include **Interrupt all downloads**. After confirmation, it stops every running and queued transfer in the shared history, including CLI transfers and items hidden by filters. Partial files and completed history are kept. The CLI equivalent is `visuales tasks cancel --all`; both use the same atomic queue cancellation so waiting downloads cannot start midway through the operation. Resume individual tasks when ready.
 
 Interrupted and failed transfers offer **Resume now** and **Add to queue** in Downloads, the transfer inspector, and the tray. Resume starts immediately; Add to queue appends the existing task to the shared queue. Both preserve the recorded destination, settings, and partial files. The CLI equivalent for queued resumption is `visuales tasks resume <id> --queue --detach`.
