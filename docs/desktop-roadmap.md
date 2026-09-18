@@ -101,13 +101,20 @@ CLI and desktop runs record the same shared-core per-file history under the unif
 
 Implemented shared CLI/desktop file search and automatic background indexing, in parsed listado order without folder-specific priority. Settings exposes coverage, persistent Pause/Resume, Retry, and Refresh file index; the existing Revalidate cache stays listado-only. Search preserves selection and viewport when applying newly indexed results. See [016: Standalone-file search](../.context/compound-engineering/todos/016-complete-p3-standalone-file-search.md) and the [implementation plan](plans/2026-09-17-001-feat-standalone-file-index-plan.md). Included in 3.8.0.
 
+## Completed: Development Icons
+
+Implemented [017: Dev app icons](../.context/compound-engineering/todos/017-complete-p3-dev-app-icons.md): dev-only `<>` markers on app/Dock icons, the header, About page, popup, favicon, and tray. Slim brackets frame the original V without a separate badge; macOS uses a compact monochrome version and Windows/Linux use the square development icon. Production assets and rendering are unchanged. Start with `npm run desktop:dev`; see [icon generation and verification](../apps/desktop/ICON.md). Implemented locally, not released.
+
 ## Later
 
 Desktop download notifications are included in the 3.2.0 release work; see [behavior and platform verification](desktop-notifications.md). This is separately authorized from tray progress.
 
-| Bucket | Feature                                                                                       | Status                                             | Notes                                                                                                                                                                                      |
-| ------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md) | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md). |
+| Bucket | Feature                                                                                                                   | Status                                             | Notes                                                                                                                                                                                      |
+| ------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1      | [Menu bar progress](../.context/compound-engineering/todos/002-ready-p3-menu-bar-progress.md)                             | Included in 3.1.0; native Windows/Linux QA pending | Mini Downloads popup on macOS/Windows with folder, interrupt/resume, and filter controls; native status menu on Linux. Preserve close/quit behavior. [Verification](menu-bar-progress.md). |
+| 2      | [Index date sorting](../.context/compound-engineering/todos/018-pending-p3-index-date-sorting.md)                         | Research first                                     | Investigate Apache date-sorted listings, available date metadata, and cache implications; confirm sorting scope before implementation.                                                     |
+| 3      | [Live file concurrency](../.context/compound-engineering/todos/019-pending-p3-live-file-concurrency.md)                   | Deferred                                           | Apply concurrency changes to active downloads: increases immediately fill new slots; decreases let current files finish without interruption before enforcing the lower limit.             |
+| 4      | [Completion notification action](../.context/compound-engineering/todos/020-pending-p3-completion-notification-reveal.md) | Deferred                                           | Add Show in Finder or OS-appropriate wording to completion notifications, revealing the completed download in the local file manager. Verify native action support and fallbacks.          |
 
 Only explicitly requested future features belong in this bucket. Keep proposals and open questions separate from accepted requirements. Do not delete deferred ideas unless the user drops them.
 
@@ -120,6 +127,9 @@ Only explicitly requested future features belong in this bucket. Keep proposals 
 
 ## Decisions
 
+- 2026-09-17: Bucket a completion-notification action to reveal the download in Finder or the platform's file manager, with OS-specific wording. No implementation requested.
+- 2026-09-17: Bucket live file-concurrency updates. Reducing five to three keeps all active files and skips replacements for the first two completions; increasing three to five immediately starts two more pending files when available. No implementation requested.
+- 2026-09-17: Bucket dev-only `<>` icon markers and index date sorting. Apache date-sorting behavior needs research before implementation; no application changes requested in this pass.
 - 2026-09-17: Prepare v3.7.0 with remembered download/file group choices, explicit search-index revalidation, compact Settings with auto-sizing ignore rules, a standalone About page, and independent completion-notification polling. CLI behavior is unchanged; standalone-file search remains deferred.
 - 2026-09-17: Bucket standalone-file search; implement a Settings button to re-fetch listado.html first. No server-wide crawling or new file indexing in this pass.
 - 2026-09-08: User selected option 1 for triage and requested a persistent future-feature bucket, starting with menu bar progress.
