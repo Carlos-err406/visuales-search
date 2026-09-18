@@ -11,7 +11,8 @@ try {
   await server.listen();
   const { stdout, stderr } = await promisify(execFile)(process.execPath, ["test/desktop-ui.smoke.mjs"], {
     env: { ...process.env, DESKTOP_URL: server.resolvedUrls.local[0] },
-    timeout: 180000,
+    // Leave room for the full cross-feature suite on shared CI runners.
+    timeout: 300000,
     maxBuffer: 10 * 1024 * 1024,
   });
   process.stdout.write(stdout);
