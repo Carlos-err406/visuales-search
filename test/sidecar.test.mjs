@@ -404,6 +404,55 @@ describe("packaged Node sidecar", () => {
     assert.equal((await rpc.request("index.status")).running, false, "shutdown releases the indexing lease");
     assert.equal((await rpc.request("index.control", { action: "resume" })).phase, "idle");
   });
+  it("shows interrupted cached totals in task snapshots without resuming or rewriting progress", async () => {
+    const cache = path.join(home, ".visuales-cli-cache");
+    const file = path.join(cache, "download/tasks.json");
+    const store = JSON.parse(await fs.readFile(file, "utf8"));
+    const task = {
+      id: "cached-size-fixture",
+      url: "https://visuales.uclv.cu/SizeFixture/",
+      output: path.join(home, "unstarted-size-fixture"),
+      options: { exclude: ["*.jpg", "!poster.jpg"] },
+      status: "interrupted",
+      interruptedCause: "canceled",
+      createdAt: 1,
+      updatedAt: 2,
+      interruptedAt: 2,
+    };
+    store.tasks.push(task);
+    await fs.writeFile(file, JSON.stringify(store));
+    const discoveryFile = path.join(cache, "discovery.json");
+    const discovery = JSON.parse(await fs.readFile(discoveryFile, "utf8").catch(() => "{}"));
+    discovery[task.url] = {
+      files: [
+        { url: `${task.url}episode.mp4`, size: 4096 },
+        { url: `${task.url}poster.jpg`, size: 1024 },
+        { url: `${task.url}thumbnail.jpg`, size: 512 },
+      ],
+      dirs: [],
+      parserVersion: 4,
+    };
+    await fs.writeFile(discoveryFile, JSON.stringify(discovery));
+    try {
+      for (const method of ["tasks.list", "tasks.snapshot"]) {
+        const response = await rpc.request(method);
+        const result = (response.tasks ?? response).find((item) => item.id === task.id);
+        assert.deepEqual(result.sizeEstimate, { totalBytes: 5120, totalFiles: 2 });
+        assert.equal(result.status, "interrupted");
+        assert.equal(result.overallProgress, undefined);
+        assert.equal(result.pid, undefined);
+        assert.equal(result.updatedAt, 2);
+      }
+      assert.deepEqual(
+        JSON.parse(await fs.readFile(file, "utf8")).tasks.find((item) => item.id === task.id),
+        task
+      );
+      await assert.rejects(fs.stat(task.output), { code: "ENOENT" });
+    } finally {
+      await rpc.request("tasks.delete", { id: task.id });
+    }
+  });
+
   it("reviews without starting and uses the reviewed settings even if defaults change", async () => {
     const initial = await rpc.request("settings.get");
     const output = path.join(home, "reviewed-output");

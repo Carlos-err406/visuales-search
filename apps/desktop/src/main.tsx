@@ -43,8 +43,10 @@ import type { SearchResult } from "@visuales/core";
 import {
   formatBytes,
   isActive,
+  taskGroups,
   taskName,
   taskProgress,
+  taskProgressLabel,
   taskSize,
   taskSpeed,
   taskSpeedBytes,
@@ -74,12 +76,6 @@ import { appIcon, appIconLabel } from "./app-icon";
 import { SearchSortControl, useSearchSort } from "./search-sort-control";
 
 type View = "search" | "downloads" | "settings" | "about";
-const taskGroups = [
-  { id: "running", label: "Downloading", statuses: ["running"] },
-  { id: "queued", label: "Pending", statuses: ["queued"] },
-  { id: "attention", label: "Needs attention", statuses: ["failed", "interrupted"] },
-  { id: "completed", label: "Finished", statuses: ["completed"] },
-];
 
 function TaskRow({
   task,
@@ -185,7 +181,7 @@ function TaskRow({
           ) : (
             <>
               <div className="progress-label">
-                <span>{percent === null ? "Size unknown" : `${Math.floor(percent)}%`}</span>
+                <span>{taskProgressLabel(task)}</span>
                 <span className="secondary">{taskSize(task)}</span>
               </div>
               <Progress
@@ -459,7 +455,9 @@ function App({ root }: { root?: string }) {
     const navigate = async () => {
       const id = await invoke<string | null>("take_download_navigation");
       if (stopped || typeof id !== "string") return;
-      setGroupOverrides(id ? { running: false, queued: false, attention: false, completed: false } : {});
+      setGroupOverrides(
+        id ? { running: false, queued: false, failed: false, interrupted: false, completed: false } : {}
+      );
       setTaskQuery(id);
       setView("downloads");
     };
@@ -598,7 +596,7 @@ function App({ root }: { root?: string }) {
   }
 
   function showFailures() {
-    setGroupOverrides({ running: true, queued: true, completed: true, attention: false });
+    setGroupOverrides({ running: true, queued: true, completed: true, failed: false, interrupted: true });
     setTaskQuery("");
     switchView("downloads");
   }
@@ -747,7 +745,7 @@ function App({ root }: { root?: string }) {
           await act("retry_failed_download_task", task.id);
         } catch (error) {
           setTaskErrors((current) => ({ ...current, [task.id]: String(error) }));
-          setGroupOverrides((current) => ({ ...current, attention: false }));
+          setGroupOverrides((current) => ({ ...current, failed: false }));
         }
       }
     } finally {
@@ -1226,7 +1224,7 @@ function App({ root }: { root?: string }) {
               <Table aria-label="Downloads">
                 <TransferTableHead />
                 {taskGroups.map((group) => {
-                  const items = visibleTasks.filter((task) => group.statuses.includes(task.status));
+                  const items = visibleTasks.filter((task) => group.id === task.status);
                   if (!items.length) return null;
                   const collapsed = !!collapsedGroups[group.id];
                   return (
@@ -1254,7 +1252,7 @@ function App({ root }: { root?: string }) {
                                 <span>{group.label}</span>
                                 <span className="secondary">{items.length}</span>
                               </Button>
-                              {group.id === "attention" && items.some((task) => task.status === "failed") && (
+                              {group.id === "failed" && (
                                 <Button
                                   variant="ghost"
                                   className="group-retry"

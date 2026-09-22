@@ -64,14 +64,17 @@ export async function testTrayPopup({ browser, screenshots }) {
             output: `/Downloads/${task.name}`,
             createdAt: index,
             updatedAt: index,
-            overallProgress: {
-              completedFiles: task.completedFiles ?? 0,
-              totalFiles: task.totalFiles ?? 0,
-              downloadedBytes: task.downloadedBytes ?? 0,
-              totalBytes: task.totalBytes ?? 0,
-              speedBytes: task.speedBytes,
-              updatedAt: Date.now(),
-            },
+            sizeEstimate: task.sizeEstimate,
+            overallProgress: task.sizeEstimate
+              ? undefined
+              : {
+                  completedFiles: task.completedFiles ?? 0,
+                  totalFiles: task.totalFiles ?? 0,
+                  downloadedBytes: task.downloadedBytes ?? 0,
+                  totalBytes: task.totalBytes ?? 0,
+                  speedBytes: task.speedBytes,
+                  updatedAt: Date.now(),
+                },
           }));
         }
         if (command === "cancel_all_downloads") {
@@ -169,6 +172,9 @@ export async function testTrayPopup({ browser, screenshots }) {
     await page.getByRole("tooltip").filter({ hasText: "Showing: All statuses" }).waitFor();
     assert.equal(await filter.locator(".tray-filter-indicator").count(), 0);
     const choose = async (label) => {
+      // Rows can move between groups after an action; leave their hover hints before using the header.
+      await page.mouse.move(8, 8);
+      await page.getByRole("tooltip").waitFor({ state: "hidden" });
       await filter.click();
       await page.getByRole("option", { name: label, exact: true }).click();
     };
@@ -278,6 +284,44 @@ export async function testTrayPopup({ browser, screenshots }) {
     await choose("Failed");
     await page.getByRole("button", { name: "Resume Failed album" }).waitFor();
     await page.getByRole("button", { name: "Add Failed album to queue", exact: true }).waitFor();
+    await choose("All statuses");
+    const errorGroup = page.getByRole("button", { name: "Error downloads (1)", exact: true });
+    const interruptedGroup = page.getByRole("button", { name: "Interrupted downloads (3)", exact: true });
+    await interruptedGroup.waitFor();
+    assert.deepEqual(
+      await page
+        .locator(".tray-group-toggle")
+        .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
+      ["Error downloads (1)", "Interrupted downloads (3)", "Finished downloads (1)"]
+    );
+    assert.equal(await page.locator("#tray-group-failed article").count(), 1);
+    assert.equal(await page.locator("#tray-group-interrupted article").count(), 3);
+    await interruptedGroup.click();
+    assert.equal(await interruptedGroup.getAttribute("aria-expanded"), "false");
+    assert.ok(await page.getByRole("article", { name: "Failed album", exact: true }).isVisible());
+    await errorGroup.focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await errorGroup.getAttribute("aria-expanded"), "false");
+    await page.keyboard.press("Enter");
+    assert.equal(await errorGroup.getAttribute("aria-expanded"), "true");
+    const groupedSummary = await page.evaluate(() => window.trayTest.summary);
+    await page.reload();
+    await page.evaluate((summary) => {
+      window.trayTest.summary = summary;
+    }, groupedSummary);
+    await interruptedGroup.waitFor();
+    assert.equal(
+      await interruptedGroup.getAttribute("aria-expanded"),
+      "false",
+      "popup remembers interrupted collapse after reopening"
+    );
+    assert.equal(await errorGroup.getAttribute("aria-expanded"), "true", "error choice is independent");
+    assert.equal(await page.locator("#tray-group-interrupted article").count(), 0);
+    assert.ok(await page.getByRole("article", { name: "Completed album", exact: true }).isVisible());
+    await page.screenshot({ path: `${screenshots}/tray-separate-status-groups.png` });
+    await interruptedGroup.click();
+    await page.getByRole("button", { name: "Resume Harry_Potter", exact: true }).waitFor();
+    assert.ok((await interruptedGroup.boundingBox()).height <= 32, "popup group headers stay compact");
     await choose("Running");
     await page.getByText("No matching transfers").waitFor();
     await choose("Active");
@@ -288,6 +332,22 @@ export async function testTrayPopup({ browser, screenshots }) {
     assert.ok(await page.evaluate(() => window.trayTest.calls.some((call) => call.command === "dismiss_tray")));
     await page.getByRole("button", { name: "Quit Visuales" }).click();
     assert.ok(await page.evaluate(() => window.trayTest.calls.some((call) => call.command === "quit_from_tray")));
+    await page.evaluate(() => {
+      window.trayTest.summary.transfers = [
+        {
+          id: "cached-size",
+          name: "The Good Doctor",
+          status: "interrupted",
+          sizeEstimate: { totalBytes: 28.2 * 1024 ** 3, totalFiles: 224 },
+        },
+      ];
+    });
+    await choose("All statuses");
+    const cached = page.getByRole("article", { name: "The Good Doctor", exact: true });
+    await cached.getByText("-- / ~28.2 GB", { exact: true }).waitFor();
+    assert.equal(await cached.getByRole("progressbar").count(), 0);
+    await page.screenshot({ path: `${screenshots}/tray-interrupted-size.png` });
+    await choose("Active");
     await page.evaluate(() => {
       window.trayTest.fail = true;
     });

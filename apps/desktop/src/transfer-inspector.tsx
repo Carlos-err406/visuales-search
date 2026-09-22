@@ -19,7 +19,16 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { IconButton } from "./icon-button";
-import { formatBytes, isActive, taskName, taskProgress, taskSize, taskSpeed, type Task } from "./task-view";
+import {
+  formatBytes,
+  isActive,
+  taskName,
+  taskProgress,
+  taskProgressLabel,
+  taskSize,
+  taskSpeed,
+  type Task,
+} from "./task-view";
 import type { TransferCommand } from "./use-transfers";
 import { hasOpenOverlay } from "./overlay-state";
 import { useCollapsedGroups } from "./use-collapsed-groups";
@@ -87,12 +96,22 @@ function FileList({
     const groups = [
       { id: "downloading", label: "Downloading", files: [] as DownloadFileDetail[] },
       { id: "pending", label: "Pending", files: [] as DownloadFileDetail[] },
-      { id: "attention", label: "Needs attention", files: [] as DownloadFileDetail[] },
+      { id: "failed", label: "Error", files: [] as DownloadFileDetail[] },
+      { id: "interrupted", label: "Interrupted", files: [] as DownloadFileDetail[] },
       { id: "finished", label: "Finished", files: [] as DownloadFileDetail[] },
     ];
     for (const file of files) {
       const status = fileStatus(file, task);
-      const group = status === "Downloading" ? 0 : status === "Waiting" ? 1 : status === "Completed" ? 3 : 2;
+      const group =
+        status === "Downloading"
+          ? 0
+          : status === "Waiting"
+            ? 1
+            : status === "Completed"
+              ? 4
+              : status === "Interrupted"
+                ? 3
+                : 2;
       groups[group].files.push(file);
     }
     type Row = { key: string } & (
@@ -148,7 +167,7 @@ function FileList({
                   <span>{row.label}</span>
                   <span className="secondary">{row.count}</span>
                 </Button>
-                {row.id === "attention" && files.some((file) => file.status === "failed") && (
+                {row.id === "failed" && files.some((file) => file.status === "failed") && (
                   <Button
                     variant="ghost"
                     className="group-retry"
@@ -401,10 +420,13 @@ export function TransferInspector({
           </div>
         </div>
         <div className="inspector-summary-line">
-          <span>{percent === null ? "Size unknown" : `${Math.floor(percent)}%`}</span>
+          <span>{taskProgressLabel(task)}</span>
           <span className="secondary">{taskSize(task)}</span>
         </div>
-        <Progress aria-label="Transfer total progress" value={percent} />
+        <Progress
+          aria-label="Transfer total progress"
+          value={percent === null && task.status === "running" ? null : (percent ?? 0)}
+        />
         <div className="inspector-summary-line secondary">
           <span>
             {task.overallProgress

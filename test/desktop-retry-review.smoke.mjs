@@ -121,9 +121,9 @@ export async function testRetryAndReview({ page, screenshots }) {
     .click();
   const inspector = page.getByRole("complementary", { name: "Transfer details" });
   await inspector.getByText("5 of 5 retries used").first().waitFor();
-  await inspector.getByRole("button", { name: "Needs attention files (2)" }).click();
+  await inspector.getByRole("button", { name: "Error files (2)" }).click();
   assert.ok(await inspector.getByRole("button", { name: "Retry all failed files", exact: true }).isVisible());
-  await inspector.getByRole("button", { name: "Needs attention files (2)" }).click();
+  await inspector.getByRole("button", { name: "Error files (2)" }).click();
   await page.screenshot({ path: `${screenshots}/retry-all-files.png` });
   await inspector.getByRole("button", { name: "Retry one.srt", exact: true }).click();
   await inspector.getByRole("button", { name: "Retry one.srt", exact: true }).waitFor({ state: "detached" });
@@ -160,7 +160,7 @@ export async function testRetryAndReview({ page, screenshots }) {
   });
   await page.getByRole("tab", { name: /Downloads/ }).click();
   await page.getByRole("button", { name: "Refresh downloads", exact: true }).click();
-  const group = page.getByRole("button", { name: "Needs attention downloads (3)", exact: true });
+  const group = page.getByRole("button", { name: "Error downloads (2)", exact: true });
   await group.waitFor();
   if ((await group.getAttribute("aria-expanded")) === "true") await group.click();
   const retryAll = page.getByRole("button", { name: "Retry all failed downloads", exact: true });
@@ -197,10 +197,7 @@ export async function testRetryAndReview({ page, screenshots }) {
     await page.evaluate(() => window.testBridge.tasks.find((task) => task.id === "task-3").status),
     "interrupted"
   );
-  assert.equal(
-    await page.getByRole("button", { name: "Needs attention downloads (2)" }).getAttribute("aria-expanded"),
-    "true"
-  );
+  assert.equal(await page.getByRole("button", { name: "Error downloads (1)" }).getAttribute("aria-expanded"), "true");
   await page.evaluate(() => {
     window.testBridge.failRetryId = "";
   });

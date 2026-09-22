@@ -3,6 +3,7 @@ import { messageForDisplay } from "@visuales/core/uri-display";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUpRight,
+  ChevronRight,
   Download,
   FolderOutput,
   ListFilter,
@@ -21,8 +22,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { IconButton } from "./icon-button";
 import { InterruptAllButton } from "./interrupt-all-button";
 import { useAppearance } from "./use-appearance";
+import { useCollapsedGroups } from "./use-collapsed-groups";
 import { isDesktop } from "./use-transfers";
-import { formatBytes, isActive, type Task } from "./task-view";
+import { formatBytes, isActive, taskGroups, type Task } from "./task-view";
 import { selectTrayTasks, trayFilters, type TrayFilter } from "./tray-view";
 import { appIcon, appIconLabel } from "./app-icon";
 import "./tray-popup.css";
@@ -33,6 +35,7 @@ export function TrayPopup() {
   useAppearance();
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [filter, setFilter] = useState<TrayFilter>("all");
+  const { collapsed, setCollapsed } = useCollapsedGroups("visuales.tray-download-groups");
   const [filterOpen, setFilterOpen] = useState(false);
   const [interruptOpen, setInterruptOpen] = useState(false);
   const [interruptingAll, setInterruptingAll] = useState(false);
@@ -218,98 +221,126 @@ export function TrayPopup() {
             <span>{filter === "active" ? "No active transfers" : "No matching transfers"}</span>
           </div>
         ) : (
-          visible.map((record) => {
-            const task = summarizeTransfer(record);
-            const updating = interruptingAll || pending.has(task.id);
+          taskGroups.map((group) => {
+            const items = visible.filter((task) => task.status === group.id);
+            if (!items.length) return null;
             return (
-              <article className="tray-transfer" key={task.id} aria-label={task.name}>
-                <div className="tray-transfer-heading">
-                  <span className="tray-transfer-name">{task.name}</span>
-                  <div className="tray-task-actions" aria-busy={updating}>
-                    {task.status !== "running" && (
-                      <span className={`tray-task-status ${task.status}`}>{task.status}</span>
-                    )}
-                    <IconButton
-                      label={`Open output folder for ${task.name}`}
-                      tooltip="Open download folder"
-                      description="Show this transfer's destination in your file manager."
-                      disabled={updating}
-                      disabledReason="Wait for this task to finish updating."
-                      onClick={() => void taskAction("open_output_folder", record)}
-                    >
-                      <FolderOutput size={15} />
-                    </IconButton>
-                    {updating ? (
-                      <span className="tray-action-pending" role="status" aria-label={`Updating ${task.name}`}>
-                        <Spinner size={15} />
-                      </span>
-                    ) : isActive(record) ? (
-                      <IconButton
-                        label={`Interrupt ${task.name}`}
-                        tooltip={task.status === "queued" ? "Cancel queued download" : "Interrupt download"}
-                        description={
-                          task.status === "queued"
-                            ? "Leave the queue. You can resume this task later."
-                            : "Stop this transfer. Partial files are kept so you can resume later."
-                        }
-                        onClick={() => void taskAction("cancel_download_task", record)}
-                      >
-                        <Square size={14} />
-                      </IconButton>
-                    ) : ["interrupted", "failed"].includes(task.status) ? (
-                      <>
-                        <IconButton
-                          label={`Add ${task.name} to queue`}
-                          tooltip="Add to queue"
-                          description="Resume when this transfer reaches the front of the queue. Its destination, settings, and partial files are kept."
-                          onClick={() => void taskAction("queue_download_task", record)}
-                        >
-                          <ListPlus size={15} />
-                        </IconButton>
-                        <IconButton
-                          label={`Resume ${task.name}`}
-                          tooltip="Resume now"
-                          description="Continue immediately using existing partial files, without waiting in the queue."
-                          onClick={() => void taskAction("resume_download_task", record)}
-                        >
-                          <Play size={15} />
-                        </IconButton>
-                      </>
-                    ) : null}
-                  </div>
+              <section key={group.id} className="tray-group" aria-label={`${group.label} transfers`}>
+                <Button
+                  variant="ghost"
+                  className="tray-group-toggle"
+                  aria-label={`${group.label} downloads (${items.length})`}
+                  aria-expanded={!collapsed[group.id]}
+                  aria-controls={`tray-group-${group.id}`}
+                  onClick={() => setCollapsed(group.id, !collapsed[group.id])}
+                >
+                  <ChevronRight size={13} aria-hidden="true" />
+                  <span>{group.label}</span>
+                  <span className="tray-group-count">{items.length}</span>
+                </Button>
+                <div id={`tray-group-${group.id}`} hidden={!!collapsed[group.id]}>
+                  {!collapsed[group.id] &&
+                    items.map((record) => {
+                      const task = summarizeTransfer(record);
+                      const updating = interruptingAll || pending.has(task.id);
+                      return (
+                        <article className="tray-transfer" key={task.id} aria-label={task.name}>
+                          <div className="tray-transfer-heading">
+                            <span className="tray-transfer-name">{task.name}</span>
+                            <div className="tray-task-actions" aria-busy={updating}>
+                              {task.status !== "running" && (
+                                <span className={`tray-task-status ${task.status}`}>{task.status}</span>
+                              )}
+                              <IconButton
+                                label={`Open output folder for ${task.name}`}
+                                tooltip="Open download folder"
+                                description="Show this transfer's destination in your file manager."
+                                disabled={updating}
+                                disabledReason="Wait for this task to finish updating."
+                                onClick={() => void taskAction("open_output_folder", record)}
+                              >
+                                <FolderOutput size={15} />
+                              </IconButton>
+                              {updating ? (
+                                <span
+                                  className="tray-action-pending"
+                                  role="status"
+                                  aria-label={`Updating ${task.name}`}
+                                >
+                                  <Spinner size={15} />
+                                </span>
+                              ) : isActive(record) ? (
+                                <IconButton
+                                  label={`Interrupt ${task.name}`}
+                                  tooltip={task.status === "queued" ? "Cancel queued download" : "Interrupt download"}
+                                  description={
+                                    task.status === "queued"
+                                      ? "Leave the queue. You can resume this task later."
+                                      : "Stop this transfer. Partial files are kept so you can resume later."
+                                  }
+                                  onClick={() => void taskAction("cancel_download_task", record)}
+                                >
+                                  <Square size={14} />
+                                </IconButton>
+                              ) : ["interrupted", "failed"].includes(task.status) ? (
+                                <>
+                                  <IconButton
+                                    label={`Add ${task.name} to queue`}
+                                    tooltip="Add to queue"
+                                    description="Resume when this transfer reaches the front of the queue. Its destination, settings, and partial files are kept."
+                                    onClick={() => void taskAction("queue_download_task", record)}
+                                  >
+                                    <ListPlus size={15} />
+                                  </IconButton>
+                                  <IconButton
+                                    label={`Resume ${task.name}`}
+                                    tooltip="Resume now"
+                                    description="Continue immediately using existing partial files, without waiting in the queue."
+                                    onClick={() => void taskAction("resume_download_task", record)}
+                                  >
+                                    <Play size={15} />
+                                  </IconButton>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                          {(task.progress !== null ||
+                            task.totalFiles > 0 ||
+                            task.totalBytes !== null ||
+                            task.status === "running" ||
+                            (task.downloadedBytes ?? 0) > 0) && (
+                            <div className="tray-transfer-detail">
+                              <span>
+                                {task.progress !== null && `${Math.floor(task.progress)}% · `}
+                                {task.totalFiles > 0
+                                  ? `${task.completedFiles} of ${task.totalFiles} files`
+                                  : task.status === "running"
+                                    ? "Discovering files"
+                                    : ""}
+                              </span>
+                              {(task.totalBytes !== null || (task.downloadedBytes ?? 0) > 0) && (
+                                <span>
+                                  {task.totalBytes !== null
+                                    ? `${task.downloadedBytes === null ? "--" : formatBytes(task.downloadedBytes)} / ${task.estimated ? "~" : ""}${formatBytes(task.totalBytes)}`
+                                    : `${formatBytes(task.downloadedBytes!)} downloaded`}
+                                </span>
+                              )}
+                              {task.speedBytes !== null && <span>{formatBytes(task.speedBytes)}/s</span>}
+                            </div>
+                          )}
+                          {task.progress !== null && (
+                            <Progress aria-label={`Download progress for ${task.name}`} value={task.progress} />
+                          )}
+                          {(taskErrors[task.id] || record.lastError) && (
+                            <p className="tray-task-error" role={taskErrors[task.id] ? "alert" : undefined}>
+                              {messageForDisplay(taskErrors[task.id] || record.lastError)}
+                            </p>
+                          )}
+                        </article>
+                      );
+                    })}
                 </div>
-                {(task.progress !== null ||
-                  task.totalFiles > 0 ||
-                  task.status === "running" ||
-                  (task.downloadedBytes ?? 0) > 0) && (
-                  <div className="tray-transfer-detail">
-                    <span>
-                      {task.progress !== null && `${Math.floor(task.progress)}% · `}
-                      {task.totalFiles > 0
-                        ? `${task.completedFiles} of ${task.totalFiles} files`
-                        : task.status === "running"
-                          ? "Discovering files"
-                          : ""}
-                    </span>
-                    {task.downloadedBytes !== null && (task.downloadedBytes > 0 || task.totalBytes !== null) && (
-                      <span>
-                        {task.totalBytes !== null
-                          ? `${formatBytes(task.downloadedBytes)} / ${formatBytes(task.totalBytes)}`
-                          : `${formatBytes(task.downloadedBytes)} downloaded`}
-                      </span>
-                    )}
-                    {task.speedBytes !== null && <span>{formatBytes(task.speedBytes)}/s</span>}
-                  </div>
-                )}
-                {task.progress !== null && (
-                  <Progress aria-label={`Download progress for ${task.name}`} value={task.progress} />
-                )}
-                {(taskErrors[task.id] || record.lastError) && (
-                  <p className="tray-task-error" role={taskErrors[task.id] ? "alert" : undefined}>
-                    {messageForDisplay(taskErrors[task.id] || record.lastError)}
-                  </p>
-                )}
-              </article>
+              </section>
             );
           })
         )}

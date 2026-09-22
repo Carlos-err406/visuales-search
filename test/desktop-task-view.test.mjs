@@ -44,6 +44,21 @@ test("only running and queued tasks belong in desktop activity", () => {
   for (const status of ["completed", "failed", "interrupted"]) assert.equal(view.isActive({ status }), false);
 });
 
+test("interrupted cached totals are visible without inventing downloaded bytes or completion", () => {
+  const task = { status: "interrupted", sizeEstimate: { totalBytes: 1024 ** 3, totalFiles: 10 } };
+  assert.equal(view.taskSize(task), "-- / ~1.0 GB");
+  assert.equal(view.taskProgress(task), null);
+  assert.equal(view.taskProgressLabel(task), "Progress unknown");
+  assert.equal(view.taskProgress({ ...task, lastProgress: { totalSize: 100, progress: 40 } }), null);
+  assert.equal(view.taskProgressLabel({ status: "interrupted" }), "Size unknown");
+  const partial = { ...task, overallProgress: { downloadedBytes: 512 * 1024 ** 2, totalBytes: 0 } };
+  assert.equal(view.taskSize(partial), "512.0 MB / ~1.0 GB");
+  assert.equal(view.taskProgress(partial), 50);
+  const recorded = { ...task, overallProgress: { downloadedBytes: 512, totalBytes: 1024 } };
+  assert.equal(view.taskSize(recorded), "512 B / 1.0 KB");
+  assert.equal(view.taskProgress(recorded), 50);
+});
+
 test("desktop hides stale and inactive transfer speeds", () => {
   const now = Date.now();
   const task = { status: "running", overallProgress: { speedBytes: 2048, updatedAt: now } };

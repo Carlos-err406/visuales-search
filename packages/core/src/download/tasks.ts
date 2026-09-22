@@ -33,6 +33,8 @@ export interface DownloadTaskRecord {
   interruptedCause?: DownloadTaskInterruptedCause;
   lastError?: string;
   retryPaths?: string[];
+  /** Display-only total from a complete cached listing, never download/verification progress. */
+  sizeEstimate?: { totalBytes: number; totalFiles: number };
   lastProgress?: {
     url?: string;
     fileName: string;
