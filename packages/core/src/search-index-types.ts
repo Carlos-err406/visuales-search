@@ -7,6 +7,7 @@ export interface SearchIndexStatus {
   total: number;
   failed: number;
   skipped: number;
+  deferred?: number;
   revision: string;
   libraryRevision?: string;
   running: boolean;
@@ -19,6 +20,7 @@ export interface SearchIndexStatus {
 export type SearchIndexAction = "pause" | "resume" | "refresh";
 
 export function searchIndexLabel(status: SearchIndexStatus): string {
+  const finished = status.total > 0 && status.completed + status.failed + status.skipped >= status.total;
   switch (status.phase) {
     case "indexing":
       return status.total
@@ -29,9 +31,9 @@ export function searchIndexLabel(status: SearchIndexStatus): string {
     case "paused":
       return "File indexing paused";
     case "offline":
-      return "File indexing - retrying later";
+      return finished ? "Scan finished with exceptions" : "File indexing - retrying later";
     case "partial":
-      return `File index incomplete - ${status.failed + status.skipped} folders unavailable`;
+      return "Scan finished with exceptions";
     case "complete":
       return `${status.files.toLocaleString()} files indexed`;
     default:

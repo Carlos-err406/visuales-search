@@ -79,6 +79,14 @@ export function SearchCacheSettings({ indexing }: { indexing: SearchIndexControl
             {status.lastUpdated && (
               <div className="settings-cache-status">Last scan: {new Date(status.lastUpdated).toLocaleString()}</div>
             )}
+            {status.retryAt && status.phase !== "paused" && (
+              <div className="settings-cache-status">Next retry: {new Date(status.retryAt).toLocaleString()}</div>
+            )}
+            {!!status.deferred && (
+              <div className="settings-cache-status">
+                {status.deferred} {status.deferred === 1 ? "folder deferred" : "folders deferred"} until the next scan
+              </div>
+            )}
             {status.current && (
               <div className="settings-cache-status index-current">{urlPathForDisplay(status.current)}</div>
             )}

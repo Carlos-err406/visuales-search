@@ -31,6 +31,195 @@ const defaults = () => ({
 });
 const listing = (url) => ({ files: [{ url: `${url}film.mkv`, size: 42 }], dirs: [] });
 
+async function editCheckpoint(edit) {
+  const file = path.join(home, ".visuales-cli-cache/file-index/scan.json");
+  const state = JSON.parse(await fs.readFile(file, "utf8"));
+  edit(state);
+  await fs.writeFile(file, JSON.stringify(state));
+}
+
+test("overdue retries cannot be starved by the first repeatedly failing folder", async () => {
+  const first = `${base}/First/`;
+  const second = `${base}/Second/`;
+  await runSearchIndexer({ ...defaults(), seeds: async () => [first, second], listing: async (url) => listing(url) });
+  await editCheckpoint((state) => {
+    state.errors = Object.fromEntries(
+      [first, second].map((url) => [url, { message: "Library request failed (503)", status: 503, retryAt: 0 }])
+    );
+    state.forceSince = Date.now() + 1;
+  });
+  const calls = [];
+  const options = {
+    ...defaults(),
+    listing: async (url) => {
+      calls.push(url);
+      if (url === first) throw new LibraryRequestError("Library request failed (503)", 503);
+      return listing(url);
+    },
+  };
+  await runSearchIndexer(options);
+  await editCheckpoint((state) => {
+    state.retryAt = 0;
+    state.errors[first].retryAt = Date.now() - 1;
+  });
+  await runSearchIndexer(options);
+  assert.deepEqual(calls.slice(0, 2), [first, second]);
+  assert.equal((await getSearchIndexStatus()).failed, 1);
+});
+
+test("persistent folder failures exhaust a durable budget without removing cached files", async () => {
+  const url = `${base}/Persistent/`;
+  await publishIndexedDirectory(url, listing(url));
+  await controlSearchIndex("refresh");
+  let requests = 0;
+  const options = {
+    ...defaults(),
+    seeds: async () => [url],
+    listing: async () => {
+      requests++;
+      throw new LibraryRequestError("Library request failed (503)", 503);
+    },
+  };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await runSearchIndexer(options);
+    await editCheckpoint((state) => {
+      state.retryAt = 0;
+      for (const error of Object.values(state.errors)) error.retryAt = 0;
+    });
+  }
+  assert.equal(requests, 3, "restarting the scanner must not reset a folder's attempt budget");
+  const status = await getSearchIndexStatus();
+  assert.equal(status.phase, "partial");
+  assert.equal(status.failed, 1);
+  assert.equal(status.deferred, 1);
+  assert.equal(status.skipped, 0, "a 503 is not proof of removal");
+  assert.equal(status.files, 1);
+  assert.equal(status.retryAt, undefined);
+  await controlSearchIndex("resume");
+  await runSearchIndexer({ ...defaults(), listing: async (url) => listing(url) });
+  const recovered = await getSearchIndexStatus();
+  assert.equal(recovered.phase, "complete");
+  assert.equal(recovered.completed, 1);
+  assert.equal(recovered.deferred, 0);
+});
+
+test("daily discovery resets an exhausted budget and rechecks skipped folders", async () => {
+  const url = `${base}/ReturnsTomorrow/`;
+  await runSearchIndexer({
+    ...defaults(),
+    seeds: async () => [url],
+    listing: async () => {
+      throw new LibraryRequestError("Library request failed (503)", 503);
+    },
+  });
+  await editCheckpoint((state) => {
+    state.startedAt = Date.now() - 86400001;
+    state.retryAt = 0;
+    Object.assign(state.errors[url], { attempts: 3, deferred: true });
+  });
+  let seeded = false;
+  const calls = [];
+  await runSearchIndexer({
+    ...defaults(),
+    seeds: async () => {
+      seeded = true;
+      return [url];
+    },
+    listing: async (url) => {
+      calls.push(url);
+      return listing(url);
+    },
+  });
+  assert.equal(seeded, true);
+  assert.deepEqual(calls, [url]);
+  assert.equal((await getSearchIndexStatus()).phase, "complete");
+});
+
+for (const action of ["resume", "refresh"]) {
+  test(`${action} does not override the server's Retry-After deadline`, async () => {
+    const retryAt = Date.now() + 60000;
+    await runSearchIndexer({
+      ...defaults(),
+      seeds: async () => [`${base}/Throttled/`],
+      listing: async () => {
+        throw new LibraryRequestError("Library request failed (503)", 503, retryAt);
+      },
+    });
+    const status = await controlSearchIndex(action);
+    assert.equal(status.retryAt, retryAt);
+    let requests = 0;
+    await runSearchIndexer({
+      ...defaults(),
+      signal: AbortSignal.timeout(100),
+      seeds: async () => {
+        requests++;
+        return [];
+      },
+      listing: async (url) => {
+        requests++;
+        return listing(url);
+      },
+    });
+    assert.equal(requests, 0, "even a fresh pass must honor the server cooldown");
+  });
+}
+
+test("finished passes report exceptions without pretending all folders were indexed", () => {
+  const status = {
+    phase: "offline",
+    files: 490727,
+    completed: 29643,
+    total: 30057,
+    failed: 1,
+    skipped: 413,
+    running: true,
+    revision: "fixture",
+  };
+  assert.equal(searchIndexLabel(status), "Scan finished with exceptions");
+  assert.equal(searchIndexLabel({ ...status, phase: "partial", deferred: 1 }), "Scan finished with exceptions");
+  assert.equal(searchIndexLabel({ ...status, completed: 29000 }), "File indexing - retrying later");
+});
+
+test("continuous indexing settles after its final deferred error instead of retrying forever", async () => {
+  const url = `${base}/Last/`;
+  await runSearchIndexer({
+    ...defaults(),
+    seeds: async () => [url],
+    listing: async () => {
+      throw new LibraryRequestError("Library request failed (503)", 503);
+    },
+  });
+  await editCheckpoint((state) => {
+    state.retryAt = 0;
+    Object.assign(state.errors[url], { retryAt: 0, attempts: 2 });
+  });
+  let requests = 0;
+  const now = Date.now;
+  let offset = 0;
+  Date.now = () => now() + offset;
+  try {
+    await runSearchIndexer({
+      ...defaults(),
+      continuous: true,
+      signal: AbortSignal.timeout(1500),
+      listing: async () => {
+        requests++;
+        throw new LibraryRequestError("Library request failed (503)", 503);
+      },
+      onChange: () => {
+        offset += 300001;
+      },
+    });
+  } finally {
+    Date.now = now;
+  }
+  assert.equal(requests, 1);
+  const status = await getSearchIndexStatus();
+  assert.equal(status.phase, "partial");
+  assert.equal(status.deferred, 1);
+  assert.equal(status.retryAt, undefined);
+});
+
 test("seeds retain listado order, append ancestors/root and do not favor Recientes", () => {
   assert.deepEqual(
     indexSeedUrls([`${base}/Movies/2026/`, `${base}/Recientes/`, `${base}/Movies/2026/`, "https://evil.test/"]),
@@ -301,7 +490,8 @@ for (const statusCode of [403, 404, 410]) {
     assert.deepEqual(calls, [`${base}/Unavailable/`, `${base}/Available/`]);
     const status = await getSearchIndexStatus();
     assert.equal(status.completed, 1);
-    assert.equal(status.failed, 1);
+    assert.equal(status.failed, 0);
+    assert.equal(status.skipped, 1);
     assert.equal(status.phase, "partial");
     assert.equal(status.retryAt, undefined);
     assert.ok((await Promise.all(states)).every((state) => state.phase !== "offline"));
@@ -326,8 +516,8 @@ test("missing branches defer descendants, retain cached files, and retry descend
   assert.deepEqual(calls, [missing, `${base}/MissingSibling/`]);
   const status = await getSearchIndexStatus();
   assert.equal(status.total, 3);
-  assert.equal(status.failed, 1);
-  assert.equal(status.skipped, 1);
+  assert.equal(status.failed, 0);
+  assert.equal(status.skipped, 2);
   assert.equal(status.completed, 1);
   assert.equal(status.files, 2, "a 404 never erases cached search results");
   await controlSearchIndex("resume");
@@ -377,8 +567,8 @@ test("legacy missing-branch failures resume without the old global backoff or ch
   });
   assert.deepEqual(calls, [`${base}/Available/`]);
   const status = await getSearchIndexStatus();
-  assert.equal(status.failed, 1);
-  assert.equal(status.skipped, 2);
+  assert.equal(status.failed, 0);
+  assert.equal(status.skipped, 3);
   assert.equal(status.completed, 1);
   assert.equal(status.phase, "partial");
 });
@@ -403,8 +593,8 @@ test("a missing branch skips hundreds of consecutive descendants in one checkpoi
   assert.deepEqual(calls, [root, `${base}/Available/`]);
   assert.ok(changes < 10, "skipped descendants must not rewrite the entire queue for each folder");
   const status = await getSearchIndexStatus();
-  assert.equal(status.failed, 1);
-  assert.equal(status.skipped, 411);
+  assert.equal(status.failed, 0);
+  assert.equal(status.skipped, 412);
   assert.equal(status.completed, 1);
   t.diagnostic(
     `412-folder missing branch: ${calls.length} requests including healthy sibling, ${(performance.now() - started).toFixed(1)} ms`
@@ -428,8 +618,8 @@ test("missing descendants separated by healthy folders are still deferred, but 4
   assert.deepEqual(calls, [gone, `${base}/Healthy/`, denied, `${denied}Accessible/`]);
   const status = await getSearchIndexStatus();
   assert.equal(status.completed, 2);
-  assert.equal(status.failed, 2);
-  assert.equal(status.skipped, 1);
+  assert.equal(status.failed, 0);
+  assert.equal(status.skipped, 3);
 });
 
 test("an unavailable parent can recover across a restart without resetting completed coverage", async () => {
@@ -447,7 +637,7 @@ test("an unavailable parent can recover across a restart without resetting compl
     },
   };
   await runSearchIndexer({ ...initial, signal: controller.signal });
-  assert.equal((await getSearchIndexStatus()).skipped, 1);
+  assert.equal((await getSearchIndexStatus()).skipped, 2);
   await controlSearchIndex("resume");
   const calls = [];
   await runSearchIndexer({
@@ -501,7 +691,8 @@ test("fast missing responses still respect crawl delay and cancellation during p
     },
   });
   assert.deepEqual(calls, [`${base}/MissingA/`]);
-  assert.equal((await getSearchIndexStatus()).failed, 1, "canceling a pacing wait is not another failure");
+  assert.equal((await getSearchIndexStatus()).failed, 0);
+  assert.equal((await getSearchIndexStatus()).skipped, 1, "canceling a pacing wait is not another skipped folder");
 });
 
 test("a completed partial pass can refresh its seeds the next day despite unavailable folders", async () => {
