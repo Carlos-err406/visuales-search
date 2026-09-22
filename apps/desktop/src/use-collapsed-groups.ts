@@ -6,7 +6,14 @@ function readGroups(key: string): CollapsedGroups {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(key) || "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-    return Object.fromEntries(Object.entries(value).filter(([, collapsed]) => typeof collapsed === "boolean"));
+    const groups = Object.fromEntries(Object.entries(value).filter(([, collapsed]) => typeof collapsed === "boolean"));
+    // Preserve the old combined group's choice until each new group is changed independently.
+    if (typeof groups.attention === "boolean") {
+      groups.failed ??= groups.attention;
+      groups.interrupted ??= groups.attention;
+      delete groups.attention;
+    }
+    return groups;
   } catch {
     return {};
   }

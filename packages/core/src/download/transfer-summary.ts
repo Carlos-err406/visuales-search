@@ -27,18 +27,29 @@ const count = (value: number | undefined) => (Number.isSafeInteger(value) && val
 const bytes = (value: number | undefined) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 
+export function transferTotalBytes(task: DownloadTaskRecord): number | null {
+  const total = bytes(task.overallProgress?.totalBytes);
+  return total !== null && total > 0 ? total : bytes(task.sizeEstimate?.totalBytes);
+}
+
+export function transferSizeEstimated(task: DownloadTaskRecord): boolean {
+  const total = bytes(task.overallProgress?.totalBytes);
+  return (total === null || total === 0) && bytes(task.sizeEstimate?.totalBytes) !== null;
+}
+
 export function transferByteProgress(task: DownloadTaskRecord): number | null {
   const overall = task.overallProgress;
+  const total = transferTotalBytes(task);
   if (
     !overall ||
-    !Number.isFinite(overall.totalBytes) ||
-    overall.totalBytes <= 0 ||
+    total === null ||
+    total <= 0 ||
     !Number.isFinite(overall.downloadedBytes) ||
     overall.downloadedBytes < 0
   )
     return null;
   // A running transfer still needs final verification, even if its known bytes are present.
-  return Math.max(0, Math.min(99.9, (overall.downloadedBytes / overall.totalBytes) * 100));
+  return Math.max(0, Math.min(99.9, (overall.downloadedBytes / total) * 100));
 }
 
 export function summarizeTransfer(task: DownloadTaskRecord, now = Date.now()) {
@@ -52,7 +63,8 @@ export function summarizeTransfer(task: DownloadTaskRecord, now = Date.now()) {
     completedFiles: completed,
     totalFiles: total,
     downloadedBytes: bytes(task.overallProgress?.downloadedBytes),
-    totalBytes: task.overallProgress?.totalBytes ? bytes(task.overallProgress.totalBytes) : null,
+    totalBytes: transferTotalBytes(task),
+    estimated: transferSizeEstimated(task),
     progress: task.status === "completed" ? 100 : task.status === "queued" ? null : transferByteProgress(task),
   };
 }

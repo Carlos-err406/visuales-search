@@ -31,6 +31,7 @@ import {
 import { createDownloadTargets } from "@visuales/core/download/targets";
 import { downloadDefaults } from "@visuales/core/download/defaults";
 import { summarizeTransfers, transferName } from "@visuales/core/download/transfer-summary";
+import { withCachedTaskSizes } from "@visuales/core/download/task-size";
 import { loadDesktopSettings, saveDesktopSettings, resolveDesktopOutput } from "@visuales/core/desktop-settings";
 import {
   listLibraryDirectory,
@@ -349,10 +350,11 @@ async function runServer() {
       }
       // Not in the read-only allowlist: updater snapshots wait behind pending starts/resumes.
       case "tasks.prepareUpdate":
-      case "tasks.list":
         return listDownloadTasks();
+      case "tasks.list":
+        return withCachedTaskSizes(await listDownloadTasks());
       case "tasks.snapshot": {
-        const tasks = await listDownloadTasks();
+        const tasks = await withCachedTaskSizes(await listDownloadTasks());
         return { tasks, summary: summarizeTransfers(tasks) };
       }
       case "tasks.files": {

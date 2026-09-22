@@ -97,6 +97,38 @@ export async function testFileIndex({ page, screenshots }) {
   });
   await section.getByText(/411 skipped \(unavailable or excluded\)/).waitFor();
   assert.equal(await section.getByText(/excluded by server/).count(), 0);
+  await page.evaluate(() => {
+    Object.assign(window.testBridge.fileIndex, {
+      phase: "offline",
+      files: 490727,
+      completed: 29643,
+      total: 30057,
+      failed: 1,
+      skipped: 413,
+      deferred: 0,
+      current: undefined,
+      retryAt: Date.now() + 60000,
+      error: "Library request failed (503)",
+      revision: "test:retrying",
+    });
+    window.testBridge.emit("file-index-changed");
+  });
+  await section.getByText("Scan finished with exceptions", { exact: true }).waitFor();
+  await section.getByText(/^Next retry:/).waitFor();
+  await section.getByText(/413 skipped \(unavailable or excluded\)/).waitFor();
+  await page.evaluate(() => {
+    Object.assign(window.testBridge.fileIndex, {
+      phase: "partial",
+      deferred: 1,
+      retryAt: undefined,
+      revision: "test:deferred",
+    });
+    window.testBridge.emit("file-index-changed");
+  });
+  await section.getByText("1 folder deferred until the next scan", { exact: true }).waitFor();
+  assert.equal(await section.getByText(/^Next retry:/).count(), 0);
+  assert.equal(await section.getByText(/File index incomplete|File indexing - retrying later/).count(), 0);
+  assert.equal(await page.locator(".settings-footer").count(), 0);
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme });
     for (const width of [1240, 390]) {

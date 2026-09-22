@@ -20,6 +20,12 @@ export async function testGroupState({ page, screenshots }) {
   await page.goto(base);
   await downloads();
   await expanded(group("Finished"), true);
+  await expanded(group("Error"), true);
+  await expanded(group("Interrupted"), true);
+  await group("Error").click();
+  await expanded(group("Interrupted"), true);
+  assert.ok(await page.getByRole("button", { name: "Details for Cosmos", exact: true }).isVisible());
+  assert.equal(await page.locator("#download-group-failed .transfer-row").count(), 0);
   await group("Finished").click();
   await group("Pending").click();
   await page.getByRole("button", { name: "Refresh downloads", exact: true }).click();
@@ -27,6 +33,8 @@ export async function testGroupState({ page, screenshots }) {
   await page.getByRole("tab", { name: "Search", exact: true }).click();
   await downloads();
   await expanded(group("Pending"), false);
+  await expanded(group("Error"), false);
+  await expanded(group("Interrupted"), true);
   await page.reload();
   await downloads();
   await expanded(group("Finished"), false);
@@ -49,10 +57,13 @@ export async function testGroupState({ page, screenshots }) {
   await expanded(group("Finished"), false);
   await page.getByRole("button", { name: "1 failed", exact: true }).click();
   await expanded(group("Downloading"), false);
+  await expanded(group("Error"), true);
+  await expanded(group("Interrupted"), false);
   assert.equal(await stored(downloadsKey), savedDownloads, "failure shortcut is temporary");
   await page.getByRole("tab", { name: "Search", exact: true }).click();
   await downloads();
   await expanded(group("Downloading"), true);
+  await group("Error").click();
 
   const seedFiles = () =>
     page.evaluate(() => {
@@ -130,6 +141,35 @@ export async function testGroupState({ page, screenshots }) {
   await downloads();
   await expanded(group("Finished"), true);
   await expanded(group("Pending"), false);
+
+  // Old combined preferences seed both new groups without overriding independent choices.
+  await page.evaluate(
+    ([downloadsKey, filesKey]) => {
+      window.localStorage.setItem(downloadsKey, JSON.stringify({ attention: true, interrupted: false }));
+      window.localStorage.setItem(filesKey, JSON.stringify({ attention: true }));
+    },
+    [downloadsKey, filesKey]
+  );
+  await page.reload();
+  await downloads();
+  await expanded(group("Error"), false);
+  await expanded(group("Interrupted"), true);
+  await group("Error").click();
+  await group("Interrupted").click();
+  await page.reload();
+  await downloads();
+  await expanded(group("Error"), true);
+  await expanded(group("Interrupted"), false);
+  await seedFiles();
+  await page
+    .getByRole("button", { name: "Details for A very long documentary title with additional release details" })
+    .click();
+  await expanded(fileGroup("Error"), false);
+  await expanded(fileGroup("Interrupted"), false);
+  await fileGroup("Interrupted").click();
+  await expanded(fileGroup("Error"), false);
+  await inspector.getByText("downloading.txt", { exact: true }).waitFor();
+  await page.screenshot({ path: `${screenshots}/separate-error-interrupted-groups.png` });
 
   await page.addInitScript(
     ([downloadsKey, filesKey]) => {

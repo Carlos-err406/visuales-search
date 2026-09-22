@@ -29,12 +29,21 @@ import {
 import type { SearchIndexAction, SearchIndexPhase, SearchIndexStatus } from "./search-index-types.js";
 
 const DAY = 86400000;
+const MAX_FOLDER_ATTEMPTS = 3;
 export const FILE_INDEX_MAX_AGE = 7 * DAY;
 const ORIGIN = "https://visuales.uclv.cu";
 const AGENT = "VisualesIndexer";
 const statePath = () => path.join(fileIndexDirectory(), "scan.json");
 const ownerPath = () => path.join(CONFIG.CACHE_DIR, "file-index-owner");
 const controllers = new Set<AbortController>();
+
+interface ScanFailure {
+  message: string;
+  retryAt: number;
+  status?: number;
+  attempts?: number;
+  deferred?: boolean;
+}
 
 interface ScanState {
   generation: string;
@@ -43,11 +52,12 @@ interface ScanState {
   phase: SearchIndexPhase;
   queue: string[];
   cursor: number;
-  errors: Record<string, { message: string; retryAt: number; status?: number }>;
+  errors: Record<string, ScanFailure>;
   skipped: string[];
   startedAt: number;
   forceSince: number;
   retryAt?: number;
+  serverRetryAt?: number;
   current?: string;
   error?: string;
   lastUpdated?: number;
@@ -56,6 +66,20 @@ interface ScanState {
 function requestStatus(error: { message: string; status?: number }): number | undefined {
   // Older checkpoints recorded HTTP status only in the message.
   return error.status ?? (Number(/^Library request failed \((\d{3})\)$/.exec(error.message)?.[1]) || undefined);
+}
+
+function unavailableFailure(error: ScanFailure): boolean {
+  return [403, 404, 410].includes(requestStatus(error) ?? 0);
+}
+
+function deferredFailure(error: ScanFailure): boolean {
+  return error.deferred ?? (unavailableFailure(error) || (error.attempts ?? 1) >= MAX_FOLDER_ATTEMPTS);
+}
+
+function pendingRetries(state: ScanState) {
+  return Object.entries(state.errors)
+    .filter(([, error]) => !deferredFailure(error))
+    .sort(([, a], [, b]) => a.retryAt - b.retryAt);
 }
 
 function missingAncestor(state: ScanState, url: string): string | undefined {
@@ -136,8 +160,12 @@ export async function controlSearchIndex(action: SearchIndexAction): Promise<Sea
     } else if (action === "resume") {
       state.paused = false;
       state.phase = "idle";
-      state.retryAt = undefined;
-      for (const error of Object.values(state.errors)) error.retryAt = 0;
+      state.retryAt = state.serverRetryAt && state.serverRetryAt > Date.now() ? state.serverRetryAt : undefined;
+      for (const error of Object.values(state.errors)) {
+        error.retryAt = state.retryAt ?? 0;
+        error.attempts = 0;
+        error.deferred = false;
+      }
     } else {
       state.run = randomUUID();
       state.queue = [];
@@ -146,7 +174,7 @@ export async function controlSearchIndex(action: SearchIndexAction): Promise<Sea
       state.skipped = [];
       state.startedAt = 0;
       state.forceSince = Date.now();
-      state.retryAt = undefined;
+      state.retryAt = state.serverRetryAt && state.serverRetryAt > Date.now() ? state.serverRetryAt : undefined;
       state.phase = state.paused ? "paused" : "idle";
     }
     state.current = undefined;
@@ -164,20 +192,30 @@ export async function getSearchIndexStatus(): Promise<SearchIndexStatus> {
   let files = 0;
   for (const directory of index.directories.values())
     files += directory.entries.filter((entry) => !entry.isDirectoryLink).length;
+  const errors = Object.values(state.errors);
+  const unavailable = errors.filter(unavailableFailure).length;
+  const retries = pendingRetries(state);
+  const retryAt =
+    state.cursor < state.queue.length || !state.startedAt
+      ? state.retryAt
+      : retries.length
+        ? Math.max(state.retryAt ?? 0, retries[0][1].retryAt)
+        : undefined;
   return {
     phase: state.paused ? "paused" : !running && ["indexing", "waiting"].includes(state.phase) ? "idle" : state.phase,
     files,
-    completed: Math.max(0, state.cursor - Object.keys(state.errors).length - state.skipped.length),
+    completed: Math.max(0, state.cursor - errors.length - state.skipped.length),
     total: state.queue.length,
-    failed: Object.keys(state.errors).length,
-    skipped: state.skipped.length,
+    failed: errors.length - unavailable,
+    skipped: state.skipped.length + unavailable,
+    deferred: errors.filter((error) => !unavailableFailure(error) && deferredFailure(error)).length,
     running,
     libraryRevision: list ? `${list.mtimeMs}:${list.size}` : undefined,
     revision: fileIndexRevision(index),
     current: state.current,
     lastUpdated: state.lastUpdated,
     error: state.error,
-    retryAt: state.retryAt,
+    retryAt: retryAt && retryAt > Date.now() ? retryAt : undefined,
   };
 }
 
@@ -329,7 +367,7 @@ export async function runSearchIndexer(options: IndexerOptions): Promise<void> {
       const workDue =
         !state.startedAt ||
         state.cursor < state.queue.length ||
-        Object.values(state.errors).some((error) => error.retryAt <= Date.now()) ||
+        pendingRetries(state).some(([, error]) => error.retryAt <= Date.now()) ||
         Date.now() - state.startedAt >= DAY;
       if (workDue && (await busy())) {
         await mutateState(
@@ -395,7 +433,8 @@ export async function runSearchIndexer(options: IndexerOptions): Promise<void> {
           if (!next) continue;
           state = next;
         }
-        const retry = Object.entries(state.errors).find(([, error]) => error.retryAt <= Date.now())?.[0];
+        // Oldest deadline first: a repeatedly failing entry must not monopolize retries.
+        const retry = pendingRetries(state).find(([, error]) => error.retryAt <= Date.now())?.[0];
         target = state.queue[state.cursor] ?? retry;
         if (!target) {
           await mutateState(
@@ -468,6 +507,7 @@ export async function runSearchIndexer(options: IndexerOptions): Promise<void> {
               }
             next.error = undefined;
             next.retryAt = undefined;
+            next.serverRetryAt = undefined;
             next.current = undefined;
             if (next.cursor === next.queue.length && !Object.keys(next.errors).length && !next.skipped.length)
               next.lastUpdated = Date.now();
@@ -489,19 +529,30 @@ export async function runSearchIndexer(options: IndexerOptions): Promise<void> {
         await mutateState(
           generation,
           (next) => {
-            next.phase = unavailable ? "indexing" : "offline";
             next.error = message;
             next.retryAt = unavailable ? undefined : retryAt;
+            if (!unavailable && error instanceof LibraryRequestError && (error.retryAt ?? 0) > Date.now())
+              next.serverRetryAt = error.retryAt;
             next.current = undefined;
             if (target) {
               if (next.queue[next.cursor] === target) next.cursor++;
+              const previous = next.errors[target];
+              const attempts = (previous?.attempts ?? (previous ? 1 : 0)) + 1;
               next.errors[target] = {
                 message,
                 status,
+                attempts,
+                deferred: unavailable || attempts >= MAX_FOLDER_ATTEMPTS,
                 retryAt: unavailable ? Math.max(Date.now() + DAY, retryAt) : retryAt,
               };
               if (unavailable) deferMissingDirectories(next);
             }
+            next.phase =
+              target && next.cursor >= next.queue.length && !pendingRetries(next).length
+                ? "partial"
+                : unavailable
+                  ? "indexing"
+                  : "offline";
           },
           state.run
         );

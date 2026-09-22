@@ -32,6 +32,23 @@ test("historical tray records retain byte progress but never show active speed",
   }
 });
 
+test("tray keeps cached size estimates separate from unrecorded progress", () => {
+  const input = {
+    ...task("interrupted", "interrupted"),
+    overallProgress: undefined,
+    sizeEstimate: { totalBytes: 1000, totalFiles: 12 },
+  };
+  const result = summarizeTransfer(input, now);
+  assert.equal(result.totalBytes, 1000);
+  assert.equal(result.estimated, true);
+  assert.equal(result.downloadedBytes, null);
+  assert.equal(result.progress, null);
+  assert.equal(result.speedBytes, null);
+  const known = summarizeTransfer({ ...input, overallProgress: task("known").overallProgress }, now);
+  assert.equal(known.estimated, false);
+  assert.equal(known.progress, 25);
+});
+
 test("tray summary includes CLI and desktop work with stable ordering and byte progress", () => {
   const input = [
     task("z"),

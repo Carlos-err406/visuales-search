@@ -79,7 +79,7 @@ export async function testTransferInspector({ page, screenshots }) {
     await inspector
       .locator(".inspector-file-group .group-toggle")
       .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label"))),
-    ["Downloading files (1)", "Pending files (1)", "Needs attention files (2)", "Finished files (2)"]
+    ["Downloading files (1)", "Pending files (1)", "Error files (2)", "Finished files (2)"]
   );
   assert.ok(await inspector.getByRole("button", { name: "Retry all failed files", exact: true }).isDisabled());
   const finished = inspector.getByRole("button", { name: "Finished files (2)", exact: true });
@@ -196,6 +196,14 @@ export async function testTransferInspector({ page, screenshots }) {
   await page.waitForFunction(() =>
     window.testBridge.calls.some((call) => call.command === "cancel_download_task" && call.args.id === "task-0")
   );
+  await inspector.getByRole("button", { name: "Interrupted files (1)", exact: true }).waitFor();
+  assert.equal(await inspector.getByRole("button", { name: "Downloading files (1)", exact: true }).count(), 0);
+  await inspector.getByRole("button", { name: "Error files (2)", exact: true }).click();
+  assert.ok(
+    await inspector.getByText("02 - Mountains.mkv", { exact: true }).isVisible(),
+    "errors collapse independently of interrupted files"
+  );
+  await inspector.getByRole("button", { name: "Error files (2)", exact: true }).click();
   await inspector.getByRole("button", { name: "Close transfer details" }).click();
   await page.getByRole("searchbox", { name: "Filter downloads" }).fill("");
   await page.evaluate(() => {
@@ -245,5 +253,35 @@ export async function testTransferInspector({ page, screenshots }) {
   await page.mouse.move(rect.x - 40, rect.y + 30, { steps: 4 });
   await page.mouse.up();
   assert.ok((await inspector.boundingBox()).width > beforeDrag, "dragging resizes the sheet");
+  await inspector.getByRole("button", { name: "Close transfer details" }).click();
+  await page.evaluate(() => {
+    window.testBridge.tasks = [
+      {
+        ...window.testBridge.tasks[0],
+        id: "interrupted-size",
+        url: "https://visuales.uclv.cu/Series/The%20Good%20Doctor/",
+        status: "interrupted",
+        overallProgress: undefined,
+        lastProgress: undefined,
+        sizeEstimate: { totalBytes: 28.2 * 1024 ** 3, totalFiles: 224 },
+      },
+    ];
+  });
+  await page.getByRole("button", { name: "Refresh downloads", exact: true }).click();
+  await page.getByText("-- / ~28.2 GB", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Size unknown", { exact: true }).count(), 0);
+  await page.getByRole("button", { name: "Details for The Good Doctor", exact: true }).click();
+  await inspector.getByText("-- / ~28.2 GB", { exact: true }).waitFor();
+  await inspector.getByText("Progress unknown", { exact: true }).waitFor();
+  assert.equal(await inspector.getByText("0%", { exact: true }).count(), 0);
+  assert.equal(
+    await inspector.getByRole("progressbar", { name: "Transfer total progress" }).getAttribute("aria-valuenow"),
+    "0",
+    "an interrupted unknown transfer has no animated activity indicator"
+  );
+  await checkLayout("interrupted-download-size");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await checkLayout("interrupted-download-size-mobile");
+  await page.setViewportSize({ width: 1240, height: 820 });
   await inspector.getByRole("button", { name: "Close transfer details" }).click();
 }

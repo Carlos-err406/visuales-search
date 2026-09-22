@@ -374,6 +374,14 @@ try {
     };
   });
   await page.goto(process.env.DESKTOP_URL || "http://127.0.0.1:1420/");
+  if (process.env.DESKTOP_SMOKE_ONLY === "download-size") {
+    await testTransferInspector({ page, screenshots });
+    await testTrayPopup({ browser, screenshots });
+    assert.deepEqual(errors, []);
+    console.log(`Download size UI checks passed. Screenshots: ${screenshots}`);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.env.DESKTOP_SMOKE_ONLY === "search-sort") {
     await testSearchSort({ page, screenshots });
     await testLibraryWindows({ browser, screenshots });
@@ -416,6 +424,7 @@ try {
   if (process.env.DESKTOP_SMOKE_ONLY === "group-state") {
     await testTransferInspector({ page, screenshots });
     await testGroupState({ page, screenshots });
+    await testTrayPopup({ browser, screenshots });
     assert.deepEqual(errors, []);
     console.log(`Persistent group state checks passed. Screenshots: ${screenshots}`);
     await browser.close();
@@ -958,7 +967,8 @@ try {
   assert.deepEqual(await page.locator(".download-group button span:first-of-type").allTextContents(), [
     "Downloading",
     "Pending",
-    "Needs attention",
+    "Error",
+    "Interrupted",
     "Finished",
   ]);
   const finishedGroup = page.getByRole("button", { name: "Finished downloads (1)", exact: true });
